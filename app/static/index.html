@@ -6,8 +6,8 @@
   <title>Pinbin</title>
   <link rel="preload" href="/static/fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin />
   <!-- styles.css first: Tailwind utilities (such as "hidden") must win over component styles. -->
-  <link rel="stylesheet" href="/static/styles.css?v=25" />
-  <link rel="stylesheet" href="/static/tailwind.css?v=25" />
+  <link rel="stylesheet" href="/static/styles.css?v=26" />
+  <link rel="stylesheet" href="/static/tailwind.css?v=26" />
 </head>
 <body class="font-sans antialiased min-h-screen">
 
@@ -485,9 +485,16 @@
               <textarea id="fWarning" rows="3" placeholder="e.g., Do not connect 5V to GPIO pins." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent transition-colors resize-y"></textarea>
             </div>
 
-            <div>
-              <label for="fNotes" class="block text-[11px] font-medium text-muted mb-1">Notes</label>
-              <textarea id="fNotes" rows="4" placeholder="I2C address, pin order, or personal workbench notes..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent transition-colors resize-y"></textarea>
+            <div data-md-editor>
+              <div class="flex items-center justify-between gap-2 mb-1">
+                <label for="fNotes" class="block text-[11px] font-medium text-muted">Notes (Markdown)</label>
+                <div class="pb-segmented inline-flex rounded p-0.5" role="group" aria-label="Notes mode">
+                  <button type="button" data-md-mode="edit" class="h-6 px-2 rounded text-[11px] font-medium pb-seg-active">Edit</button>
+                  <button type="button" data-md-mode="preview" class="h-6 px-2 rounded text-[11px] font-medium opacity-65">Preview</button>
+                </div>
+              </div>
+              <textarea id="fNotes" data-md-input rows="4" placeholder="I2C address, pin order, or personal workbench notes (supports Markdown)..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent transition-colors resize-y"></textarea>
+              <div data-md-preview class="hidden pb-well rounded p-3 min-h-[104px] max-h-64 overflow-y-auto pb-md"></div>
             </div>
           </div>
 
@@ -850,9 +857,16 @@
           <label for="pDescription" class="block text-[11px] font-medium text-muted mb-1">Goal / Summary</label>
           <textarea id="pDescription" rows="2" placeholder="Short description of what you are building..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent resize-y"></textarea>
         </div>
-        <div>
-          <label for="pNotes" class="block text-[11px] font-medium text-muted mb-1">Project notes</label>
-          <textarea id="pNotes" rows="3" placeholder="Wiring plan, pin assignments, or build checklist..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent resize-y"></textarea>
+        <div data-md-editor>
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <label for="pNotes" class="block text-[11px] font-medium text-muted">Project notes (Markdown)</label>
+            <div class="pb-segmented inline-flex rounded p-0.5" role="group" aria-label="Project notes mode">
+              <button type="button" data-md-mode="edit" class="h-6 px-2 rounded text-[11px] font-medium pb-seg-active">Edit</button>
+              <button type="button" data-md-mode="preview" class="h-6 px-2 rounded text-[11px] font-medium opacity-65">Preview</button>
+            </div>
+          </div>
+          <textarea id="pNotes" data-md-input rows="5" placeholder="Wiring plan, pin assignments, or build checklist (supports Markdown)..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent resize-y"></textarea>
+          <div data-md-preview class="hidden pb-well rounded p-3 min-h-[120px] max-h-64 overflow-y-auto pb-md"></div>
         </div>
       </div>
       <div class="px-5 py-3.5 border-t border-hairline-light flex items-center justify-between gap-2">
@@ -894,7 +908,7 @@
   <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded bg-ink text-paper text-xs font-medium opacity-0 pointer-events-none transition-opacity duration-200 shadow-lg">
   </div>
 
-  <script src="/static/workbench.js?v=25"></script>
-  <script src="/static/app.js?v=25"></script>
+  <script src="/static/workbench.js?v=26"></script>
+  <script src="/static/app.js?v=26"></script>
 </body>
 </html>

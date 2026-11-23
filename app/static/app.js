@@ -81,6 +81,152 @@ function escapeHTML(str) {
     .replace(/"/g, '&quot;');
 }
 
+function _renderInlineMd(escapedLine) {
+  let s = escapedLine;
+  // Inline code first (protect contents from bold/italic formatting)
+  const codeSpans = [];
+  s = s.replace(/`([^`]+)`/g, (_, code) => {
+    const idx = codeSpans.length;
+    codeSpans.push(`<code>${code}</code>`);
+    return `\u0000CODE${idx}\u0000`;
+  });
+  // Safe links [label](https://...)
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => {
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+  // Bold & italic
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^\*])\*([^\*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+  // Restore inline code
+  s = s.replace(/\u0000CODE(\d+)\u0000/g, (_, i) => codeSpans[Number(i)] || '');
+  return s;
+}
+
+function renderMarkdown(raw) {
+  const text = String(raw || '').replace(/\r\n?/g, '\n').trim();
+  if (!text) return '<p class="text-muted text-xs italic">Nothing to preview yet.</p>';
+
+  const lines = text.split('\n');
+  const out = [];
+  let inCode = false;
+  let codeLines = [];
+  let listType = null; // 'ul' | 'ol' | null
+
+  const closeList = () => {
+    if (listType) {
+      out.push(`</${listType}>`);
+      listType = null;
+    }
+  };
+
+  for (const rawLine of lines) {
+    if (rawLine.trim().startsWith('```')) {
+      closeList();
+      if (!inCode) {
+        inCode = true;
+        codeLines = [];
+      } else {
+        out.push(`<pre><code>${escapeHTML(codeLines.join('\n'))}</code></pre>`);
+        inCode = false;
+        codeLines = [];
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(rawLine);
+      continue;
+    }
+
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      closeList();
+      continue;
+    }
+
+    if (/^([-*_]){3,}$/.test(trimmed)) {
+      closeList();
+      out.push('<hr />');
+      continue;
+    }
+
+    const hMatch = trimmed.match(/^(#{1,3})\s+(.*)$/);
+    if (hMatch) {
+      closeList();
+      const lvl = hMatch[1].length;
+      out.push(`<h${lvl}>${_renderInlineMd(escapeHTML(hMatch[2]))}</h${lvl}>`);
+      continue;
+    }
+
+    if (trimmed.startsWith('> ')) {
+      closeList();
+      out.push(`<blockquote>${_renderInlineMd(escapeHTML(trimmed.slice(2)))}</blockquote>`);
+      continue;
+    }
+
+    const taskMatch = trimmed.match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
+    if (taskMatch) {
+      if (listType !== 'ul') {
+        closeList();
+        out.push('<ul>');
+        listType = 'ul';
+      }
+      const checked = taskMatch[1].toLowerCase() === 'x' ? 'checked' : '';
+      out.push(`<li class="pb-md-task"><input type="checkbox" ${checked} disabled /><span>${_renderInlineMd(escapeHTML(taskMatch[2]))}</span></li>`);
+      continue;
+    }
+
+    const ulMatch = trimmed.match(/^[-*]\s+(.*)$/);
+    if (ulMatch) {
+      if (listType !== 'ul') {
+        closeList();
+        out.push('<ul>');
+        listType = 'ul';
+      }
+      out.push(`<li>${_renderInlineMd(escapeHTML(ulMatch[1]))}</li>`);
+      continue;
+    }
+
+    const olMatch = trimmed.match(/^\d+\.\s+(.*)$/);
+    if (olMatch) {
+      if (listType !== 'ol') {
+        closeList();
+        out.push('<ol>');
+        listType = 'ol';
+      }
+      out.push(`<li>${_renderInlineMd(escapeHTML(olMatch[1]))}</li>`);
+      continue;
+    }
+
+    closeList();
+    out.push(`<p>${_renderInlineMd(escapeHTML(trimmed))}</p>`);
+  }
+
+  if (inCode) {
+    out.push(`<pre><code>${escapeHTML(codeLines.join('\n'))}</code></pre>`);
+  }
+  closeList();
+  return out.join('');
+}
+
+function setMdEditorMode(editorEl, mode) {
+  if (!editorEl) return;
+  const input = editorEl.querySelector('[data-md-input]');
+  const preview = editorEl.querySelector('[data-md-preview]');
+  if (!input || !preview) return;
+  const isPreview = mode === 'preview';
+  if (isPreview) {
+    preview.innerHTML = renderMarkdown(input.value);
+  }
+  input.classList.toggle('hidden', isPreview);
+  preview.classList.toggle('hidden', !isPreview);
+  editorEl.querySelectorAll('button[data-md-mode]').forEach((btn) => {
+    const act = btn.dataset.mdMode === mode;
+    btn.classList.toggle('pb-seg-active', act);
+    btn.classList.toggle('opacity-65', !act);
+  });
+}
+
 function imageUrl(filename) {
   if (!filename) return '';
   if (filename.startsWith('blob:') || filename.startsWith('data:') || filename.startsWith('/images/')) {
@@ -1071,12 +1217,25 @@ function renderProjects() {
             }
           </div>
 
+          ${
+            proj.notes
+              ? `<details class="border-t border-line bg-ink/[0.015] group">
+                   <summary class="px-4 py-2 text-xs font-medium text-muted hover:text-ink cursor-pointer flex items-center justify-between list-none">
+                     <span>Build notes</span>
+                     <span class="text-[11px] opacity-70 group-open:hidden">Show</span>
+                     <span class="text-[11px] opacity-70 hidden group-open:inline">Hide</span>
+                   </summary>
+                   <div class="px-4 pb-3.5 pt-1 pb-md">${renderMarkdown(proj.notes)}</div>
+                 </details>`
+              : ''
+          }
+
           <div class="px-4 py-2.5 border-t border-line bg-ink/[0.015] flex items-center justify-between gap-2">
             <div class="flex items-center gap-2">
               <button type="button" data-add-proj-item="${escapeHTML(proj.id)}" class="btn-secondary h-7 px-2.5 text-xs">+ Add part</button>
               <button type="button" data-add-proj-variant="${escapeHTML(proj.id)}" class="btn-secondary h-7 px-2.5 text-xs">+ Sub-project</button>
             </div>
-            ${proj.notes ? `<span class="text-[11px] text-muted truncate max-w-[14rem]" title="${escapeHTML(proj.notes)}">${escapeHTML(proj.notes)}</span>` : ''}
+            <button type="button" data-edit-project="${escapeHTML(proj.id)}" class="text-[11px] text-muted hover:text-ink">Edit notes</button>
           </div>
         </div>
       `;
@@ -1207,9 +1366,16 @@ function renderContextDrawer() {
           <label class="block text-[11px] font-medium text-muted mb-1">Store URL</label>
           <input id="ctxShopUrl" type="url" value="${escapeHTML(it.url || '')}" class="w-full h-9 px-3 text-sm rounded bg-canvas-light border border-hairline-light" />
         </div>
-        <div>
-          <label class="block text-[11px] font-medium text-muted mb-1">Why it is on the list</label>
-          <textarea id="ctxShopWhy" rows="3" placeholder="Explain why this part is needed or which build option it belongs to..." class="w-full p-2.5 text-sm rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(it.why_needed || it.notes || '')}</textarea>
+        <div data-md-editor>
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <label class="block text-[11px] font-medium text-muted">Why it is on the list (Markdown)</label>
+            <div class="pb-segmented inline-flex rounded p-0.5" role="group" aria-label="Reason notes mode">
+              <button type="button" data-md-mode="edit" class="h-6 px-2 rounded text-[11px] font-medium pb-seg-active">Edit</button>
+              <button type="button" data-md-mode="preview" class="h-6 px-2 rounded text-[11px] font-medium opacity-65">Preview</button>
+            </div>
+          </div>
+          <textarea id="ctxShopWhy" data-md-input rows="3" placeholder="Explain why this part is needed or which build option it belongs to (supports Markdown)..." class="w-full p-2.5 text-sm rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(it.why_needed || it.notes || '')}</textarea>
+          <div data-md-preview class="hidden pb-well rounded p-3 min-h-[84px] max-h-56 overflow-y-auto pb-md"></div>
         </div>
       </form>
     `;
@@ -1275,10 +1441,17 @@ function renderContextDrawer() {
           </div>
         </div>
 
-        <div>
-          <label class="block text-[11px] font-medium text-muted mb-1">Project-specific notes</label>
+        <div data-md-editor>
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <label class="block text-[11px] font-medium text-muted">Project-specific notes (Markdown)</label>
+            <div class="pb-segmented inline-flex rounded p-0.5" role="group" aria-label="Project item notes mode">
+              <button type="button" data-md-mode="edit" class="h-6 px-2 rounded text-[11px] font-medium pb-seg-active">Edit</button>
+              <button type="button" data-md-mode="preview" class="h-6 px-2 rounded text-[11px] font-medium opacity-65">Preview</button>
+            </div>
+          </div>
           <p class="text-[11px] text-muted mb-1.5">Saved only for <strong class="text-ink">${escapeHTML(proj.name)}</strong>. Does not change this part's general inventory notes.</p>
-          <textarea id="ctxProjNotes" rows="5" placeholder="e.g., Wire tilt switch to GPIO4 with INPUT_PULLUP..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(pItem.project_notes || '')}</textarea>
+          <textarea id="ctxProjNotes" data-md-input rows="5" placeholder="e.g., Wire tilt switch to GPIO4 with INPUT_PULLUP (supports Markdown)..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(pItem.project_notes || '')}</textarea>
+          <div data-md-preview class="hidden pb-well rounded p-3 min-h-[120px] max-h-64 overflow-y-auto pb-md"></div>
         </div>
       </div>
     `;
@@ -1304,6 +1477,8 @@ function openProjectModal(projectId) {
   document.getElementById('pStatus').value = proj ? proj.status : 'planning';
   document.getElementById('pDescription').value = proj ? proj.description || '' : '';
   document.getElementById('pNotes').value = proj ? proj.notes || '' : '';
+  const pNotesEd = document.getElementById('pNotes')?.closest('[data-md-editor]');
+  if (pNotesEd) setMdEditorMode(pNotesEd, 'edit');
 
   const delArea = document.getElementById('projectDeleteArea');
   delArea.classList.toggle('hidden', !proj);
@@ -2024,7 +2199,7 @@ function renderDrawerPreview(part) {
   `;
 
   const notesTabHtml = part.notes
-    ? `<p class="text-[15px] leading-[1.6] whitespace-pre-line">${renderWithGlossaryTooltips(part.notes)}</p>`
+    ? `<div class="pb-md">${renderMarkdown(part.notes)}</div>`
     : `<div class="text-center py-10 space-y-3">
          <p class="text-sm text-muted">This part has no notes.</p>
          <button type="button" data-action="edit-details" class="btn-secondary h-8 px-3.5 text-[13px]">Write a note</button>
@@ -2220,6 +2395,8 @@ function openDrawer(mode, partId = null, initialTab = 'basics') {
       document.getElementById('fVisualTell').value = part.visual_tell || '';
       document.getElementById('fWarning').value = part.warning || '';
       document.getElementById('fNotes').value = part.notes || '';
+      const fNotesEd = document.getElementById('fNotes')?.closest('[data-md-editor]');
+      if (fNotesEd) setMdEditorMode(fNotesEd, 'edit');
       document.getElementById('fSourceUrl').value = part.source_url || '';
       document.getElementById('fPinoutUrl').value = part.pinout_url || '';
 
@@ -3263,6 +3440,14 @@ function bindEvents() {
     if (e.target.id === 'projectActionModal') closeProjectActionModal();
   });
   document.getElementById('saveProjectActionModalBtn').addEventListener('click', saveProjectActionModal);
+
+  // Global Markdown Edit / Preview toggle for all notes panels
+  document.addEventListener('click', (e) => {
+    const mdBtn = e.target.closest('button[data-md-mode]');
+    if (!mdBtn) return;
+    const editor = mdBtn.closest('[data-md-editor]');
+    if (editor) setMdEditorMode(editor, mdBtn.dataset.mdMode);
+  });
 
   // Browser Back / Forward URL Sync
   window.addEventListener('popstate', () => {

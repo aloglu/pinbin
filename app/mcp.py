@@ -61,6 +61,8 @@ SERVER_INSTRUCTIONS = (
     "Instead, add unbought items to the shopping list (create_shopping_item, with fetch_metadata=true to grab product photos) "
     "and link both owned parts and shopping items into first-class projects (create_project, create_project_variant, add_project_item) "
     "with project-scoped notes in project_notes. "
+    "All notes fields (notes, project_notes, why_needed) render as Markdown—write them in clean Markdown "
+    "(short headings, bullet lists, inline code for pins/values, and checklists where helpful). "
     "When writing descriptions, warnings, notes, or glossary terms, prefer short, plain ASD-STE100 "
     "sentences (active voice, imperative mood for warnings/rules of thumb). "
     f"Valid part categories: {', '.join(CATEGORIES)}. "

@@ -31,7 +31,7 @@ SYSTEM_PROMPT = (
     "Keep what_it_does beginner-friendly (1-2 short sentences). "
     "Keep visual_tell a concise 1-line physical clue to identify the part in a bin. "
     "Put voltage, polarity, or lookalike cautions in warning (or empty string if none). "
-    "Put brief pin-order, I2C/SPI address, or wiring facts in notes (or empty string). "
+    "Put brief pin-order, I2C/SPI address, or wiring facts in notes formatted as clean Markdown (short bullet points and inline `code` for pins/addresses, or empty string). "
     "For pinout_url, provide a direct, real official documentation or pinout reference URL if found; otherwise empty string. "
     "For image_search_query, provide the short canonical part code (e.g. 'ESP32', 'HC-SR04', 'LM35', 'RC522')."
 )
