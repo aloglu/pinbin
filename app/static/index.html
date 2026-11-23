@@ -6,8 +6,8 @@
   <title>Pinbin</title>
   <link rel="preload" href="/static/fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin />
   <!-- styles.css first: Tailwind utilities (such as "hidden") must win over component styles. -->
-  <link rel="stylesheet" href="/static/styles.css?v=24" />
-  <link rel="stylesheet" href="/static/tailwind.css?v=24" />
+  <link rel="stylesheet" href="/static/styles.css?v=25" />
+  <link rel="stylesheet" href="/static/tailwind.css?v=25" />
 </head>
 <body class="font-sans antialiased min-h-screen">
 
@@ -155,14 +155,21 @@
     <!-- PROJECTS                                                              -->
     <!-- ===================================================================== -->
     <section id="projectsView" class="hidden">
-      <div class="mb-6">
-        <h1 class="pb-page-title">Projects</h1>
-        <p class="pb-page-lede">Parts that are on a project now. Tear down a project to put its parts back in their bins.</p>
+      <div class="flex flex-wrap items-end justify-between gap-3 mb-6">
+        <div>
+          <h1 class="pb-page-title">Projects</h1>
+          <p class="pb-page-lede">Plan builds with owned parts and parts to buy. Compare sub-project options and keep project notes separate from inventory.</p>
+        </div>
+        <button id="newProjectBtn" type="button" class="btn-primary h-9 px-3.5 text-sm inline-flex items-center gap-1.5 shrink-0">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span>New project</span>
+        </button>
       </div>
       <div id="projectsGrid" class="grid grid-cols-1 lg:grid-cols-2 gap-4"></div>
       <div id="projectsEmptyState" class="hidden py-20 px-6 text-center border border-dashed border-line rounded-md">
-        <p class="text-base font-semibold">No parts are on a project</p>
-        <p class="text-sm text-muted mt-1 max-w-md mx-auto">Open a part, select Edit, and type a project name in <strong class="text-ink">Used in project</strong>. The part then shows here.</p>
+        <p class="text-base font-semibold">No projects yet</p>
+        <p class="text-sm text-muted mt-1 max-w-md mx-auto">Create a project to link owned inventory parts and shopping list items together, with optional build variants.</p>
+        <button id="emptyNewProjectBtn" type="button" class="btn-primary mt-4 h-8 px-3.5 text-sm">New project</button>
       </div>
     </section>
 
@@ -173,18 +180,26 @@
       <div class="flex flex-wrap items-end justify-between gap-3 mb-6">
         <div>
           <h1 class="pb-page-title">Shopping</h1>
-          <p class="pb-page-lede">Parts to buy, and parts that are low in their bins.</p>
+          <p class="pb-page-lede">Parts to buy, grouped by project or store, plus bins that are low.</p>
         </div>
-        <button id="copyShoppingChecklistBtn" type="button" class="btn-secondary h-8 px-3 text-sm">Copy list</button>
+        <div class="flex items-center gap-2 shrink-0">
+          <div class="pb-segmented inline-flex items-center rounded p-0.5" role="group" aria-label="Group shopping items">
+            <button type="button" data-shop-group="project" class="h-7 px-2.5 rounded-md text-xs font-medium transition-colors">By project</button>
+            <button type="button" data-shop-group="store" class="h-7 px-2.5 rounded-md text-xs font-medium transition-colors">By store</button>
+            <button type="button" data-shop-group="flat" class="h-7 px-2.5 rounded-md text-xs font-medium transition-colors">All</button>
+          </div>
+          <button id="copyShoppingChecklistBtn" type="button" class="btn-secondary h-8 px-3 text-sm">Copy list</button>
+        </div>
       </div>
 
       <!-- Two add methods side by side; the columns line up with the two lists below. -->
-      <div class="elevated-card rounded-md p-4 mb-8">
+      <div class="elevated-card rounded-md p-4 mb-6">
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-x-8 gap-y-4">
           <div>
             <label for="shopUrlInput" class="block mb-1.5">Add from a store page</label>
             <div class="flex flex-col sm:flex-row gap-2">
               <input id="shopUrlInput" type="url" placeholder="https://store.example/product/..." class="w-full sm:w-auto sm:flex-1 min-w-0 h-9 px-3 text-sm" />
+              <input id="shopTagInput" type="text" placeholder="Project / tag" aria-label="Project or tag" class="w-full sm:w-32 min-w-0 h-9 px-2.5 text-sm" />
               <button id="shopFetchAddBtn" type="button" class="btn-primary h-9 px-3.5 text-sm shrink-0">Get details and add</button>
             </div>
           </div>
@@ -201,10 +216,12 @@
         <p id="shopAddStatus" class="hidden mt-3 text-[13px] text-muted"></p>
       </div>
 
+      <div id="shoppingTagFilterBar" class="hidden flex flex-wrap items-center gap-1.5 mb-5"></div>
+
       <div class="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div>
           <h2 class="pb-section-label mb-2.5">To buy</h2>
-          <div id="shoppingWishlistGrid" class="space-y-2"></div>
+          <div id="shoppingWishlistGrid" class="space-y-4"></div>
           <p id="shoppingWishlistEmpty" class="hidden text-sm text-muted py-6 px-4 border border-dashed border-line rounded-md">Nothing to buy. Paste a store link above to add a part.</p>
         </div>
         <div>
@@ -778,11 +795,106 @@
     </div>
   </div>
 
+  <!-- ======================================================================= -->
+  <!-- 10. CONTEXT SLIDE-OVER DRAWER (Shopping / Planned & Project Item)       -->
+  <!-- ======================================================================= -->
+  <div id="contextDrawerRoot" class="fixed inset-0 z-50 pointer-events-none drawer-closed" aria-hidden="true">
+    <div id="contextDrawerBackdrop" class="absolute inset-0 bg-black/45 dark:bg-black/65 opacity-0"></div>
+    <aside
+      id="contextDrawerPanel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="contextDrawerHeading"
+      class="absolute bottom-0 inset-x-0 sm:inset-y-0 sm:left-auto sm:right-0 w-full sm:max-w-xl max-h-[92vh] sm:max-h-none bg-surface-light border-t sm:border-t-0 sm:border-l border-hairline-light rounded-t-2xl sm:rounded-none flex flex-col overflow-hidden"
+    >
+      <div class="h-14 px-5 pb-divider-b flex items-center justify-between gap-2 shrink-0">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <span id="contextDrawerBadge" class="pb-badge pb-badge-neutral shrink-0"></span>
+          <h2 id="contextDrawerHeading" class="text-[15px] font-semibold truncate">Item</h2>
+        </div>
+        <button id="closeContextDrawerBtn" type="button" class="btn-icon h-8 w-8 rounded flex items-center justify-center shrink-0" aria-label="Close">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div id="contextDrawerBody" class="flex-1 overflow-y-auto px-5 py-5 space-y-5"></div>
+      <div id="contextDrawerFooter" class="px-5 py-3.5 border-t border-hairline-light bg-surface-light flex items-center justify-between gap-3 shrink-0"></div>
+    </aside>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- 11. PROJECT CREATE / EDIT MODAL                                         -->
+  <!-- ======================================================================= -->
+  <div id="projectModal" class="hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectModalHeading">
+    <div class="pb-modal w-full max-w-lg overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
+        <h3 id="projectModalHeading" class="text-sm font-semibold text-ink">New Project</h3>
+        <button id="closeProjectModalBtn" type="button" class="btn-icon h-8 w-8 rounded flex items-center justify-center" aria-label="Close">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="p-5 space-y-3.5 text-xs">
+        <div>
+          <label for="pName" class="block text-[11px] font-medium text-muted mb-1">Project name</label>
+          <input id="pName" type="text" placeholder="e.g., Smartwatch" class="w-full h-9 px-3 text-sm rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent" />
+        </div>
+        <div>
+          <label for="pStatus" class="block text-[11px] font-medium text-muted mb-1">Status</label>
+          <select id="pStatus" class="w-full h-9 px-2.5 text-xs rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent">
+            <option value="planning">Planning (parts stay free in bins)</option>
+            <option value="active">Active on bench (marks owned parts in use)</option>
+            <option value="completed">Completed</option>
+            <option value="archived">Archived</option>
+          </select>
+        </div>
+        <div>
+          <label for="pDescription" class="block text-[11px] font-medium text-muted mb-1">Goal / Summary</label>
+          <textarea id="pDescription" rows="2" placeholder="Short description of what you are building..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent resize-y"></textarea>
+        </div>
+        <div>
+          <label for="pNotes" class="block text-[11px] font-medium text-muted mb-1">Project notes</label>
+          <textarea id="pNotes" rows="3" placeholder="Wiring plan, pin assignments, or build checklist..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent resize-y"></textarea>
+        </div>
+      </div>
+      <div class="px-5 py-3.5 border-t border-hairline-light flex items-center justify-between gap-2">
+        <div id="projectDeleteArea" class="hidden items-center gap-2">
+          <button id="projectDeleteInitBtn" type="button" class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium">Delete project</button>
+          <div id="projectDeleteConfirmGroup" class="hidden items-center gap-1.5">
+            <button id="projectDeleteConfirmBtn" type="button" class="btn-danger h-8 px-2.5 rounded text-xs font-medium">Confirm</button>
+            <button id="projectDeleteCancelBtn" type="button" class="btn-secondary h-8 px-2.5 rounded text-xs font-medium">Cancel</button>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 ml-auto">
+          <button id="cancelProjectModalBtn" type="button" class="btn-secondary h-8 px-3 rounded text-xs font-medium">Cancel</button>
+          <button id="saveProjectModalBtn" type="button" class="btn-primary h-8 px-4 rounded text-xs font-medium">Save Project</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- 12. ADD ITEM / VARIANT TO PROJECT MODAL                                 -->
+  <!-- ======================================================================= -->
+  <div id="projectActionModal" class="hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectActionModalHeading">
+    <div class="pb-modal w-full max-w-md overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
+        <h3 id="projectActionModalHeading" class="text-sm font-semibold text-ink">Add to Project</h3>
+        <button id="closeProjectActionModalBtn" type="button" class="btn-icon h-8 w-8 rounded flex items-center justify-center" aria-label="Close">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div id="projectActionModalBody" class="p-5 space-y-3.5 text-xs"></div>
+      <div class="px-5 py-3.5 border-t border-hairline-light flex items-center justify-end gap-2">
+        <button id="cancelProjectActionModalBtn" type="button" class="btn-secondary h-8 px-3 rounded text-xs font-medium">Cancel</button>
+        <button id="saveProjectActionModalBtn" type="button" class="btn-primary h-8 px-4 rounded text-xs font-medium">Add</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Subtle Toast Notification -->
   <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded bg-ink text-paper text-xs font-medium opacity-0 pointer-events-none transition-opacity duration-200 shadow-lg">
   </div>
 
-  <script src="/static/workbench.js?v=24"></script>
-  <script src="/static/app.js?v=24"></script>
+  <script src="/static/workbench.js?v=25"></script>
+  <script src="/static/app.js?v=25"></script>
 </body>
 </html>

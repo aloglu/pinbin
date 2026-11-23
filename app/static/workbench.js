@@ -275,6 +275,9 @@ function renderWorkbench() {
   root.querySelectorAll('button[data-wb-sub]').forEach((btn) => {
     btn.addEventListener('click', () => {
       wbState.subTab = btn.dataset.wbSub;
+      if (typeof window.syncBenchUrl === 'function') {
+        window.syncBenchUrl(wbState.subTab);
+      }
       renderWorkbench();
     });
   });
@@ -913,6 +916,9 @@ function bindInteractiveGuideEvents() {
   root.querySelectorAll('button[data-wb-sub]').forEach((btn) => {
     btn.addEventListener('click', () => {
       wbState.subTab = btn.dataset.wbSub;
+      if (typeof window.syncBenchUrl === 'function') {
+        window.syncBenchUrl(wbState.subTab);
+      }
       renderWorkbench();
     });
   });

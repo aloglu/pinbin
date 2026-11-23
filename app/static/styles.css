@@ -888,34 +888,46 @@ button.pb-bin-tag:hover {
 /* ---------------------------------------------------------------------------
    Drawer
    --------------------------------------------------------------------------- */
-#drawerPanel {
+#drawerPanel,
+#contextDrawerPanel {
   transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
   background-color: rgb(var(--paper)) !important;
   border-color: rgb(var(--line)) !important;
 }
 /* Shadow only while open: a closed drawer sits just off-screen and its shadow would show at the edge. */
-.drawer-open #drawerPanel {
+.drawer-open #drawerPanel,
+.drawer-open #contextDrawerPanel {
   box-shadow: -16px 0 48px rgb(0 0 0 / 0.18);
 }
-.dark .drawer-open #drawerPanel {
+.dark .drawer-open #drawerPanel,
+.dark .drawer-open #contextDrawerPanel {
   box-shadow: -16px 0 48px rgb(0 0 0 / 0.55);
 }
-#drawerBackdrop {
+#drawerBackdrop,
+#contextDrawerBackdrop {
   transition: opacity 180ms ease;
 }
+.drawer-open #drawerBackdrop,
+.drawer-open #contextDrawerBackdrop {
+  opacity: 1 !important;
+}
 @media (max-width: 639px) {
-  .drawer-closed #drawerPanel {
+  .drawer-closed #drawerPanel,
+  .drawer-closed #contextDrawerPanel {
     transform: translateY(100%);
   }
-  .drawer-open #drawerPanel {
+  .drawer-open #drawerPanel,
+  .drawer-open #contextDrawerPanel {
     transform: translateY(0);
   }
 }
 @media (min-width: 640px) {
-  .drawer-closed #drawerPanel {
+  .drawer-closed #drawerPanel,
+  .drawer-closed #contextDrawerPanel {
     transform: translateX(100%);
   }
-  .drawer-open #drawerPanel {
+  .drawer-open #drawerPanel,
+  .drawer-open #contextDrawerPanel {
     transform: translateX(0);
   }
 }
@@ -958,6 +970,9 @@ button.pb-bin-tag:hover {
   #shoppingView,
   #glossaryView,
   #drawerRoot,
+  #contextDrawerRoot,
+  #projectModal,
+  #projectActionModal,
   #settingsModal,
   #lightboxModal,
   #restoreModal,

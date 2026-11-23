@@ -17,33 +17,50 @@ from fastapi.responses import JSONResponse, Response
 
 from app.config import CATEGORIES, Settings
 from app.db import (
+    PROJECT_STATUSES,
+    add_project_item,
     create_glossary_term,
     create_part,
+    create_project,
+    create_project_variant,
     create_shopping_item,
     delete_glossary_term,
     delete_part,
+    delete_project,
+    delete_project_item,
+    delete_project_variant,
     delete_shopping_item,
     get_part,
+    get_project,
+    get_shopping_item,
     list_glossary,
     list_parts,
+    list_projects,
     list_shopping_items,
     move_shopping_item_to_inventory,
     teardown_project,
     update_glossary_term,
     update_part,
+    update_project,
+    update_project_item,
+    update_project_variant,
     update_shopping_item,
 )
 from app.glossary_seed import GLOSSARY_CATEGORIES
 from app.images import safe_delete_image
+from app.scraper import ScrapeError, scrape_url
 
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 DEFAULT_PROTOCOL_VERSION = "2025-03-26"
 MAX_BATCH_UPDATES = 50
 
 SERVER_INSTRUCTIONS = (
-    "Pinbin is a personal electronics workbench inventory, shopping list, and glossary. "
-    "Use inventory_summary or list_parts to inspect available components, bins, and active projects "
-    "before suggesting builds or making updates. "
+    "Pinbin is a personal electronics workbench inventory, project planner, shopping list, and glossary. "
+    "Use inventory_summary or list_parts to inspect available components, bins, and projects before suggesting builds. "
+    "Keep inventory strictly for parts the user actually owns; never create quantity=0 inventory parts for unbought items. "
+    "Instead, add unbought items to the shopping list (create_shopping_item, with fetch_metadata=true to grab product photos) "
+    "and link both owned parts and shopping items into first-class projects (create_project, create_project_variant, add_project_item) "
+    "with project-scoped notes in project_notes. "
     "When writing descriptions, warnings, notes, or glossary terms, prefer short, plain ASD-STE100 "
     "sentences (active voice, imperative mood for warnings/rules of thumb). "
     f"Valid part categories: {', '.join(CATEGORIES)}. "
@@ -81,7 +98,19 @@ PART_WRITABLE_FIELDS = {
     "specs",
 }
 
-SHOPPING_WRITABLE_FIELDS = {"name", "url", "price", "quantity", "notes"}
+SHOPPING_WRITABLE_FIELDS = {
+    "name",
+    "url",
+    "price",
+    "quantity",
+    "notes",
+    "retailer",
+    "tag",
+    "category",
+    "specs",
+    "in_stock",
+    "why_needed",
+}
 GLOSSARY_WRITABLE_FIELDS = {"term", "category", "summary", "rule_of_thumb", "keywords"}
 
 
@@ -208,13 +237,29 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
         },
         {
             "name": "list_projects",
-            "description": "List all active bench projects and the parts currently assigned to each project.",
+            "description": "List all projects with their status, sub-project variants, owned and to-buy items, project notes, and readiness summary.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
             "annotations": {
                 "readOnlyHint": True,
                 "destructiveHint": False,
                 "idempotentHint": True,
                 "openWorldHint": False,
+            },
+        },
+        {
+            "name": "scrape_product_url",
+            "description": "Fetch a store product page safely to inspect its title, price, retailer, and stock status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": True,
             },
         },
         {
@@ -339,8 +384,148 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "create_project",
+            "description": "Create a new first-class project (planning, active, completed, or archived).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "status": {"type": "string", "enum": list(PROJECT_STATUSES), "default": "planning"},
+                    "notes": {"type": "string"},
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+        },
+        {
+            "name": "update_project",
+            "description": "Update a project's name, description, status, or notes by project_id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "status": {"type": "string", "enum": list(PROJECT_STATUSES)},
+                    "notes": {"type": "string"},
+                },
+                "required": ["project_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "delete_project",
+            "description": "Delete a project and its variant/item links (does not delete owned inventory parts or shopping items).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"project_id": {"type": "string"}},
+                "required": ["project_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "create_project_variant",
+            "description": "Create a sub-project / build option inside a project (e.g. 'Color IPS Build' vs 'E-Ink Build').",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "is_selected": {"type": "boolean", "default": False},
+                },
+                "required": ["project_id", "name"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+        },
+        {
+            "name": "update_project_variant",
+            "description": "Update or select a project variant (sub-project).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "variant_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "is_selected": {"type": "boolean"},
+                },
+                "required": ["project_id", "variant_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "delete_project_variant",
+            "description": "Delete a project variant by variant_id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "variant_id": {"type": "string"},
+                },
+                "required": ["project_id", "variant_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "add_project_item",
+            "description": "Link an owned inventory part (part_id) OR a shopping list item (shopping_item_id) to a project (and optional variant_id) with project-specific notes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "variant_id": {"type": ["string", "null"], "description": "Omit or null for Core/shared items."},
+                    "part_id": {"type": "string"},
+                    "shopping_item_id": {"type": "string"},
+                    "quantity_needed": {"type": "integer", "minimum": 1, "default": 1},
+                    "project_notes": {"type": "string", "description": "Notes shown only inside this project."},
+                },
+                "required": ["project_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "update_project_item",
+            "description": "Update project_notes, quantity_needed, or variant_id for a linked project item without modifying the part's inventory notes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "variant_id": {"type": ["string", "null"]},
+                    "quantity_needed": {"type": "integer", "minimum": 1},
+                    "project_notes": {"type": "string"},
+                },
+                "required": ["project_id", "item_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "remove_project_item",
+            "description": "Unlink a part or shopping item from a project.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                },
+                "required": ["project_id", "item_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
             "name": "teardown_project",
-            "description": "Return all parts assigned to a project back to general inventory (clears in_use_project).",
+            "description": "Return all parts assigned to a project back to general inventory (clears in_use_project and sets active project to planning).",
             "inputSchema": {
                 "type": "object",
                 "properties": {"project": {"type": "string"}},
@@ -356,7 +541,7 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
         },
         {
             "name": "create_shopping_item",
-            "description": "Add a part or supply to the Pinbin shopping list.",
+            "description": "Add a part or supply to the Pinbin shopping list. Set fetch_metadata=true (default) with a store URL to auto-download the product image and fill retailer/price/stock.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -364,7 +549,16 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                     "quantity": {"type": "integer", "minimum": 1, "default": 1},
                     "url": {"type": "string"},
                     "price": {"type": "string"},
+                    "retailer": {"type": "string"},
+                    "tag": {"type": "string", "description": "Group/project tag (e.g. 'Smartwatch')."},
+                    "category": {"type": "string", "enum": ["", *CATEGORIES]},
+                    "in_stock": {"type": "string", "enum": ["", "in_stock", "out_of_stock"]},
+                    "why_needed": {"type": "string", "description": "Short reason why this item is on the list."},
                     "notes": {"type": "string"},
+                    "specs": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "project_id": {"type": "string", "description": "Optional project_id to link this shopping item to immediately."},
+                    "variant_id": {"type": ["string", "null"], "description": "Optional variant_id inside project_id (null for Core)."},
+                    "fetch_metadata": {"type": "boolean", "default": True},
                 },
                 "required": ["name"],
                 "additionalProperties": False,
@@ -373,12 +567,12 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                 "readOnlyHint": False,
                 "destructiveHint": False,
                 "idempotentHint": False,
-                "openWorldHint": False,
+                "openWorldHint": True,
             },
         },
         {
             "name": "update_shopping_item",
-            "description": "Update an existing shopping list item by item_id.",
+            "description": "Update an existing shopping list item by item_id. Set fetch_metadata=true to refresh its product image/stock from url.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -387,7 +581,14 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                     "quantity": {"type": "integer", "minimum": 1},
                     "url": {"type": "string"},
                     "price": {"type": "string"},
+                    "retailer": {"type": "string"},
+                    "tag": {"type": "string"},
+                    "category": {"type": "string", "enum": ["", *CATEGORIES]},
+                    "in_stock": {"type": "string", "enum": ["", "in_stock", "out_of_stock"]},
+                    "why_needed": {"type": "string"},
                     "notes": {"type": "string"},
+                    "specs": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "fetch_metadata": {"type": "boolean", "default": False},
                 },
                 "required": ["item_id"],
                 "additionalProperties": False,
@@ -396,7 +597,7 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                 "readOnlyHint": False,
                 "destructiveHint": False,
                 "idempotentHint": True,
-                "openWorldHint": False,
+                "openWorldHint": True,
             },
         },
         {
@@ -541,12 +742,32 @@ def _strip_internal_image_paths(part: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> Any:
+def _strip_project_image_paths(proj: dict[str, Any]) -> dict[str, Any]:
+    out = dict(proj)
+    clean_items = []
+    for it in out.get("items") or []:
+        c = dict(it)
+        c["has_photo"] = bool((c.pop("image_path", "") or "").strip())
+        clean_items.append(c)
+    out["items"] = clean_items
+    return out
+
+
+async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> Any:
     write_tool_names = {
         "create_part",
         "update_part",
         "batch_update_parts",
         "delete_part",
+        "create_project",
+        "update_project",
+        "delete_project",
+        "create_project_variant",
+        "update_project_variant",
+        "delete_project_variant",
+        "add_project_item",
+        "update_project_item",
+        "remove_project_item",
         "teardown_project",
         "create_shopping_item",
         "update_shopping_item",
@@ -587,19 +808,36 @@ def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> Any:
         return _strip_internal_image_paths(part)
 
     if name == "list_projects":
-        parts = list_parts(settings.db_path, in_use=True)
-        grouped: dict[str, list[dict[str, Any]]] = {}
-        for p in parts:
-            proj = (p.get("in_use_project") or "").strip()
-            if proj:
-                grouped.setdefault(proj, []).append(_compact_part(p))
-        return {"project_count": len(grouped), "projects": grouped}
+        projs = [_strip_project_image_paths(p) for p in list_projects(settings.db_path)]
+        return {"project_count": len(projs), "projects": projs}
+
+    if name == "scrape_product_url":
+        url = str(args.get("url") or "").strip()
+        if not url:
+            raise McpToolError("url is required")
+        try:
+            scraped = await scrape_url(url, settings.images_dir, settings.max_upload_bytes)
+        except ScrapeError as exc:
+            raise McpToolError(str(exc)) from exc
+        # Do not keep an orphaned image on a read-only probe
+        if scraped.get("image_path"):
+            safe_delete_image(scraped["image_path"], settings.images_dir)
+        return {
+            "title": scraped.get("title", ""),
+            "description": scraped.get("description", ""),
+            "price": scraped.get("price", ""),
+            "in_stock": scraped.get("in_stock", ""),
+            "retailer": scraped.get("retailer", ""),
+            "has_image": bool(scraped.get("image_path")),
+            "source_url": scraped.get("source_url", url),
+        }
 
     if name == "list_shopping":
-        shopping = [
-            {k: v for k, v in item.items() if k != "image_path"}
-            for item in list_shopping_items(settings.db_path)
-        ]
+        shopping = []
+        for item in list_shopping_items(settings.db_path):
+            c = dict(item)
+            c["has_photo"] = bool((c.pop("image_path", "") or "").strip())
+            shopping.append(c)
         result: dict[str, Any] = {"shopping_count": len(shopping), "shopping_items": shopping}
         if bool(args.get("include_low_stock", True)):
             low = [_compact_part(p) for p in list_parts(settings.db_path, low_stock=True)]
@@ -687,6 +925,102 @@ def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> Any:
         safe_delete_image(deleted.get("pinout_image_path", ""), settings.images_dir)
         return {"status": "deleted", "id": part_id, "name": deleted.get("name", "")}
 
+    if name == "create_project":
+        try:
+            created = create_project(settings.db_path, args)
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
+        return _strip_project_image_paths(created)
+
+    if name == "update_project":
+        project_id = str(args.get("project_id") or "").strip()
+        if not project_id:
+            raise McpToolError("project_id is required")
+        try:
+            updated = update_project(settings.db_path, project_id, args)
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
+        if updated is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        return _strip_project_image_paths(updated)
+
+    if name == "delete_project":
+        project_id = str(args.get("project_id") or "").strip()
+        if not project_id:
+            raise McpToolError("project_id is required")
+        deleted = delete_project(settings.db_path, project_id)
+        if deleted is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        return {"status": "deleted", "id": project_id, "name": deleted.get("name", "")}
+
+    if name == "create_project_variant":
+        project_id = str(args.get("project_id") or "").strip()
+        if not project_id:
+            raise McpToolError("project_id is required")
+        try:
+            created = create_project_variant(settings.db_path, project_id, args)
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
+        if created is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        return created
+
+    if name == "update_project_variant":
+        project_id = str(args.get("project_id") or "").strip()
+        variant_id = str(args.get("variant_id") or "").strip()
+        if not project_id or not variant_id:
+            raise McpToolError("project_id and variant_id are required")
+        try:
+            updated = update_project_variant(settings.db_path, project_id, variant_id, args)
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
+        if updated is None:
+            raise McpToolError(f"Variant not found: {variant_id}")
+        return updated
+
+    if name == "delete_project_variant":
+        project_id = str(args.get("project_id") or "").strip()
+        variant_id = str(args.get("variant_id") or "").strip()
+        if not project_id or not variant_id:
+            raise McpToolError("project_id and variant_id are required")
+        if not delete_project_variant(settings.db_path, project_id, variant_id):
+            raise McpToolError(f"Variant not found: {variant_id}")
+        return {"status": "deleted", "id": variant_id}
+
+    if name == "add_project_item":
+        project_id = str(args.get("project_id") or "").strip()
+        if not project_id:
+            raise McpToolError("project_id is required")
+        try:
+            created = add_project_item(settings.db_path, project_id, args)
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
+        if created is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        return created
+
+    if name == "update_project_item":
+        project_id = str(args.get("project_id") or "").strip()
+        item_id = str(args.get("item_id") or "").strip()
+        if not project_id or not item_id:
+            raise McpToolError("project_id and item_id are required")
+        try:
+            updated = update_project_item(settings.db_path, project_id, item_id, args)
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
+        if updated is None:
+            raise McpToolError(f"Project item not found: {item_id}")
+        return updated
+
+    if name == "remove_project_item":
+        project_id = str(args.get("project_id") or "").strip()
+        item_id = str(args.get("item_id") or "").strip()
+        if not project_id or not item_id:
+            raise McpToolError("project_id and item_id are required")
+        if not delete_project_item(settings.db_path, project_id, item_id):
+            raise McpToolError(f"Project item not found: {item_id}")
+        return {"status": "deleted", "id": item_id}
+
     if name == "teardown_project":
         project = str(args.get("project") or "").strip()
         if not project:
@@ -700,22 +1034,75 @@ def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> Any:
             raise McpToolError("name is required")
         data = {k: v for k, v in args.items() if k in SHOPPING_WRITABLE_FIELDS}
         data["name"] = item_name
+        fetch_meta = bool(args.get("fetch_metadata", True))
+        if fetch_meta and data.get("url"):
+            try:
+                scraped = await scrape_url(str(data["url"]), settings.images_dir, settings.max_upload_bytes)
+                if scraped.get("image_path"):
+                    data["image_path"] = scraped["image_path"]
+                if not data.get("price") and scraped.get("price"):
+                    data["price"] = scraped["price"]
+                if not data.get("retailer") and scraped.get("retailer"):
+                    data["retailer"] = scraped["retailer"]
+                if not data.get("in_stock") and scraped.get("in_stock"):
+                    data["in_stock"] = scraped["in_stock"]
+            except ScrapeError:
+                pass
         created = create_shopping_item(settings.db_path, data)
-        created.pop("image_path", None)
+        project_id = str(args.get("project_id") or "").strip()
+        if project_id:
+            try:
+                add_project_item(
+                    settings.db_path,
+                    project_id,
+                    {
+                        "shopping_item_id": created["id"],
+                        "variant_id": args.get("variant_id"),
+                        "quantity_needed": created["quantity"],
+                        "project_notes": data.get("why_needed") or "",
+                    },
+                )
+                refreshed = get_shopping_item(settings.db_path, created["id"])
+                if refreshed:
+                    created = refreshed
+            except ValueError:
+                pass
+        created["has_photo"] = bool((created.pop("image_path", "") or "").strip())
         return created
 
     if name == "update_shopping_item":
         item_id = str(args.get("item_id") or "").strip()
         if not item_id:
             raise McpToolError("item_id is required")
+        existing = get_shopping_item(settings.db_path, item_id)
+        if existing is None:
+            raise McpToolError(f"Shopping item not found: {item_id}")
         updates = {k: v for k, v in args.items() if k in SHOPPING_WRITABLE_FIELDS}
+        fetch_meta = bool(args.get("fetch_metadata", False))
+        target_url = str(updates.get("url") or existing.get("url") or "").strip()
+        if fetch_meta and target_url:
+            try:
+                scraped = await scrape_url(target_url, settings.images_dir, settings.max_upload_bytes)
+                if scraped.get("image_path"):
+                    old_img = existing.get("image_path") or ""
+                    updates["image_path"] = scraped["image_path"]
+                    if old_img and old_img != scraped["image_path"]:
+                        safe_delete_image(old_img, settings.images_dir)
+                if not updates.get("price") and not existing.get("price") and scraped.get("price"):
+                    updates["price"] = scraped["price"]
+                if scraped.get("retailer"):
+                    updates["retailer"] = scraped["retailer"]
+                if scraped.get("in_stock") and "in_stock" not in updates:
+                    updates["in_stock"] = scraped["in_stock"]
+            except ScrapeError:
+                pass
         try:
             updated = update_shopping_item(settings.db_path, item_id, updates)
         except ValueError as exc:
             raise McpToolError(str(exc)) from exc
         if updated is None:
             raise McpToolError(f"Shopping item not found: {item_id}")
-        updated.pop("image_path", None)
+        updated["has_photo"] = bool((updated.pop("image_path", "") or "").strip())
         return updated
 
     if name == "delete_shopping_item":
@@ -797,13 +1184,13 @@ RESOURCES = [
 ]
 
 
-def _read_resource(settings: Settings, uri: str) -> dict[str, Any]:
+async def _read_resource(settings: Settings, uri: str) -> dict[str, Any]:
     if uri == "pinbin://inventory/summary":
         payload: Any = _compute_inventory_summary(settings)
     elif uri == "pinbin://inventory/parts":
         payload = [_compact_part(p) for p in list_parts(settings.db_path)]
     elif uri == "pinbin://shopping":
-        payload = _execute_tool(settings, "list_shopping", {"include_low_stock": True})
+        payload = await _execute_tool(settings, "list_shopping", {"include_low_stock": True})
     elif uri == "pinbin://glossary":
         payload = list_glossary(settings.db_path)
     else:
@@ -828,7 +1215,7 @@ def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
 
 
-def _handle_single_rpc(settings: Settings, msg: Any) -> dict[str, Any] | None:
+async def _handle_single_rpc(settings: Settings, msg: Any) -> dict[str, Any] | None:
     """Process one JSON-RPC 2.0 message. Returns None for notifications."""
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
         req_id = msg.get("id") if isinstance(msg, dict) else None
@@ -856,7 +1243,7 @@ def _handle_single_rpc(settings: Settings, msg: Any) -> dict[str, Any] | None:
                     "tools": {"listChanged": False},
                     "resources": {"subscribe": False, "listChanged": False},
                 },
-                "serverInfo": {"name": "pinbin", "version": "1.0.0"},
+                "serverInfo": {"name": "pinbin", "version": "1.1.0"},
                 "instructions": SERVER_INSTRUCTIONS,
             },
         )
@@ -878,7 +1265,7 @@ def _handle_single_rpc(settings: Settings, msg: Any) -> dict[str, Any] | None:
             return _jsonrpc_error(req_id, -32602, "Tool arguments must be a JSON object")
 
         try:
-            result = _execute_tool(settings, tool_name, tool_args)
+            result = await _execute_tool(settings, tool_name, tool_args)
             return _jsonrpc_result(
                 req_id,
                 {
@@ -911,7 +1298,7 @@ def _handle_single_rpc(settings: Settings, msg: Any) -> dict[str, Any] | None:
     if method == "resources/read":
         uri = str(params.get("uri") or "").strip()
         try:
-            return _jsonrpc_result(req_id, _read_resource(settings, uri))
+            return _jsonrpc_result(req_id, await _read_resource(settings, uri))
         except KeyError:
             return _jsonrpc_error(req_id, -32602, f"Unknown resource: {uri}")
 
@@ -933,12 +1320,16 @@ async def handle_mcp_post(request: Request, settings: Settings) -> Response:
             return JSONResponse(
                 status_code=400, content=_jsonrpc_error(None, -32600, "Invalid Request: empty batch")
             )
-        responses = [r for r in (_handle_single_rpc(settings, item) for item in payload) if r is not None]
+        responses = []
+        for item in payload:
+            r = await _handle_single_rpc(settings, item)
+            if r is not None:
+                responses.append(r)
         if not responses:
             return Response(status_code=202)
         return JSONResponse(status_code=200, content=responses)
 
-    response_obj = _handle_single_rpc(settings, payload)
+    response_obj = await _handle_single_rpc(settings, payload)
     if response_obj is None:
         return Response(status_code=202)
     return JSONResponse(status_code=200, content=response_obj)

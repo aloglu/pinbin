@@ -13,8 +13,15 @@ const DEFAULT_CATEGORIES = [
 
 const state = {
   parts: [],
+  projects: [],
   glossary: [],
   shoppingItems: [],
+  shoppingGroupBy: 'project', // 'project' | 'store' | 'flat'
+  shoppingTagFilter: 'All',
+  projectActiveTab: {}, // projectId -> 'all' | 'core' | variantId
+  contextDrawer: null, // { type: 'shopping' | 'project_part', id, projectId?, projectItemId? }
+  editingProjectId: null,
+  projectAction: null, // { mode: 'variant' | 'item', projectId }
   categories: ['All', ...DEFAULT_CATEGORIES],
   glossaryCategories: [
     'All',
@@ -261,6 +268,17 @@ async function loadShopping() {
   try {
     state.shoppingItems = await apiFetch('/api/shopping');
     updateNavBadges();
+    if (state.activePage === 'shopping') renderShopping();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+async function loadProjects() {
+  try {
+    state.projects = await apiFetch('/api/projects');
+    updateNavBadges();
+    if (state.activePage === 'projects') renderProjects();
     if (state.activePage === 'shopping') renderShopping();
   } catch (err) {
     showToast(err.message);
@@ -553,13 +571,11 @@ function refreshLocationDatalist() {
 // PAGE SWITCHING, PROJECTS VIEW & DYNAMIC GLOSSARY (ASD-STE100)
 // =============================================================================
 function updateNavBadges() {
-  const activeProjects = new Set(
-    state.parts.map((p) => (p.in_use_project || '').trim()).filter(Boolean)
-  );
+  const activeCount = state.projects.filter((p) => p.status !== 'archived').length;
   const pBadge = document.getElementById('navProjectsCount');
   if (pBadge) {
-    if (activeProjects.size > 0) {
-      pBadge.textContent = activeProjects.size;
+    if (activeCount > 0) {
+      pBadge.textContent = activeCount;
       pBadge.classList.remove('hidden');
     } else {
       pBadge.classList.add('hidden');
@@ -579,26 +595,76 @@ function updateNavBadges() {
   }
 }
 
-function switchPage(page) {
-  state.activePage = page;
-  document.getElementById('inventoryView').classList.toggle('hidden', page !== 'inventory');
-  document.getElementById('inventoryFilterBar').classList.toggle('hidden', page !== 'inventory');
-  document.getElementById('projectsView').classList.toggle('hidden', page !== 'projects');
-  document.getElementById('shoppingView').classList.toggle('hidden', page !== 'shopping');
-  document.getElementById('glossaryView').classList.toggle('hidden', page !== 'glossary');
-  document.getElementById('benchView').classList.toggle('hidden', page !== 'bench');
+const VALID_PAGES = new Set(['inventory', 'projects', 'shopping', 'glossary', 'bench']);
+const VALID_BENCH_TABS = new Set(['guides', 'calculators', 'compat', 'labels']);
+
+function parseRouteFromLocation() {
+  const rawPath = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+  if (rawPath === '/' || rawPath === '/inventory') {
+    return { page: 'inventory', benchSub: null };
+  }
+  const segs = rawPath.replace(/^\/+/, '').split('/');
+  const first = (segs[0] || '').toLowerCase();
+  if (VALID_PAGES.has(first)) {
+    const sub = first === 'bench' && segs[1] && VALID_BENCH_TABS.has(segs[1].toLowerCase())
+      ? segs[1].toLowerCase()
+      : null;
+    return { page: first, benchSub: sub };
+  }
+  return { page: 'inventory', benchSub: null };
+}
+
+function buildUrlForPage(page, benchSub) {
+  const search = window.location.search || '';
+  if (page === 'inventory') return `/${search}`;
+  if (page === 'bench' && benchSub && VALID_BENCH_TABS.has(benchSub)) {
+    return `/bench/${benchSub}${search}`;
+  }
+  return `/${page}${search}`;
+}
+
+window.syncBenchUrl = function syncBenchUrl(subTab) {
+  if (state.activePage !== 'bench') return;
+  const nextUrl = buildUrlForPage('bench', subTab);
+  if (window.location.pathname + window.location.search !== nextUrl) {
+    window.history.pushState({ page: 'bench', benchSub: subTab }, '', nextUrl);
+  }
+};
+
+function switchPage(page, opts = {}) {
+  const cleanPage = VALID_PAGES.has(page) ? page : 'inventory';
+  state.activePage = cleanPage;
+
+  if (cleanPage === 'bench' && opts.benchSub && typeof wbState !== 'undefined' && VALID_BENCH_TABS.has(opts.benchSub)) {
+    wbState.subTab = opts.benchSub;
+  }
+
+  if (opts.pushState !== false) {
+    const benchSub = cleanPage === 'bench' && typeof wbState !== 'undefined' ? wbState.subTab : null;
+    const targetUrl = buildUrlForPage(cleanPage, benchSub);
+    if (window.location.pathname + window.location.search !== targetUrl) {
+      window.history.pushState({ page: cleanPage, benchSub }, '', targetUrl);
+    }
+  }
+
+  document.getElementById('inventoryView').classList.toggle('hidden', cleanPage !== 'inventory');
+  document.getElementById('inventoryFilterBar').classList.toggle('hidden', cleanPage !== 'inventory');
+  document.getElementById('projectsView').classList.toggle('hidden', cleanPage !== 'projects');
+  document.getElementById('shoppingView').classList.toggle('hidden', cleanPage !== 'shopping');
+  document.getElementById('glossaryView').classList.toggle('hidden', cleanPage !== 'glossary');
+  document.getElementById('benchView').classList.toggle('hidden', cleanPage !== 'bench');
 
   document.querySelectorAll('button[data-page]').forEach((btn) => {
-    const isAct = btn.dataset.page === page;
+    const isAct = btn.dataset.page === cleanPage;
     btn.classList.toggle('pb-tab-active', isAct);
   });
 
   const searchInput = document.getElementById('searchInput');
-  if (page === 'glossary') {
+  if (cleanPage === 'glossary') {
     searchInput.placeholder = 'Search the glossary';
-  } else if (page === 'projects') {
+  } else if (cleanPage === 'projects') {
     searchInput.placeholder = 'Search projects';
-  } else if (page === 'shopping') {
+  } else if (cleanPage === 'shopping') {
     searchInput.placeholder = 'Search the shopping list';
   } else {
     searchInput.placeholder = 'Search parts, bins, projects';
@@ -622,57 +688,178 @@ function renderCurrentPage() {
   }
 }
 
+function _getShoppingGroupLabel(it, mode) {
+  if (mode === 'store') {
+    if (it.retailer) return it.retailer;
+    if (it.url && /^https?:\/\//i.test(it.url)) {
+      try {
+        return new URL(it.url).hostname.replace(/^www\./, '');
+      } catch (_) {}
+    }
+    return 'Other / Unassigned Store';
+  }
+  if (mode === 'project') {
+    const links = it.project_links || [];
+    if (links.length > 0) {
+      const first = links[0];
+      return first.variant_name
+        ? `${first.project_name} · ${first.variant_name}`
+        : `${first.project_name} · Core`;
+    }
+    if (it.tag && it.tag.trim()) return it.tag.trim();
+    return 'General / Untagged';
+  }
+  return '';
+}
+
+function _getShoppingTopTag(it) {
+  const links = it.project_links || [];
+  if (links.length > 0) return links[0].project_name;
+  if (it.tag && it.tag.trim()) return it.tag.trim();
+  return 'General';
+}
+
+function _formatCostMap(costMap) {
+  if (!costMap) return '';
+  const entries = Object.entries(costMap).filter(([, v]) => Number(v) > 0);
+  if (entries.length === 0) return '';
+  return entries
+    .map(([cur, val]) => `${Number(val).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${cur}`)
+    .join(' + ');
+}
+
 function renderShopping() {
   const q = state.search.trim().toLowerCase();
   const wishGrid = document.getElementById('shoppingWishlistGrid');
   const wishEmpty = document.getElementById('shoppingWishlistEmpty');
   const lowGrid = document.getElementById('shoppingLowStockGrid');
   const lowEmpty = document.getElementById('shoppingLowStockEmpty');
+  const tagBar = document.getElementById('shoppingTagFilterBar');
+
+  // Sync segmented group buttons
+  document.querySelectorAll('button[data-shop-group]').forEach((btn) => {
+    const isAct = btn.dataset.shopGroup === state.shoppingGroupBy;
+    btn.classList.toggle('pb-seg-active', isAct);
+    btn.classList.toggle('opacity-65', !isAct);
+  });
+
+  // Tag/project filter pills
+  const tagCounts = new Map();
+  for (const it of state.shoppingItems) {
+    const topTag = _getShoppingTopTag(it);
+    tagCounts.set(topTag, (tagCounts.get(topTag) || 0) + 1);
+  }
+  if (tagCounts.size > 1) {
+    tagBar.classList.remove('hidden');
+    if (state.shoppingTagFilter !== 'All' && !tagCounts.has(state.shoppingTagFilter)) {
+      state.shoppingTagFilter = 'All';
+    }
+    const chips = [['All', state.shoppingItems.length], ...[...tagCounts.entries()].sort((a, b) => a[0].localeCompare(b[0]))];
+    tagBar.innerHTML = chips
+      .map(([lbl, cnt]) => {
+        const active = state.shoppingTagFilter === lbl;
+        return `<button type="button" data-shop-tag="${escapeHTML(lbl)}" aria-pressed="${active}" class="pb-toggle-chip h-7 px-2.5 text-xs font-medium inline-flex items-center gap-1.5">${escapeHTML(lbl)} <span class="pb-chip-count text-muted">${cnt}</span></button>`;
+      })
+      .join('');
+  } else {
+    state.shoppingTagFilter = 'All';
+    tagBar.classList.add('hidden');
+    tagBar.innerHTML = '';
+  }
 
   const smallThumb = (path, cat) =>
     path
       ? `<img src="${escapeHTML(imageUrl(path))}" alt="" class="w-full h-full object-contain p-0.5 bg-white" />`
       : categoryGlyph(cat, 'w-5 h-5 text-muted opacity-60');
 
-  const wishItems = state.shoppingItems.filter((it) => !q || `${it.name} ${it.notes} ${it.price}`.toLowerCase().includes(q));
+  const wishItems = state.shoppingItems.filter((it) => {
+    if (state.shoppingTagFilter !== 'All' && _getShoppingTopTag(it) !== state.shoppingTagFilter) {
+      return false;
+    }
+    if (!q) return true;
+    const hay = `${it.name} ${it.why_needed || ''} ${it.notes || ''} ${it.price || ''} ${it.retailer || ''} ${it.tag || ''}`.toLowerCase();
+    return hay.includes(q);
+  });
+
+  const renderItemCard = (it) => {
+    let host = it.retailer || '';
+    if (!host && it.url && /^https?:\/\//i.test(it.url)) {
+      try {
+        host = new URL(it.url).hostname.replace(/^www\./, '');
+      } catch (_) {}
+    }
+    const reason = (it.why_needed || it.notes || '').trim();
+    const stockBadge =
+      it.in_stock === 'in_stock'
+        ? `<span class="text-[11px] font-medium text-go">In stock</span>`
+        : it.in_stock === 'out_of_stock'
+        ? `<span class="text-[11px] font-medium text-stop">Out of stock</span>`
+        : '';
+    const linkBadges = (it.project_links || [])
+      .map(
+        (lk) =>
+          `<span class="pb-badge pb-badge-neutral !text-[11px] !py-0 !px-1.5">${escapeHTML(lk.project_name)}${lk.variant_name ? ` · ${escapeHTML(lk.variant_name)}` : ' · Core'}</span>`
+      )
+      .join('');
+    return `
+      <div class="elevated-card rounded-md p-3 flex flex-wrap items-center gap-3 hover:border-accent/40 transition-colors">
+        <button type="button" data-open-shop="${escapeHTML(it.id)}" class="pb-well w-12 h-12 rounded flex items-center justify-center overflow-hidden shrink-0 cursor-pointer" title="View details">${smallThumb(it.image_path, it.category)}</button>
+        <div class="min-w-[11rem] flex-1">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <button type="button" data-open-shop="${escapeHTML(it.id)}" class="pb-part-name !text-[15px] hover:underline truncate text-left max-w-full">${escapeHTML(it.name)}</button>
+            ${linkBadges}
+          </div>
+          <div class="text-[13px] text-muted flex flex-wrap items-center gap-2 min-w-0 mt-0.5">
+            ${it.price ? `<span class="font-semibold text-ink">${escapeHTML(it.price)}</span>` : ''}
+            ${host && it.url ? `<a href="${escapeHTML(it.url)}" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline truncate">${escapeHTML(host)}</a>` : host ? `<span>${escapeHTML(host)}</span>` : ''}
+            ${stockBadge}
+          </div>
+          ${reason ? `<p class="text-xs text-muted mt-1 line-clamp-2">${escapeHTML(reason)}</p>` : ''}
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <div class="pb-stepper">
+            <button type="button" data-shop-step="-1" data-shop-id="${escapeHTML(it.id)}" class="w-7 h-7 text-sm" aria-label="Buy one less">&minus;</button>
+            <span class="min-w-[28px] text-center text-sm font-semibold">${it.quantity}</span>
+            <button type="button" data-shop-step="1" data-shop-id="${escapeHTML(it.id)}" class="w-7 h-7 text-sm" aria-label="Buy one more">+</button>
+          </div>
+          <button type="button" data-shop-bought="${escapeHTML(it.id)}" class="btn-primary h-8 px-3 text-[13px]" title="Add this to your inventory">Bought</button>
+          <button type="button" data-shop-del="${escapeHTML(it.id)}" class="btn-icon h-8 w-8 flex items-center justify-center" title="Remove from list" aria-label="Remove from list">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+    `;
+  };
+
   if (wishItems.length === 0) {
     wishGrid.innerHTML = '';
     wishEmpty.classList.remove('hidden');
   } else {
     wishEmpty.classList.add('hidden');
-    wishGrid.innerHTML = wishItems
-      .map((it) => {
-        let host = '';
-        if (it.url && /^https?:\/\//i.test(it.url)) {
-          try {
-            host = new URL(it.url).hostname.replace(/^www\./, '');
-          } catch (_) {}
-        }
-        return `
-          <div class="elevated-card rounded-md p-3 flex flex-wrap items-center gap-3">
-            <div class="pb-well w-12 h-12 rounded flex items-center justify-center overflow-hidden shrink-0">${smallThumb(it.image_path)}</div>
-            <div class="min-w-[11rem] flex-1">
-              <div class="pb-part-name !text-[15px] truncate">${escapeHTML(it.name)}</div>
-              <div class="text-[13px] text-muted flex items-center gap-2 min-w-0">
-                ${it.price ? `<span class="font-semibold text-ink">${escapeHTML(it.price)}</span>` : ''}
-                ${host ? `<a href="${escapeHTML(it.url)}" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline truncate">${escapeHTML(host)}</a>` : ''}
+    if (state.shoppingGroupBy === 'flat') {
+      wishGrid.innerHTML = `<div class="space-y-2">${wishItems.map(renderItemCard).join('')}</div>`;
+    } else {
+      const groups = new Map();
+      for (const it of wishItems) {
+        const gName = _getShoppingGroupLabel(it, state.shoppingGroupBy);
+        if (!groups.has(gName)) groups.set(gName, []);
+        groups.get(gName).push(it);
+      }
+      const sortedGroups = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      wishGrid.innerHTML = sortedGroups
+        .map(([gName, items]) => {
+          return `
+            <div class="space-y-2">
+              <div class="flex items-center justify-between gap-2 px-1">
+                <span class="text-xs font-semibold text-ink">${escapeHTML(gName)}</span>
+                <span class="text-[11px] font-mono text-muted">${items.length} ${items.length === 1 ? 'item' : 'items'}</span>
               </div>
+              <div class="space-y-2">${items.map(renderItemCard).join('')}</div>
             </div>
-            <div class="flex items-center gap-2 shrink-0">
-              <div class="pb-stepper">
-                <button type="button" data-shop-step="-1" data-shop-id="${escapeHTML(it.id)}" class="w-7 h-7 text-sm" aria-label="Buy one less">&minus;</button>
-                <span class="min-w-[28px] text-center text-sm font-semibold">${it.quantity}</span>
-                <button type="button" data-shop-step="1" data-shop-id="${escapeHTML(it.id)}" class="w-7 h-7 text-sm" aria-label="Buy one more">+</button>
-              </div>
-              <button type="button" data-shop-bought="${escapeHTML(it.id)}" class="btn-primary h-8 px-3 text-[13px]" title="Add this to your inventory">Bought</button>
-              <button type="button" data-shop-del="${escapeHTML(it.id)}" class="btn-icon h-8 w-8 flex items-center justify-center" title="Remove from list" aria-label="Remove from list">
-                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
+          `;
+        })
+        .join('');
+    }
   }
 
   const lowParts = state.parts.filter(
@@ -713,75 +900,567 @@ function renderShopping() {
   }
 }
 
+const PROJECT_STATUS_META = {
+  active: { label: 'Active on bench', dot: 'is-go' },
+  planning: { label: 'Planning', dot: 'is-warn' },
+  completed: { label: 'Completed', dot: '' },
+  archived: { label: 'Archived', dot: '' },
+};
+
 function renderProjects() {
   const grid = document.getElementById('projectsGrid');
   const empty = document.getElementById('projectsEmptyState');
   const q = state.search.trim().toLowerCase();
 
-  const grouped = new Map();
-  for (const p of state.parts) {
-    const proj = (p.in_use_project || '').trim();
-    if (!proj) continue;
-    if (!grouped.has(proj)) grouped.set(proj, []);
-    grouped.get(proj).push(p);
-  }
-
-  let entries = [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  let list = state.projects.slice();
   if (q) {
-    entries = entries.filter(([name, parts]) => {
-      if (name.toLowerCase().includes(q)) return true;
-      return parts.some((p) => (p.name || '').toLowerCase().includes(q));
+    list = list.filter((proj) => {
+      if (`${proj.name} ${proj.description || ''} ${proj.notes || ''}`.toLowerCase().includes(q)) return true;
+      return (proj.items || []).some((it) => `${it.name} ${it.project_notes || ''}`.toLowerCase().includes(q));
     });
   }
 
-  if (entries.length === 0) {
+  if (list.length === 0) {
     grid.innerHTML = '';
     empty.classList.remove('hidden');
     return;
   }
 
   empty.classList.add('hidden');
-  grid.innerHTML = entries
-    .map(([projName, parts]) => {
-      const partRows = parts
-        .map((p) => {
-          const thumb = p.image_path
-            ? `<img src="${escapeHTML(imageUrl(p.image_path))}" alt="" class="w-full h-full object-contain p-0.5 bg-white" />`
-            : categoryGlyph(p.category, 'w-4 h-4 text-muted opacity-60');
-          return `
-            <button type="button" data-open-part="${escapeHTML(p.id)}" class="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-ink/[0.035] transition-colors">
-              <div class="pb-well w-9 h-9 rounded flex items-center justify-center overflow-hidden shrink-0">${thumb}</div>
-              <div class="min-w-0 flex-1">
-                <p class="text-sm font-medium truncate">${escapeHTML(p.name)}</p>
-              </div>
-              ${p.location ? `<span class="pb-bin-tag !h-5 !text-[12px] shrink-0">${escapeHTML(p.location)}</span>` : ''}
-              <span class="text-sm font-semibold w-10 text-right shrink-0">${p.quantity}</span>
-            </button>
-          `;
-        })
-        .join('');
+  grid.innerHTML = list
+    .map((proj) => {
+      const st = PROJECT_STATUS_META[proj.status] || PROJECT_STATUS_META.planning;
+      const variants = proj.variants || [];
+      const activeTab = state.projectActiveTab[proj.id] || (proj.selected_variant_id || 'all');
+      const allItems = proj.items || [];
 
-      const total = parts.reduce((n, p) => n + Number(p.quantity || 0), 0);
+      let visibleItems = allItems;
+      if (activeTab === 'core') {
+        visibleItems = allItems.filter((it) => !it.variant_id);
+      } else if (activeTab !== 'all') {
+        visibleItems = allItems.filter((it) => !it.variant_id || it.variant_id === activeTab);
+      }
+
+      const ownedItems = visibleItems.filter((it) => it.item_type === 'part');
+      const shopItems = visibleItems.filter((it) => it.item_type === 'shopping');
+
+      const readiness = proj.readiness || { owned_count: ownedItems.length, to_buy_count: shopItems.length, total_count: visibleItems.length, remaining_cost: {} };
+      const pct = readiness.total_count > 0 ? Math.round((readiness.owned_count / readiness.total_count) * 100) : 0;
+      const costStr = _formatCostMap(readiness.remaining_cost);
+
+      const renderProjectRow = (it) => {
+        const thumb = it.image_path
+          ? `<img src="${escapeHTML(imageUrl(it.image_path))}" alt="" class="w-full h-full object-contain p-0.5 bg-white" />`
+          : categoryGlyph(it.category || 'Sensors', 'w-4 h-4 text-muted opacity-60');
+        const varObj = it.variant_id ? variants.find((v) => v.id === it.variant_id) : null;
+        const isShop = it.item_type === 'shopping';
+        const openAttr = isShop
+          ? `data-open-shop="${escapeHTML(it.shopping_item_id)}" data-ctx-proj="${escapeHTML(proj.id)}" data-ctx-pitem="${escapeHTML(it.id)}"`
+          : `data-open-pitem="${escapeHTML(it.id)}" data-ctx-proj="${escapeHTML(proj.id)}"`;
+        const notePreview = (it.project_notes || it.why_needed || '').trim();
+        return `
+          <button type="button" ${openAttr} class="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-ink/[0.035] transition-colors">
+            <div class="pb-well w-9 h-9 rounded flex items-center justify-center overflow-hidden shrink-0">${thumb}</div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <p class="text-sm font-medium truncate">${escapeHTML(it.name)}</p>
+                ${varObj ? `<span class="pb-badge pb-badge-neutral !text-[10px] !py-0 !px-1.5 shrink-0">${escapeHTML(varObj.name)}</span>` : ''}
+              </div>
+              ${notePreview ? `<p class="text-[12px] text-muted truncate mt-0.5">${escapeHTML(notePreview)}</p>` : ''}
+            </div>
+            ${
+              isShop
+                ? `<div class="text-right shrink-0">
+                     <span class="pb-badge !text-[11px] !py-0 !px-1.5 bg-amber-500/15 text-amber-400 border border-amber-500/30">To buy</span>
+                     ${it.price ? `<div class="text-[11px] font-mono text-muted mt-0.5">${escapeHTML(it.price)}</div>` : ''}
+                   </div>`
+                : `<div class="flex items-center gap-2 shrink-0">
+                     ${it.location ? `<span class="pb-bin-tag !h-5 !text-[11px]">${escapeHTML(it.location)}</span>` : ''}
+                     <span class="text-xs font-mono text-muted" title="Need ${it.quantity_needed}, have ${it.owned_quantity}">${it.quantity_needed}/${it.owned_quantity}</span>
+                   </div>`
+            }
+          </button>
+        `;
+      };
+
+      const variantTabsHtml =
+        variants.length > 0
+          ? `<div class="px-4 pt-2 border-b border-line flex items-center gap-1 overflow-x-auto no-scrollbar">
+               <button type="button" data-proj-tab="all" data-proj-id="${escapeHTML(proj.id)}" class="pb-tab !py-2 !text-xs ${activeTab === 'all' ? 'pb-tab-active' : ''}">All</button>
+               <button type="button" data-proj-tab="core" data-proj-id="${escapeHTML(proj.id)}" class="pb-tab !py-2 !text-xs ${activeTab === 'core' ? 'pb-tab-active' : ''}">Core</button>
+               ${variants
+                 .map(
+                   (v) =>
+                     `<button type="button" data-proj-tab="${escapeHTML(v.id)}" data-proj-id="${escapeHTML(proj.id)}" class="pb-tab !py-2 !text-xs inline-flex items-center gap-1 ${activeTab === v.id ? 'pb-tab-active' : ''}">
+                        ${v.is_selected ? '<span class="w-1.5 h-1.5 rounded-full bg-go inline-block"></span>' : ''}
+                        <span>${escapeHTML(v.name)}</span>
+                      </button>`
+                 )
+                 .join('')}
+             </div>`
+          : '';
+
+      const selectedVariantObj = variants.find((v) => v.id === activeTab);
+      const variantBanner =
+        selectedVariantObj
+          ? `<div class="px-4 py-2 bg-ink/[0.025] border-b border-line flex items-center justify-between gap-2 text-xs">
+               <span class="text-muted truncate">${escapeHTML(selectedVariantObj.description || `Showing Core + ${selectedVariantObj.name}`)}</span>
+               ${
+                 selectedVariantObj.is_selected
+                   ? `<span class="text-go font-medium shrink-0">Selected build</span>`
+                   : `<button type="button" data-select-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" class="btn-secondary h-6 px-2 text-[11px] shrink-0">Use this option</button>`
+               }
+             </div>`
+          : '';
+
       return `
         <div class="elevated-card rounded-md overflow-hidden flex flex-col">
           <div class="px-4 py-3.5 flex items-start justify-between gap-3 border-b border-line">
-            <div class="min-w-0">
-              <h2 class="pb-display text-xl flex items-center gap-2.5"><span class="pb-status is-go"></span><span class="truncate">${escapeHTML(projName)}</span></h2>
-              <p class="text-[13px] text-muted mt-0.5">${parts.length} ${parts.length === 1 ? 'part' : 'parts'}, ${total} pieces</p>
-            </div>
-            <div class="flex items-center gap-1.5 shrink-0" data-teardown-wrap>
-              <button type="button" data-teardown-init class="btn-secondary h-8 px-3 text-[13px]">Tear down</button>
-              <div data-teardown-confirm class="hidden items-center gap-1.5">
-                <button type="button" data-teardown-do="${escapeHTML(projName)}" class="btn-danger h-8 px-3 text-[13px]">Put parts back</button>
-                <button type="button" data-teardown-cancel class="btn-secondary h-8 px-3 text-[13px]">Cancel</button>
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <h2 class="pb-display text-xl flex items-center gap-2 min-w-0">
+                  <span class="pb-status ${st.dot}"></span>
+                  <span class="truncate">${escapeHTML(proj.name)}</span>
+                </h2>
+                <span class="pb-badge pb-badge-neutral !text-[11px]">${escapeHTML(st.label)}</span>
+              </div>
+              ${proj.description ? `<p class="text-[13px] text-muted mt-1">${escapeHTML(proj.description)}</p>` : ''}
+              <div class="mt-2.5 space-y-1">
+                <div class="flex items-center justify-between text-[12px] text-muted">
+                  <span><strong class="text-ink">${readiness.owned_count}/${readiness.total_count}</strong> parts on hand${readiness.to_buy_count > 0 ? ` · ${readiness.to_buy_count} to buy` : ''}</span>
+                  ${costStr ? `<span class="font-mono text-ink">~${escapeHTML(costStr)} left</span>` : ''}
+                </div>
+                <div class="h-1.5 w-full rounded-full bg-ink/10 overflow-hidden">
+                  <div class="h-full bg-go rounded-full transition-all" style="width:${pct}%"></div>
+                </div>
               </div>
             </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${
+                proj.status === 'active'
+                  ? `<button type="button" data-proj-status="planning" data-proj-id="${escapeHTML(proj.id)}" class="btn-secondary h-8 px-2.5 text-xs" title="Move back to planning and free parts">Tear down</button>`
+                  : `<button type="button" data-proj-status="active" data-proj-id="${escapeHTML(proj.id)}" class="btn-secondary h-8 px-2.5 text-xs" title="Mark active on bench">Start build</button>`
+              }
+              <button type="button" data-edit-project="${escapeHTML(proj.id)}" class="btn-icon h-8 w-8 flex items-center justify-center" title="Edit project" aria-label="Edit project">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              </button>
+            </div>
           </div>
-          <div class="divide-y divide-[var(--pb-divider)]">${partRows}</div>
+
+          ${variantTabsHtml}
+          ${variantBanner}
+
+          <div class="flex-1 divide-y divide-[var(--pb-divider)]">
+            ${
+              visibleItems.length === 0
+                ? `<p class="px-4 py-6 text-xs text-muted text-center">No parts in this view yet.</p>`
+                : `
+                  ${
+                    ownedItems.length > 0
+                      ? `<div class="px-4 py-1.5 bg-ink/[0.02] text-[11px] font-semibold uppercase tracking-wider text-muted">On hand (${ownedItems.length})</div>
+                         ${ownedItems.map(renderProjectRow).join('')}`
+                      : ''
+                  }
+                  ${
+                    shopItems.length > 0
+                      ? `<div class="px-4 py-1.5 bg-ink/[0.02] text-[11px] font-semibold uppercase tracking-wider text-muted">To buy (${shopItems.length})</div>
+                         ${shopItems.map(renderProjectRow).join('')}`
+                      : ''
+                  }
+                `
+            }
+          </div>
+
+          <div class="px-4 py-2.5 border-t border-line bg-ink/[0.015] flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <button type="button" data-add-proj-item="${escapeHTML(proj.id)}" class="btn-secondary h-7 px-2.5 text-xs">+ Add part</button>
+              <button type="button" data-add-proj-variant="${escapeHTML(proj.id)}" class="btn-secondary h-7 px-2.5 text-xs">+ Sub-project</button>
+            </div>
+            ${proj.notes ? `<span class="text-[11px] text-muted truncate max-w-[14rem]" title="${escapeHTML(proj.notes)}">${escapeHTML(proj.notes)}</span>` : ''}
+          </div>
         </div>
       `;
     })
     .join('');
+}
+
+// =============================================================================
+// CONTEXT SLIDE-OVER DRAWER (Shopping Item & Project-Scoped Part Details)
+// =============================================================================
+function openContextDrawer(ctx) {
+  state.contextDrawer = ctx;
+  const root = document.getElementById('contextDrawerRoot');
+  root.classList.remove('drawer-closed', 'pointer-events-none');
+  root.classList.add('drawer-open');
+  root.setAttribute('aria-hidden', 'false');
+  renderContextDrawer();
+}
+
+function closeContextDrawer() {
+  state.contextDrawer = null;
+  const root = document.getElementById('contextDrawerRoot');
+  root.classList.add('drawer-closed', 'pointer-events-none');
+  root.classList.remove('drawer-open');
+  root.setAttribute('aria-hidden', 'true');
+}
+
+function renderContextDrawer() {
+  const ctx = state.contextDrawer;
+  if (!ctx) return;
+  const badge = document.getElementById('contextDrawerBadge');
+  const heading = document.getElementById('contextDrawerHeading');
+  const body = document.getElementById('contextDrawerBody');
+  const footer = document.getElementById('contextDrawerFooter');
+
+  if (ctx.type === 'shopping') {
+    const it = state.shoppingItems.find((x) => x.id === ctx.id);
+    if (!it) {
+      closeContextDrawer();
+      return;
+    }
+    badge.textContent = 'To buy';
+    badge.className = 'pb-badge !text-[11px] bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0';
+    heading.textContent = it.name;
+
+    const imgHtml = it.image_path
+      ? `<img src="${escapeHTML(imageUrl(it.image_path))}" alt="" class="w-full h-full object-contain p-2 bg-white" />`
+      : `<div class="text-xs text-muted flex flex-col items-center gap-1.5">${categoryGlyph(it.category || 'Sensors', 'w-8 h-8 opacity-40')}<span>No product photo yet</span></div>`;
+
+    const linksHtml = (it.project_links || [])
+      .map(
+        (lk) =>
+          `<span class="pb-badge pb-badge-neutral !text-[11px]">${escapeHTML(lk.project_name)}${lk.variant_name ? ` · ${escapeHTML(lk.variant_name)}` : ' · Core'}</span>`
+      )
+      .join('');
+
+    const specsEntries = Object.entries(it.specs || {});
+    const specsHtml =
+      specsEntries.length > 0
+        ? `<div class="space-y-1.5">
+             <div class="pb-section-label">Specs</div>
+             <div class="grid grid-cols-2 gap-1.5">
+               ${specsEntries
+                 .map(
+                   ([k, v]) =>
+                     `<div class="pb-well rounded px-2.5 py-1.5"><div class="text-[10px] text-muted">${escapeHTML(k)}</div><div class="text-xs font-medium text-ink">${escapeHTML(v)}</div></div>`
+                 )
+                 .join('')}
+             </div>
+           </div>`
+        : '';
+
+    body.innerHTML = `
+      <div class="pb-well w-full h-44 rounded-md overflow-hidden flex items-center justify-center relative">
+        ${imgHtml}
+      </div>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center gap-1.5">
+          ${it.price ? `<span class="text-base font-semibold font-mono text-ink">${escapeHTML(it.price)}</span>` : ''}
+          ${it.in_stock === 'in_stock' ? `<span class="pb-badge !text-[11px] bg-go/15 text-go">In stock</span>` : it.in_stock === 'out_of_stock' ? `<span class="pb-badge !text-[11px] bg-stop/15 text-stop">Out of stock</span>` : ''}
+          ${linksHtml}
+        </div>
+        <div class="flex items-center gap-1.5">
+          ${it.url ? `<button type="button" id="ctxFetchShopMetaBtn" class="btn-secondary h-7 px-2.5 text-xs">Fetch photo &amp; info</button>` : ''}
+          ${it.url && /^https?:\/\//i.test(it.url) ? `<a href="${escapeHTML(it.url)}" target="_blank" rel="noopener noreferrer" class="btn-secondary h-7 px-2.5 text-xs inline-flex items-center gap-1">Open store</a>` : ''}
+        </div>
+      </div>
+
+      ${specsHtml}
+
+      <form id="ctxShopForm" class="space-y-3 text-xs pt-2 border-t border-line">
+        <div>
+          <label class="block text-[11px] font-medium text-muted mb-1">Name</label>
+          <input id="ctxShopName" type="text" value="${escapeHTML(it.name)}" class="w-full h-9 px-3 text-sm rounded bg-canvas-light border border-hairline-light" />
+        </div>
+        <div class="grid grid-cols-3 gap-2.5">
+          <div>
+            <label class="block text-[11px] font-medium text-muted mb-1">Price</label>
+            <input id="ctxShopPrice" type="text" value="${escapeHTML(it.price || '')}" class="w-full h-9 px-2.5 text-sm rounded bg-canvas-light border border-hairline-light" />
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-muted mb-1">Quantity</label>
+            <input id="ctxShopQty" type="number" min="1" value="${it.quantity || 1}" class="w-full h-9 px-2.5 font-mono text-sm rounded bg-canvas-light border border-hairline-light" />
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-muted mb-1">Tag / Group</label>
+            <input id="ctxShopTag" type="text" value="${escapeHTML(it.tag || '')}" placeholder="e.g., Smartwatch" class="w-full h-9 px-2.5 text-sm rounded bg-canvas-light border border-hairline-light" />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2.5">
+          <div>
+            <label class="block text-[11px] font-medium text-muted mb-1">Category (when bought)</label>
+            <select id="ctxShopCategory" class="w-full h-9 px-2.5 text-xs rounded bg-canvas-light border border-hairline-light">
+              <option value="">Default (Sensors)</option>
+              ${DEFAULT_CATEGORIES.map((c) => `<option value="${escapeHTML(c)}" ${it.category === c ? 'selected' : ''}>${escapeHTML(c)}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-muted mb-1">Stock status</label>
+            <select id="ctxShopStock" class="w-full h-9 px-2.5 text-xs rounded bg-canvas-light border border-hairline-light">
+              <option value="" ${!it.in_stock ? 'selected' : ''}>Unknown</option>
+              <option value="in_stock" ${it.in_stock === 'in_stock' ? 'selected' : ''}>In stock</option>
+              <option value="out_of_stock" ${it.in_stock === 'out_of_stock' ? 'selected' : ''}>Out of stock</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="block text-[11px] font-medium text-muted mb-1">Store URL</label>
+          <input id="ctxShopUrl" type="url" value="${escapeHTML(it.url || '')}" class="w-full h-9 px-3 text-sm rounded bg-canvas-light border border-hairline-light" />
+        </div>
+        <div>
+          <label class="block text-[11px] font-medium text-muted mb-1">Why it is on the list</label>
+          <textarea id="ctxShopWhy" rows="3" placeholder="Explain why this part is needed or which build option it belongs to..." class="w-full p-2.5 text-sm rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(it.why_needed || it.notes || '')}</textarea>
+        </div>
+      </form>
+    `;
+
+    footer.innerHTML = `
+      <div class="flex items-center gap-2">
+        <button type="button" id="ctxShopBoughtBtn" class="btn-secondary h-9 px-3 rounded text-xs font-medium">Bought &rarr; Inventory</button>
+        ${
+          ctx.projectId && ctx.projectItemId
+            ? `<button type="button" id="ctxUnlinkShopBtn" class="btn-danger-outline h-9 px-2.5 rounded text-xs font-medium">Unlink</button>`
+            : `<button type="button" id="ctxDeleteShopBtn" class="btn-danger-outline h-9 px-2.5 rounded text-xs font-medium">Delete</button>`
+        }
+      </div>
+      <div class="flex items-center gap-2">
+        <button type="button" id="ctxCloseFooterBtn" class="btn-secondary h-9 px-3 rounded text-xs font-medium">Close</button>
+        <button type="button" id="ctxSaveShopBtn" class="btn-primary h-9 px-4 rounded text-xs font-medium">Save</button>
+      </div>
+    `;
+    return;
+  }
+
+  if (ctx.type === 'project_part') {
+    const proj = state.projects.find((p) => p.id === ctx.projectId);
+    const pItem = proj && (proj.items || []).find((x) => x.id === ctx.projectItemId);
+    if (!proj || !pItem) {
+      closeContextDrawer();
+      return;
+    }
+    badge.textContent = `Project · ${proj.name}`;
+    badge.className = 'pb-badge !text-[11px] bg-go/15 text-go shrink-0';
+    heading.textContent = pItem.name;
+
+    const imgHtml = pItem.image_path
+      ? `<img src="${escapeHTML(imageUrl(pItem.image_path))}" alt="" class="w-full h-full object-contain p-1.5 bg-white" />`
+      : categoryGlyph(pItem.category || 'Sensors', 'w-7 h-7 text-muted opacity-50');
+
+    const variants = proj.variants || [];
+    body.innerHTML = `
+      <div class="flex items-center gap-3 pb-4 border-b border-line">
+        <div class="pb-well w-16 h-16 rounded flex items-center justify-center overflow-hidden shrink-0">${imgHtml}</div>
+        <div class="min-w-0 flex-1">
+          <div class="text-sm font-semibold text-ink truncate">${escapeHTML(pItem.name)}</div>
+          <div class="text-xs text-muted flex flex-wrap items-center gap-2 mt-1">
+            ${pItem.location ? `<span class="pb-bin-tag !h-5 !text-[11px]">${escapeHTML(pItem.location)}</span>` : ''}
+            <span>Owned: <strong class="text-ink">${pItem.owned_quantity}</strong></span>
+          </div>
+        </div>
+        <button type="button" id="ctxOpenInventorySheetBtn" class="btn-secondary h-8 px-3 text-xs shrink-0">Inventory sheet &rarr;</button>
+      </div>
+
+      <div class="space-y-3.5 text-xs">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-[11px] font-medium text-muted mb-1">Quantity needed for this project</label>
+            <input id="ctxProjQty" type="number" min="1" value="${pItem.quantity_needed || 1}" class="w-full h-9 px-3 font-mono text-sm rounded bg-canvas-light border border-hairline-light" />
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-muted mb-1">Sub-project / Option</label>
+            <select id="ctxProjVariant" class="w-full h-9 px-2.5 text-xs rounded bg-canvas-light border border-hairline-light">
+              <option value="" ${!pItem.variant_id ? 'selected' : ''}>Core (all options)</option>
+              ${variants.map((v) => `<option value="${escapeHTML(v.id)}" ${pItem.variant_id === v.id ? 'selected' : ''}>${escapeHTML(v.name)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-medium text-muted mb-1">Project-specific notes</label>
+          <p class="text-[11px] text-muted mb-1.5">Saved only for <strong class="text-ink">${escapeHTML(proj.name)}</strong>. Does not change this part's general inventory notes.</p>
+          <textarea id="ctxProjNotes" rows="5" placeholder="e.g., Wire tilt switch to GPIO4 with INPUT_PULLUP..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(pItem.project_notes || '')}</textarea>
+        </div>
+      </div>
+    `;
+
+    footer.innerHTML = `
+      <button type="button" id="ctxRemoveProjItemBtn" class="btn-danger-outline h-9 px-3 rounded text-xs font-medium">Remove from project</button>
+      <div class="flex items-center gap-2">
+        <button type="button" id="ctxCloseFooterBtn" class="btn-secondary h-9 px-3 rounded text-xs font-medium">Close</button>
+        <button type="button" id="ctxSaveProjItemBtn" class="btn-primary h-9 px-4 rounded text-xs font-medium">Save</button>
+      </div>
+    `;
+  }
+}
+
+// =============================================================================
+// PROJECT & ACTION MODALS
+// =============================================================================
+function openProjectModal(projectId) {
+  state.editingProjectId = projectId || null;
+  const proj = projectId ? state.projects.find((p) => p.id === projectId) : null;
+  document.getElementById('projectModalHeading').textContent = proj ? 'Edit Project' : 'New Project';
+  document.getElementById('pName').value = proj ? proj.name : '';
+  document.getElementById('pStatus').value = proj ? proj.status : 'planning';
+  document.getElementById('pDescription').value = proj ? proj.description || '' : '';
+  document.getElementById('pNotes').value = proj ? proj.notes || '' : '';
+
+  const delArea = document.getElementById('projectDeleteArea');
+  delArea.classList.toggle('hidden', !proj);
+  delArea.classList.toggle('flex', Boolean(proj));
+  document.getElementById('projectDeleteInitBtn').classList.remove('hidden');
+  document.getElementById('projectDeleteConfirmGroup').classList.add('hidden');
+  document.getElementById('projectDeleteConfirmGroup').classList.remove('flex');
+
+  document.getElementById('projectModal').classList.remove('hidden');
+  document.getElementById('pName').focus();
+}
+
+function closeProjectModal() {
+  state.editingProjectId = null;
+  document.getElementById('projectModal').classList.add('hidden');
+}
+
+async function saveProjectModal() {
+  const name = document.getElementById('pName').value.trim();
+  if (!name) {
+    document.getElementById('pName').focus();
+    return;
+  }
+  const payload = {
+    name,
+    status: document.getElementById('pStatus').value,
+    description: document.getElementById('pDescription').value.trim(),
+    notes: document.getElementById('pNotes').value.trim(),
+  };
+  try {
+    if (state.editingProjectId) {
+      await apiFetch(`/api/projects/${encodeURIComponent(state.editingProjectId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      showToast('Project updated');
+    } else {
+      await apiFetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      showToast('Project created');
+    }
+    closeProjectModal();
+    await Promise.all([loadProjects(), loadParts()]);
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+function openProjectActionModal(mode, projectId) {
+  const proj = state.projects.find((p) => p.id === projectId);
+  if (!proj) return;
+  state.projectAction = { mode, projectId };
+  const heading = document.getElementById('projectActionModalHeading');
+  const body = document.getElementById('projectActionModalBody');
+  const saveBtn = document.getElementById('saveProjectActionModalBtn');
+
+  if (mode === 'variant') {
+    heading.textContent = `Add Sub-project · ${proj.name}`;
+    saveBtn.textContent = 'Add option';
+    body.innerHTML = `
+      <div>
+        <label class="block text-[11px] font-medium text-muted mb-1">Option name</label>
+        <input id="paVarName" type="text" placeholder="e.g., Option A: Color IPS Build" class="w-full h-9 px-3 text-sm rounded bg-canvas-light border border-hairline-light" />
+      </div>
+      <div>
+        <label class="block text-[11px] font-medium text-muted mb-1">Description</label>
+        <textarea id="paVarDesc" rows="2" placeholder="What makes this build option different..." class="w-full p-2.5 text-sm rounded bg-canvas-light border border-hairline-light resize-y"></textarea>
+      </div>
+    `;
+  } else {
+    heading.textContent = `Add Part · ${proj.name}`;
+    saveBtn.textContent = 'Add to project';
+    const variants = proj.variants || [];
+    const partOpts = state.parts
+      .map((p) => `<option value="part:${escapeHTML(p.id)}">[Owned · qty ${p.quantity}] ${escapeHTML(p.name)}</option>`)
+      .join('');
+    const shopOpts = state.shoppingItems
+      .map((s) => `<option value="shop:${escapeHTML(s.id)}">[To buy] ${escapeHTML(s.name)}</option>`)
+      .join('');
+    body.innerHTML = `
+      <div>
+        <label class="block text-[11px] font-medium text-muted mb-1">Choose owned part or shopping item</label>
+        <select id="paTarget" class="w-full h-9 px-2.5 text-xs rounded bg-canvas-light border border-hairline-light">
+          <optgroup label="Owned Inventory">${partOpts}</optgroup>
+          ${shopOpts ? `<optgroup label="Shopping List (To Buy)">${shopOpts}</optgroup>` : ''}
+        </select>
+      </div>
+      <div class="grid grid-cols-2 gap-2.5">
+        <div>
+          <label class="block text-[11px] font-medium text-muted mb-1">Sub-project / Option</label>
+          <select id="paVariant" class="w-full h-9 px-2.5 text-xs rounded bg-canvas-light border border-hairline-light">
+            <option value="">Core (all options)</option>
+            ${variants.map((v) => `<option value="${escapeHTML(v.id)}">${escapeHTML(v.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-[11px] font-medium text-muted mb-1">Quantity needed</label>
+          <input id="paQty" type="number" min="1" value="1" class="w-full h-9 px-3 font-mono text-sm rounded bg-canvas-light border border-hairline-light" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-[11px] font-medium text-muted mb-1">Project-specific note (optional)</label>
+        <textarea id="paNotes" rows="2" placeholder="Only shown in this project..." class="w-full p-2.5 text-sm rounded bg-canvas-light border border-hairline-light resize-y"></textarea>
+      </div>
+    `;
+  }
+  document.getElementById('projectActionModal').classList.remove('hidden');
+}
+
+function closeProjectActionModal() {
+  state.projectAction = null;
+  document.getElementById('projectActionModal').classList.add('hidden');
+}
+
+async function saveProjectActionModal() {
+  const act = state.projectAction;
+  if (!act) return;
+  try {
+    if (act.mode === 'variant') {
+      const name = document.getElementById('paVarName').value.trim();
+      if (!name) return;
+      const desc = document.getElementById('paVarDesc').value.trim();
+      await apiFetch(`/api/projects/${encodeURIComponent(act.projectId)}/variants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: desc }),
+      });
+      showToast('Sub-project option added');
+    } else {
+      const target = document.getElementById('paTarget').value;
+      if (!target) return;
+      const [kind, id] = target.split(':');
+      const variantId = document.getElementById('paVariant').value || null;
+      const qty = Math.max(1, parseInt(document.getElementById('paQty').value, 10) || 1);
+      const notes = document.getElementById('paNotes').value.trim();
+      await apiFetch(`/api/projects/${encodeURIComponent(act.projectId)}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          part_id: kind === 'part' ? id : null,
+          shopping_item_id: kind === 'shop' ? id : null,
+          variant_id: variantId,
+          quantity_needed: qty,
+          project_notes: notes,
+        }),
+      });
+      showToast('Added to project');
+    }
+    closeProjectActionModal();
+    await Promise.all([loadProjects(), loadShopping(), loadParts()]);
+  } catch (err) {
+    showToast(err.message);
+  }
 }
 
 function getMatchingPartsForTerm(entry) {
@@ -2128,6 +2807,9 @@ function bindEvents() {
           price: scraped.price || '',
           quantity: 1,
           image_path: scraped.image_path || '',
+          retailer: scraped.retailer || '',
+          in_stock: scraped.in_stock || '',
+          tag: (document.getElementById('shopTagInput')?.value || '').trim(),
         }),
       });
       state.shoppingItems.unshift(created);
@@ -2158,6 +2840,7 @@ function bindEvents() {
           name,
           price: document.getElementById('shopManualPrice').value.trim(),
           quantity: Math.max(1, parseInt(document.getElementById('shopManualQty').value, 10) || 1),
+          tag: (document.getElementById('shopTagInput')?.value || '').trim(),
         }),
       });
       state.shoppingItems.unshift(created);
@@ -2170,6 +2853,20 @@ function bindEvents() {
     } catch (err) {
       showToast(err.message);
     }
+  });
+
+  document.querySelectorAll('button[data-shop-group]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.shoppingGroupBy = btn.dataset.shopGroup;
+      renderShopping();
+    });
+  });
+
+  document.getElementById('shoppingTagFilterBar').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-shop-tag]');
+    if (!btn) return;
+    state.shoppingTagFilter = btn.dataset.shopTag;
+    renderShopping();
   });
 
   document.getElementById('copyShoppingChecklistBtn').addEventListener('click', async () => {
@@ -2195,6 +2892,11 @@ function bindEvents() {
   });
 
   document.getElementById('shoppingWishlistGrid').addEventListener('click', async (e) => {
+    const openShopBtn = e.target.closest('button[data-open-shop]');
+    if (openShopBtn) {
+      openContextDrawer({ type: 'shopping', id: openShopBtn.dataset.openShop });
+      return;
+    }
     const stepBtn = e.target.closest('button[data-shop-step]');
     if (stepBtn) {
       const id = stepBtn.dataset.shopId;
@@ -2217,6 +2919,7 @@ function bindEvents() {
         const newPart = await apiFetch(`/api/shopping/${encodeURIComponent(id)}/move-to-inventory`, { method: 'POST' });
         state.shoppingItems = state.shoppingItems.filter((x) => x.id !== id);
         state.parts.unshift(newPart);
+        await loadProjects();
         updateNavBadges();
         renderShopping();
         showToast('Moved to Inventory');
@@ -2231,6 +2934,7 @@ function bindEvents() {
       try {
         await apiFetch(`/api/shopping/${encodeURIComponent(id)}`, { method: 'DELETE' });
         state.shoppingItems = state.shoppingItems.filter((x) => x.id !== id);
+        await loadProjects();
         updateNavBadges();
         renderShopping();
       } catch (err) {
@@ -2303,45 +3007,267 @@ function bindEvents() {
   });
 
   // Projects View delegations
+  document.getElementById('newProjectBtn').addEventListener('click', () => openProjectModal(null));
+  document.getElementById('emptyNewProjectBtn').addEventListener('click', () => openProjectModal(null));
+
   document.getElementById('projectsGrid').addEventListener('click', async (e) => {
-    const openBtn = e.target.closest('button[data-open-part]');
-    if (openBtn) {
-      openDrawer('view', openBtn.dataset.openPart);
+    const pItemBtn = e.target.closest('button[data-open-pitem]');
+    if (pItemBtn) {
+      openContextDrawer({
+        type: 'project_part',
+        projectId: pItemBtn.dataset.ctxProj,
+        projectItemId: pItemBtn.dataset.openPitem,
+      });
       return;
     }
-    const initBtn = e.target.closest('button[data-teardown-init]');
-    if (initBtn) {
-      const wrap = initBtn.closest('[data-teardown-wrap]');
-      initBtn.classList.add('hidden');
-      const grp = wrap.querySelector('[data-teardown-confirm]');
-      grp.classList.remove('hidden');
-      grp.classList.add('flex');
+    const shopBtn = e.target.closest('button[data-open-shop]');
+    if (shopBtn) {
+      openContextDrawer({
+        type: 'shopping',
+        id: shopBtn.dataset.openShop,
+        projectId: shopBtn.dataset.ctxProj || null,
+        projectItemId: shopBtn.dataset.ctxPitem || null,
+      });
       return;
     }
-    const cancelBtn = e.target.closest('button[data-teardown-cancel]');
-    if (cancelBtn) {
-      const wrap = cancelBtn.closest('[data-teardown-wrap]');
-      const grp = wrap.querySelector('[data-teardown-confirm]');
-      grp.classList.add('hidden');
-      grp.classList.remove('flex');
-      wrap.querySelector('[data-teardown-init]').classList.remove('hidden');
+    const tabBtn = e.target.closest('button[data-proj-tab]');
+    if (tabBtn) {
+      state.projectActiveTab[tabBtn.dataset.projId] = tabBtn.dataset.projTab;
+      renderProjects();
       return;
     }
-    const doBtn = e.target.closest('button[data-teardown-do]');
-    if (doBtn) {
-      const proj = doBtn.dataset.teardownDo;
+    const selVarBtn = e.target.closest('button[data-select-variant]');
+    if (selVarBtn) {
       try {
-        const res = await apiFetch('/api/projects/teardown', {
-          method: 'POST',
+        await apiFetch(
+          `/api/projects/${encodeURIComponent(selVarBtn.dataset.projId)}/variants/${encodeURIComponent(selVarBtn.dataset.selectVariant)}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_selected: true }),
+          }
+        );
+        await Promise.all([loadProjects(), loadParts()]);
+        showToast('Active build option updated');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    const statusBtn = e.target.closest('button[data-proj-status]');
+    if (statusBtn) {
+      try {
+        await apiFetch(`/api/projects/${encodeURIComponent(statusBtn.dataset.projId)}`, {
+          method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project: proj }),
+          body: JSON.stringify({ status: statusBtn.dataset.projStatus }),
         });
-        await loadParts();
-        showToast(`Returned ${res.parts_returned} part${res.parts_returned === 1 ? '' : 's'} to bins`);
+        await Promise.all([loadProjects(), loadParts()]);
+        showToast(statusBtn.dataset.projStatus === 'active' ? 'Project marked active on bench' : 'Project moved to planning');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    const editProjBtn = e.target.closest('button[data-edit-project]');
+    if (editProjBtn) {
+      openProjectModal(editProjBtn.dataset.editProject);
+      return;
+    }
+    const addItemBtn = e.target.closest('button[data-add-proj-item]');
+    if (addItemBtn) {
+      openProjectActionModal('item', addItemBtn.dataset.addProjItem);
+      return;
+    }
+    const addVarBtn = e.target.closest('button[data-add-proj-variant]');
+    if (addVarBtn) {
+      openProjectActionModal('variant', addVarBtn.dataset.addProjVariant);
+      return;
+    }
+  });
+
+  // Context Drawer Events (Shopping & Project Item)
+  document.getElementById('closeContextDrawerBtn').addEventListener('click', closeContextDrawer);
+  document.getElementById('contextDrawerBackdrop').addEventListener('click', closeContextDrawer);
+  document.getElementById('contextDrawerPanel').addEventListener('click', async (e) => {
+    const ctx = state.contextDrawer;
+    if (!ctx) return;
+    if (e.target.closest('#ctxCloseFooterBtn')) {
+      closeContextDrawer();
+      return;
+    }
+    if (e.target.closest('#ctxOpenInventorySheetBtn') && ctx.type === 'project_part') {
+      const proj = state.projects.find((p) => p.id === ctx.projectId);
+      const pItem = proj && (proj.items || []).find((x) => x.id === ctx.projectItemId);
+      if (pItem && pItem.part_id) {
+        closeContextDrawer();
+        openDrawer('view', pItem.part_id);
+      }
+      return;
+    }
+    if (e.target.closest('#ctxFetchShopMetaBtn') && ctx.type === 'shopping') {
+      const btn = e.target.closest('#ctxFetchShopMetaBtn');
+      btn.disabled = true;
+      btn.textContent = 'Fetching...';
+      try {
+        const updated = await apiFetch(`/api/shopping/${encodeURIComponent(ctx.id)}/fetch`, { method: 'POST' });
+        const idx = state.shoppingItems.findIndex((x) => x.id === ctx.id);
+        if (idx >= 0) state.shoppingItems[idx] = updated;
+        await loadProjects();
+        renderContextDrawer();
+        if (state.activePage === 'shopping') renderShopping();
+        showToast('Product photo and info updated');
+      } catch (err) {
+        showToast(err.message);
+        btn.disabled = false;
+        btn.textContent = 'Fetch photo & info';
+      }
+      return;
+    }
+    if (e.target.closest('#ctxSaveShopBtn') && ctx.type === 'shopping') {
+      const whyVal = document.getElementById('ctxShopWhy').value.trim();
+      try {
+        const updated = await apiFetch(`/api/shopping/${encodeURIComponent(ctx.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: document.getElementById('ctxShopName').value.trim(),
+            price: document.getElementById('ctxShopPrice').value.trim(),
+            quantity: Math.max(1, parseInt(document.getElementById('ctxShopQty').value, 10) || 1),
+            tag: document.getElementById('ctxShopTag').value.trim(),
+            category: document.getElementById('ctxShopCategory').value,
+            in_stock: document.getElementById('ctxShopStock').value,
+            url: document.getElementById('ctxShopUrl').value.trim(),
+            why_needed: whyVal,
+            notes: whyVal,
+          }),
+        });
+        const idx = state.shoppingItems.findIndex((x) => x.id === ctx.id);
+        if (idx >= 0) state.shoppingItems[idx] = updated;
+        await loadProjects();
+        renderCurrentPage();
+        closeContextDrawer();
+        showToast('Shopping item saved');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    if (e.target.closest('#ctxShopBoughtBtn') && ctx.type === 'shopping') {
+      try {
+        const newPart = await apiFetch(`/api/shopping/${encodeURIComponent(ctx.id)}/move-to-inventory`, { method: 'POST' });
+        state.shoppingItems = state.shoppingItems.filter((x) => x.id !== ctx.id);
+        state.parts.unshift(newPart);
+        closeContextDrawer();
+        await loadProjects();
+        renderCurrentPage();
+        showToast('Moved to Inventory and linked in project');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    if (e.target.closest('#ctxDeleteShopBtn') && ctx.type === 'shopping') {
+      try {
+        await apiFetch(`/api/shopping/${encodeURIComponent(ctx.id)}`, { method: 'DELETE' });
+        state.shoppingItems = state.shoppingItems.filter((x) => x.id !== ctx.id);
+        closeContextDrawer();
+        await loadProjects();
+        renderCurrentPage();
+        showToast('Removed from shopping list');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    if (e.target.closest('#ctxUnlinkShopBtn') && ctx.projectId && ctx.projectItemId) {
+      try {
+        await apiFetch(`/api/projects/${encodeURIComponent(ctx.projectId)}/items/${encodeURIComponent(ctx.projectItemId)}`, {
+          method: 'DELETE',
+        });
+        closeContextDrawer();
+        await Promise.all([loadProjects(), loadShopping()]);
+        showToast('Unlinked from project');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    if (e.target.closest('#ctxSaveProjItemBtn') && ctx.type === 'project_part') {
+      try {
+        await apiFetch(`/api/projects/${encodeURIComponent(ctx.projectId)}/items/${encodeURIComponent(ctx.projectItemId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            quantity_needed: Math.max(1, parseInt(document.getElementById('ctxProjQty').value, 10) || 1),
+            variant_id: document.getElementById('ctxProjVariant').value || null,
+            project_notes: document.getElementById('ctxProjNotes').value.trim(),
+          }),
+        });
+        closeContextDrawer();
+        await Promise.all([loadProjects(), loadParts()]);
+        showToast('Project item notes saved');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    if (e.target.closest('#ctxRemoveProjItemBtn') && ctx.type === 'project_part') {
+      try {
+        await apiFetch(`/api/projects/${encodeURIComponent(ctx.projectId)}/items/${encodeURIComponent(ctx.projectItemId)}`, {
+          method: 'DELETE',
+        });
+        closeContextDrawer();
+        await Promise.all([loadProjects(), loadParts()]);
+        showToast('Removed from project');
       } catch (err) {
         showToast(err.message);
       }
     }
+  });
+
+  // Project Create / Edit Modal Events
+  document.getElementById('closeProjectModalBtn').addEventListener('click', closeProjectModal);
+  document.getElementById('cancelProjectModalBtn').addEventListener('click', closeProjectModal);
+  document.getElementById('projectModal').addEventListener('click', (e) => {
+    if (e.target.id === 'projectModal') closeProjectModal();
+  });
+  document.getElementById('saveProjectModalBtn').addEventListener('click', saveProjectModal);
+  document.getElementById('projectDeleteInitBtn').addEventListener('click', () => {
+    document.getElementById('projectDeleteInitBtn').classList.add('hidden');
+    const grp = document.getElementById('projectDeleteConfirmGroup');
+    grp.classList.remove('hidden');
+    grp.classList.add('flex');
+  });
+  document.getElementById('projectDeleteCancelBtn').addEventListener('click', () => {
+    document.getElementById('projectDeleteConfirmGroup').classList.add('hidden');
+    document.getElementById('projectDeleteConfirmGroup').classList.remove('flex');
+    document.getElementById('projectDeleteInitBtn').classList.remove('hidden');
+  });
+  document.getElementById('projectDeleteConfirmBtn').addEventListener('click', async () => {
+    if (!state.editingProjectId) return;
+    try {
+      await apiFetch(`/api/projects/${encodeURIComponent(state.editingProjectId)}`, { method: 'DELETE' });
+      closeProjectModal();
+      await Promise.all([loadProjects(), loadShopping(), loadParts()]);
+      showToast('Project deleted');
+    } catch (err) {
+      showToast(err.message);
+    }
+  });
+
+  // Project Action Modal Events
+  document.getElementById('closeProjectActionModalBtn').addEventListener('click', closeProjectActionModal);
+  document.getElementById('cancelProjectActionModalBtn').addEventListener('click', closeProjectActionModal);
+  document.getElementById('projectActionModal').addEventListener('click', (e) => {
+    if (e.target.id === 'projectActionModal') closeProjectActionModal();
+  });
+  document.getElementById('saveProjectActionModalBtn').addEventListener('click', saveProjectActionModal);
+
+  // Browser Back / Forward URL Sync
+  window.addEventListener('popstate', () => {
+    const route = parseRouteFromLocation();
+    switchPage(route.page, { pushState: false, benchSub: route.benchSub });
   });
 
   // Glossary View delegations & Modal
@@ -2690,13 +3616,25 @@ function bindEvents() {
         closeSettingsModal();
         return;
       }
+      if (!document.getElementById('projectActionModal').classList.contains('hidden')) {
+        closeProjectActionModal();
+        return;
+      }
+      if (!document.getElementById('projectModal').classList.contains('hidden')) {
+        closeProjectModal();
+        return;
+      }
+      if (state.contextDrawer) {
+        closeContextDrawer();
+        return;
+      }
       if (state.drawerMode) {
         closeDrawer();
       } else if (document.activeElement === searchInput || state.search) {
         state.search = '';
         searchInput.value = '';
         syncSearchUi();
-        renderGrid();
+        renderCurrentPage();
         searchInput.blur();
       }
     }
@@ -2711,6 +3649,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     state.locationFilter = binParam.trim();
   }
   bindEvents();
-  switchPage('inventory');
-  await Promise.all([loadConfig(), loadParts(), loadGlossary(), loadShopping()]);
+  const initialRoute = parseRouteFromLocation();
+  switchPage(initialRoute.page, { pushState: false, benchSub: initialRoute.benchSub });
+  await Promise.all([loadConfig(), loadParts(), loadProjects(), loadGlossary(), loadShopping()]);
 });

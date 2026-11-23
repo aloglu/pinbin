@@ -17,25 +17,38 @@ from app.auth import CloudflareAccessMiddleware
 from app.backup import BackupError, create_backup_zip_bytes, restore_backup_zip_bytes
 from app.config import CATEGORIES, Settings, load_settings
 from app.db import (
+    PROJECT_STATUSES,
+    add_project_item,
     create_glossary_term,
     create_part,
+    create_project,
+    create_project_variant,
     create_shopping_item,
     delete_glossary_term,
     delete_part,
+    delete_project,
+    delete_project_item,
+    delete_project_variant,
     delete_shopping_item,
     get_ai_usage_today,
     get_part,
+    get_project,
+    get_shopping_item,
     get_ui_settings,
     import_parts_from_rows,
     init_db,
     list_glossary,
     list_parts,
+    list_projects,
     list_shopping_items,
     move_shopping_item_to_inventory,
     seed_if_empty,
     teardown_project,
     update_glossary_term,
     update_part,
+    update_project,
+    update_project_item,
+    update_project_variant,
     update_shopping_item,
     update_ui_settings,
     upsert_suggested_glossary_terms,
@@ -139,6 +152,48 @@ class ProjectTeardownRequest(BaseModel):
     project: str = Field(..., min_length=1, max_length=200)
 
 
+class ProjectCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=160)
+    description: str = ""
+    status: str = "planning"
+    notes: str = ""
+
+
+class ProjectPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+    status: str | None = None
+    notes: str | None = None
+
+
+class ProjectVariantCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str = ""
+    is_selected: bool = False
+    sort_order: int | None = None
+
+
+class ProjectVariantPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = None
+    is_selected: bool | None = None
+    sort_order: int | None = None
+
+
+class ProjectItemCreate(BaseModel):
+    variant_id: str | None = None
+    part_id: str | None = None
+    shopping_item_id: str | None = None
+    quantity_needed: int = Field(default=1, ge=1)
+    project_notes: str = ""
+
+
+class ProjectItemPatch(BaseModel):
+    variant_id: str | None = None
+    quantity_needed: int | None = Field(default=None, ge=1)
+    project_notes: str | None = None
+
+
 class ShoppingItemCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     url: str = ""
@@ -146,6 +201,15 @@ class ShoppingItemCreate(BaseModel):
     quantity: int = Field(default=1, ge=1)
     notes: str = ""
     image_path: str = ""
+    retailer: str = ""
+    tag: str = ""
+    category: str = ""
+    specs: dict[str, str] = Field(default_factory=dict)
+    in_stock: str = ""
+    why_needed: str = ""
+    project_id: str | None = None
+    variant_id: str | None = None
+    fetch_metadata: bool = False
 
 
 class ShoppingItemPatch(BaseModel):
@@ -155,6 +219,12 @@ class ShoppingItemPatch(BaseModel):
     quantity: int | None = Field(default=None, ge=1)
     notes: str | None = None
     image_path: str | None = None
+    retailer: str | None = None
+    tag: str | None = None
+    category: str | None = None
+    specs: dict[str, str] | None = None
+    in_stock: str | None = None
+    why_needed: str | None = None
 
 
 class CompatibilityRequest(BaseModel):
@@ -191,7 +261,13 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         return {"status": "ok"}
 
     @application.get("/")
-    async def index() -> FileResponse:
+    @application.get("/inventory")
+    @application.get("/projects")
+    @application.get("/shopping")
+    @application.get("/glossary")
+    @application.get("/bench")
+    @application.get("/bench/{subtab}")
+    async def index(subtab: str | None = None) -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
     @application.get("/images/{filename}")
@@ -251,6 +327,94 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         except EnrichError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
+    @application.get("/api/projects")
+    async def api_list_projects() -> list[dict[str, Any]]:
+        return list_projects(settings.db_path)
+
+    @application.post("/api/projects", status_code=201)
+    async def api_create_project(payload: ProjectCreate) -> dict[str, Any]:
+        try:
+            return create_project(settings.db_path, payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.patch("/api/projects/{project_id}")
+    async def api_patch_project(project_id: str, payload: ProjectPatch) -> dict[str, Any]:
+        try:
+            updated = update_project(settings.db_path, project_id, payload.model_dump(exclude_unset=True))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return updated
+
+    @application.delete("/api/projects/{project_id}")
+    async def api_delete_project(project_id: str) -> dict[str, str]:
+        deleted = delete_project(settings.db_path, project_id)
+        if deleted is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return {"status": "deleted", "id": project_id}
+
+    @application.post("/api/projects/{project_id}/variants", status_code=201)
+    async def api_create_project_variant(project_id: str, payload: ProjectVariantCreate) -> dict[str, Any]:
+        try:
+            created = create_project_variant(settings.db_path, project_id, payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if created is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return created
+
+    @application.patch("/api/projects/{project_id}/variants/{variant_id}")
+    async def api_patch_project_variant(
+        project_id: str, variant_id: str, payload: ProjectVariantPatch
+    ) -> dict[str, Any]:
+        try:
+            updated = update_project_variant(
+                settings.db_path, project_id, variant_id, payload.model_dump(exclude_unset=True)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Variant not found")
+        return updated
+
+    @application.delete("/api/projects/{project_id}/variants/{variant_id}")
+    async def api_delete_project_variant(project_id: str, variant_id: str) -> dict[str, str]:
+        if not delete_project_variant(settings.db_path, project_id, variant_id):
+            raise HTTPException(status_code=404, detail="Variant not found")
+        return {"status": "deleted", "id": variant_id}
+
+    @application.post("/api/projects/{project_id}/items", status_code=201)
+    async def api_add_project_item(project_id: str, payload: ProjectItemCreate) -> dict[str, Any]:
+        try:
+            created = add_project_item(settings.db_path, project_id, payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if created is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return created
+
+    @application.patch("/api/projects/{project_id}/items/{item_id}")
+    async def api_patch_project_item(
+        project_id: str, item_id: str, payload: ProjectItemPatch
+    ) -> dict[str, Any]:
+        try:
+            updated = update_project_item(
+                settings.db_path, project_id, item_id, payload.model_dump(exclude_unset=True)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Project item not found")
+        return updated
+
+    @application.delete("/api/projects/{project_id}/items/{item_id}")
+    async def api_delete_project_item(project_id: str, item_id: str) -> dict[str, str]:
+        if not delete_project_item(settings.db_path, project_id, item_id):
+            raise HTTPException(status_code=404, detail="Project item not found")
+        return {"status": "deleted", "id": item_id}
+
     @application.post("/api/projects/teardown")
     async def api_teardown_project(payload: ProjectTeardownRequest) -> dict[str, Any]:
         cleared = teardown_project(settings.db_path, payload.project)
@@ -262,7 +426,68 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/shopping", status_code=201)
     async def api_create_shopping(payload: ShoppingItemCreate) -> dict[str, Any]:
-        return create_shopping_item(settings.db_path, payload.model_dump())
+        data = payload.model_dump()
+        project_id = data.pop("project_id", None)
+        variant_id = data.pop("variant_id", None)
+        fetch_meta = bool(data.pop("fetch_metadata", False))
+        if fetch_meta and data.get("url"):
+            try:
+                scraped = await scrape_url(data["url"], settings.images_dir, settings.max_upload_bytes)
+                if not data.get("image_path") and scraped.get("image_path"):
+                    data["image_path"] = scraped["image_path"]
+                if not data.get("price") and scraped.get("price"):
+                    data["price"] = scraped["price"]
+                if not data.get("retailer") and scraped.get("retailer"):
+                    data["retailer"] = scraped["retailer"]
+                if not data.get("in_stock") and scraped.get("in_stock"):
+                    data["in_stock"] = scraped["in_stock"]
+            except ScrapeError:
+                pass
+        created = create_shopping_item(settings.db_path, data)
+        if project_id:
+            try:
+                add_project_item(
+                    settings.db_path,
+                    project_id,
+                    {
+                        "shopping_item_id": created["id"],
+                        "variant_id": variant_id,
+                        "quantity_needed": created["quantity"],
+                        "project_notes": data.get("why_needed") or "",
+                    },
+                )
+                refreshed = get_shopping_item(settings.db_path, created["id"])
+                if refreshed:
+                    created = refreshed
+            except ValueError:
+                pass
+        return created
+
+    @application.post("/api/shopping/{item_id}/fetch")
+    async def api_fetch_shopping_metadata(item_id: str) -> dict[str, Any]:
+        item = get_shopping_item(settings.db_path, item_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Shopping item not found")
+        if not item.get("url"):
+            raise HTTPException(status_code=400, detail="Shopping item has no URL to fetch")
+        try:
+            scraped = await scrape_url(item["url"], settings.images_dir, settings.max_upload_bytes)
+        except ScrapeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        updates: dict[str, Any] = {}
+        if scraped.get("image_path"):
+            old_img = item.get("image_path") or ""
+            updates["image_path"] = scraped["image_path"]
+            if old_img and old_img != scraped["image_path"]:
+                safe_delete_image(old_img, settings.images_dir)
+        if scraped.get("price") and not item.get("price"):
+            updates["price"] = scraped["price"]
+        if scraped.get("retailer"):
+            updates["retailer"] = scraped["retailer"]
+        if scraped.get("in_stock"):
+            updates["in_stock"] = scraped["in_stock"]
+        updated = update_shopping_item(settings.db_path, item_id, updates)
+        return updated or item
 
     @application.patch("/api/shopping/{item_id}")
     async def api_patch_shopping(item_id: str, payload: ShoppingItemPatch) -> dict[str, Any]:

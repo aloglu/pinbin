@@ -15,7 +15,10 @@ from app.images import ImageError, process_and_save_image
 
 REQUEST_TIMEOUT_SEC = 10.0
 MAX_REDIRECTS = 5
-USER_AGENT = "Pinbin/1.0 (+https://github.com/pinbin; self-hosted workbench inventory)"
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Pinbin/1.0"
+)
 
 
 class ScrapeError(Exception):
@@ -171,7 +174,33 @@ def _extract_price(soup: BeautifulSoup) -> str:
     return ""
 
 
-def _extract_meta(soup: BeautifulSoup) -> tuple[str, str, str, str]:
+def _extract_availability(soup: BeautifulSoup) -> str:
+    """Best-effort extraction of stock availability from JSON-LD Offer."""
+    for script in soup.find_all("script", type="application/ld+json"):
+        raw = script.string or ""
+        if not raw.strip():
+            continue
+        try:
+            ld = json.loads(raw)
+        except Exception:
+            continue
+        items = ld if isinstance(ld, list) else [ld]
+        for obj in items:
+            if not isinstance(obj, dict):
+                continue
+            offers = obj.get("offers")
+            if isinstance(offers, list) and offers:
+                offers = offers[0]
+            if isinstance(offers, dict):
+                avail = str(offers.get("availability") or "").lower()
+                if "instock" in avail:
+                    return "in_stock"
+                if "outofstock" in avail or "soldout" in avail:
+                    return "out_of_stock"
+    return ""
+
+
+def _extract_meta(soup: BeautifulSoup) -> tuple[str, str, str, str, str]:
     def meta_content(attr_name: str, attr_val: str) -> str:
         tag = soup.find("meta", attrs={attr_name: attr_val})
         if tag and tag.get("content"):
@@ -210,7 +239,8 @@ def _extract_meta(soup: BeautifulSoup) -> tuple[str, str, str, str]:
                 break
 
     price = _extract_price(soup)
-    return title[:300], description[:1000], image_src, price
+    in_stock = _extract_availability(soup)
+    return title[:300], description[:1000], image_src, price, in_stock
 
 
 async def scrape_url(url: str, images_dir: Path, max_bytes: int) -> dict[str, Any]:
@@ -245,7 +275,10 @@ async def scrape_url(url: str, images_dir: Path, max_bytes: int) -> dict[str, An
         # HTML page
         html_text = body.decode("utf-8", errors="replace")
         soup = BeautifulSoup(html_text, "html.parser")
-        title, description, raw_img_url, price = _extract_meta(soup)
+        title, description, raw_img_url, price, in_stock = _extract_meta(soup)
+        retailer = (urlparse(final_url).hostname or "").lower()
+        if retailer.startswith("www."):
+            retailer = retailer[4:]
 
         saved_filename = ""
         if raw_img_url:
@@ -261,6 +294,8 @@ async def scrape_url(url: str, images_dir: Path, max_bytes: int) -> dict[str, An
             "title": title,
             "description": description,
             "price": price,
+            "in_stock": in_stock,
+            "retailer": retailer,
             "image_url": f"/images/{saved_filename}" if saved_filename else "",
             "image_path": saved_filename,
             "source_url": final_url,
