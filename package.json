@@ -1,0 +1,11 @@
+{
+  "name": "pinbin-styles",
+  "private": true,
+  "description": "Builds app/static/tailwind.css. Not needed at runtime.",
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i app/static/tailwind.input.css -o app/static/tailwind.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}

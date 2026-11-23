@@ -47,6 +47,9 @@ class Settings:
     data_dir: Path
     seed_file: Path
     max_upload_mb: int
+    mcp_enabled: bool = False
+    mcp_read_only: bool = False
+    mcp_api_token: str = ""
 
     @property
     def db_path(self) -> Path:
@@ -80,13 +83,16 @@ class Settings:
                 )
 
     def __repr__(self) -> str:
-        # Ensure AI_API_KEY is never accidentally exposed in logs or tracebacks
+        # Ensure AI_API_KEY and MCP_API_TOKEN are never accidentally exposed in logs or tracebacks
         return (
             f"Settings(local_dev_mode={self.local_dev_mode}, "
             f"cf_team_domain={self.cf_team_domain!r}, "
             f"ai_provider={self.ai_provider!r}, "
             f"ai_enabled={self.ai_enabled}, "
             f"ai_daily_limit={self.ai_daily_limit}, "
+            f"mcp_enabled={self.mcp_enabled}, "
+            f"mcp_read_only={self.mcp_read_only}, "
+            f"mcp_token_configured={bool(self.mcp_api_token)}, "
             f"data_dir={str(self.data_dir)!r})"
         )
 
@@ -115,4 +121,7 @@ def load_settings() -> Settings:
         data_dir=Path(os.environ.get("DATA_DIR", "/data").strip() or "/data"),
         seed_file=Path(os.environ.get("SEED_FILE", "/app/seed.json").strip() or "/app/seed.json"),
         max_upload_mb=_parse_int(os.environ.get("MAX_UPLOAD_MB"), default=10, minimum=1),
+        mcp_enabled=_parse_bool(os.environ.get("MCP_ENABLED"), default=False),
+        mcp_read_only=_parse_bool(os.environ.get("MCP_READ_ONLY"), default=False),
+        mcp_api_token=os.environ.get("MCP_API_TOKEN", "").strip(),
     )

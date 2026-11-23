@@ -1,4 +1,185 @@
-/* Clean subtle scrollbar hiding for horizontal category strip */
+/* ============================================================================
+   Pinbin — "Bench mat & label tape"
+   The canvas is an anti-static bench mat (grey-green). Surfaces are paper.
+   Bins carry yellow label-maker tape: the one loud element in the system.
+   Ink is the action colour. Solder-mask green marks links, focus and "in use".
+   Probe red marks caution and low stock.
+
+   Colour tokens are stored as RGB channels so Tailwind can read them with
+   rgb(var(--x) / <alpha-value>). Use rgb(var(--x)) in plain CSS.
+   ============================================================================ */
+/* Fonts are served from /static/fonts (SIL Open Font License, see the LICENSE files there). */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  src: url(/static/fonts/archivo-latin-ext-wdth-normal.woff2) format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  src: url(/static/fonts/archivo-latin-wdth-normal.woff2) format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/static/fonts/ibm-plex-mono-latin-ext-400-normal.woff2) format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/static/fonts/ibm-plex-mono-latin-400-normal.woff2) format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(/static/fonts/ibm-plex-mono-latin-ext-500-normal.woff2) format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(/static/fonts/ibm-plex-mono-latin-500-normal.woff2) format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(/static/fonts/ibm-plex-mono-latin-ext-600-normal.woff2) format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(/static/fonts/ibm-plex-mono-latin-600-normal.woff2) format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+:root {
+  --mat: 218 225 221;        /* page canvas: ESD mat */
+  --paper: 251 252 250;      /* cards, header, drawer */
+  --well: 236 241 238;       /* recessed: photo stages, readouts */
+  --line: 199 208 203;       /* borders */
+  --line-soft: 222 229 225;  /* dividers inside a surface */
+  --ink: 18 26 24;           /* main text + primary buttons */
+  --ink-2: 62 74 70;         /* secondary text */
+  --muted: 102 116 111;      /* labels, hints */
+  --on-ink: 251 252 250;     /* text on ink */
+  --accent: 23 105 74;       /* solder-mask green */
+  --go: 23 128 84;           /* in use */
+  --stop: 186 54 38;         /* caution, low stock */
+  --tape: 245 210 63;        /* label tape */
+  --tape-ink: 20 20 18;
+
+  /* Legacy aliases (used inside JS template strings) */
+  --pb-border: rgb(var(--line));
+  --pb-divider: rgb(var(--line-soft));
+
+  --radius: 6px;
+  --font-sans: 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+  color-scheme: light;
+}
+
+.dark {
+  --mat: 17 22 21;
+  --paper: 25 32 30;
+  --well: 20 26 25;
+  --line: 47 58 55;
+  --line-soft: 36 45 43;
+  --ink: 232 238 235;
+  --ink-2: 184 196 192;
+  --muted: 129 143 138;
+  --on-ink: 17 22 21;
+  --accent: 98 200 154;
+  --go: 98 200 154;
+  --stop: 240 120 100;
+  --tape: 245 210 63;
+  --tape-ink: 20 20 18;
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------
+   Base
+   --------------------------------------------------------------------------- */
+html {
+  font-family: var(--font-sans);
+  /* Keep space for the scrollbar, so the page does not move sideways
+     when a page is short or the drawer opens. */
+  scrollbar-gutter: stable;
+  font-variation-settings: 'wdth' 100;
+}
+body {
+  background-color: rgb(var(--mat));
+  color: rgb(var(--ink));
+  font-feature-settings: 'tnum' 1;
+}
+::selection {
+  background: rgb(var(--tape) / 0.55);
+  color: rgb(var(--tape-ink));
+}
+.font-mono {
+  font-family: var(--font-mono) !important;
+}
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+/* Condensed display type: part names, page titles, glossary terms */
+.pb-display {
+  font-variation-settings: 'wdth' 78;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  line-height: 1.12;
+}
+.pb-condensed {
+  font-variation-settings: 'wdth' 84;
+}
+
+/* Page heading row used by Projects, Shopping, Glossary, Bench */
+.pb-page-title {
+  font-variation-settings: 'wdth' 78;
+  font-weight: 700;
+  font-size: 1.75rem;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+.pb-page-lede {
+  color: rgb(var(--ink-2));
+  font-size: 0.875rem;
+  line-height: 1.5;
+  max-width: 62ch;
+  margin-top: 0.375rem;
+}
+/* Small section heading: sentence case, never all caps */
+.pb-section-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: rgb(var(--ink-2));
+}
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -6,8 +187,6 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
-
-/* Clamp part titles cleanly to 2 lines */
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -15,14 +194,715 @@
   overflow: hidden;
 }
 
-/* Smooth drawer slide transitions (right panel on desktop, bottom sheet on mobile) */
-#drawerPanel {
-  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
-#drawerBackdrop {
-  transition: opacity 200ms ease;
+.animate-spin-fast {
+  animation: spin 0.7s linear infinite;
 }
 
+/* ---------------------------------------------------------------------------
+   App shell
+   --------------------------------------------------------------------------- */
+.pb-header {
+  background-color: rgb(var(--paper));
+  border-bottom: 1px solid rgb(var(--line));
+}
+
+/* Brand mark: the word "Pinbin" printed on label tape */
+.pb-brand {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 9px 0 10px;
+  background: rgb(var(--tape));
+  color: rgb(var(--tape-ink));
+  font-variation-settings: 'wdth' 72;
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: 0.01em;
+  border-radius: 2px;
+  box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.12);
+}
+
+/* Top-level page navigation */
+.pb-nav {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.pb-nav > button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgb(var(--muted));
+  transition: color 120ms ease;
+}
+.pb-nav > button:hover {
+  color: rgb(var(--ink));
+}
+.pb-nav > button.pb-tab-active {
+  color: rgb(var(--ink));
+}
+.pb-nav > button.pb-tab-active::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  background: rgb(var(--ink));
+}
+.pb-nav-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgb(var(--muted));
+}
+.pb-nav-count.is-alert {
+  color: rgb(var(--stop));
+}
+
+/* Inventory sidebar: categories, quick filters, bins */
+.pb-side-group + .pb-side-group {
+  margin-top: 1.5rem;
+}
+.pb-side-heading {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(var(--muted));
+  padding: 0 10px 6px;
+}
+.pb-side-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: rgb(var(--ink-2));
+  text-align: left;
+  white-space: nowrap;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.pb-side-item:hover {
+  background: rgb(var(--ink) / 0.06);
+  color: rgb(var(--ink));
+}
+.pb-side-item[aria-pressed='true'] {
+  background: rgb(var(--ink));
+  color: rgb(var(--on-ink));
+}
+.pb-side-item .pb-side-count {
+  font-size: 12.5px;
+  color: rgb(var(--muted));
+  font-variant-numeric: tabular-nums;
+}
+.pb-side-item[aria-pressed='true'] .pb-side-count {
+  color: rgb(var(--on-ink) / 0.7);
+}
+.pb-side-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+/* On small screens the sidebar lists become horizontal scroll strips */
+@media (max-width: 1023px) {
+  .pb-side-list {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .pb-side-list::-webkit-scrollbar {
+    display: none;
+  }
+  .pb-side-item {
+    width: auto;
+    border: 1px solid rgb(var(--line));
+    background: rgb(var(--paper));
+  }
+  .pb-side-item[aria-pressed='true'] {
+    border-color: rgb(var(--ink));
+  }
+  .pb-side-group + .pb-side-group {
+    margin-top: 0.75rem;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Surfaces
+   --------------------------------------------------------------------------- */
+.elevated-card {
+  background-color: rgb(var(--paper)) !important;
+  border: 1px solid rgb(var(--line)) !important;
+  box-shadow: none;
+}
+.interactive-card {
+  background-color: rgb(var(--paper)) !important;
+  border: 1px solid rgb(var(--line)) !important;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.interactive-card:hover {
+  border-color: rgb(var(--ink) / 0.55) !important;
+}
+.pb-well {
+  background-color: rgb(var(--well)) !important;
+  border: 1px solid rgb(var(--line-soft)) !important;
+}
+.pb-row-link {
+  background-color: rgb(var(--paper));
+  border: 1px solid rgb(var(--line-soft));
+  transition: border-color 110ms ease, background-color 110ms ease;
+}
+.pb-row-link:hover {
+  border-color: rgb(var(--ink) / 0.5);
+}
+.pb-divider-b {
+  border-bottom: 1px solid rgb(var(--line-soft));
+}
+.pb-divider-t {
+  border-top: 1px solid rgb(var(--line-soft));
+}
+
+/* Part card (grid view): photo slot on the left, label on the right */
+.pb-part-card {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  min-height: 128px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: pointer;
+}
+.pb-part-photo {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(var(--well));
+  border-right: 1px solid rgb(var(--line-soft));
+  color: rgb(var(--muted) / 0.55);
+}
+.pb-part-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 8px;
+  background: #fff;
+}
+.pb-part-photo .pb-glyph {
+  width: 40px;
+  height: 40px;
+}
+.pb-part-photo .pb-needs-photo {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  text-align: center;
+  font-size: 11px;
+  color: rgb(var(--muted));
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.pb-part-card:hover .pb-needs-photo {
+  opacity: 1;
+}
+.pb-part-name {
+  font-variation-settings: 'wdth' 82;
+  font-weight: 650;
+  font-size: 16px;
+  line-height: 1.2;
+  color: rgb(var(--ink));
+}
+
+/* Part list (list view): a real table */
+.pb-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: rgb(var(--paper));
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.pb-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(var(--muted));
+  padding: 9px 12px;
+  border-bottom: 1px solid rgb(var(--line));
+  background: rgb(var(--well));
+}
+.pb-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgb(var(--line-soft));
+  vertical-align: middle;
+}
+.pb-table tr:last-child td {
+  border-bottom: 0;
+}
+.pb-table tbody tr {
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+.pb-table tbody tr:hover {
+  background: rgb(var(--ink) / 0.035);
+}
+
+/* ---------------------------------------------------------------------------
+   Inputs
+   --------------------------------------------------------------------------- */
+input[type='text'],
+input[type='url'],
+input[type='number'],
+input[type='search'],
+textarea,
+select {
+  background-color: rgb(var(--paper)) !important;
+  color: rgb(var(--ink)) !important;
+  border: 1px solid rgb(var(--line)) !important;
+  border-radius: 4px !important;
+  box-shadow: none;
+}
+.dark input[type='text'],
+.dark input[type='url'],
+.dark input[type='number'],
+.dark input[type='search'],
+.dark textarea,
+.dark select {
+  background-color: rgb(var(--well)) !important;
+}
+input::placeholder,
+textarea::placeholder {
+  color: rgb(var(--muted)) !important;
+  opacity: 0.9;
+}
+input:hover,
+textarea:hover,
+select:hover {
+  border-color: rgb(var(--ink) / 0.35) !important;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: rgb(var(--accent)) !important;
+  box-shadow: 0 0 0 3px rgb(var(--accent) / 0.2) !important;
+  outline: none !important;
+}
+label.block {
+  color: rgb(var(--ink-2)) !important;
+  font-size: 12.5px !important;
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+   Buttons
+   --------------------------------------------------------------------------- */
+.btn-primary,
+.btn-secondary,
+.btn-danger,
+.btn-danger-outline,
+.btn-ai {
+  border-radius: 4px !important;
+  font-weight: 600 !important;
+  transition: background-color 110ms ease, border-color 110ms ease, color 110ms ease;
+}
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.btn-ai:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background-color: rgb(var(--ink)) !important;
+  color: rgb(var(--on-ink)) !important;
+  border: 1px solid rgb(var(--ink)) !important;
+}
+.btn-primary:hover {
+  background-color: rgb(var(--ink) / 0.85) !important;
+}
+
+.btn-secondary {
+  background-color: rgb(var(--paper)) !important;
+  color: rgb(var(--ink)) !important;
+  border: 1px solid rgb(var(--line)) !important;
+}
+.btn-secondary:hover {
+  border-color: rgb(var(--ink) / 0.55) !important;
+}
+
+.btn-danger {
+  background-color: rgb(var(--stop)) !important;
+  color: #fff !important;
+  border: 1px solid rgb(var(--stop)) !important;
+}
+.dark .btn-danger {
+  color: rgb(var(--on-ink)) !important;
+}
+.btn-danger:hover {
+  filter: brightness(0.92);
+}
+
+.btn-danger-outline {
+  background-color: transparent !important;
+  color: rgb(var(--stop)) !important;
+  border: 1px solid rgb(var(--stop) / 0.45) !important;
+}
+.btn-danger-outline:hover {
+  background-color: rgb(var(--stop) / 0.08) !important;
+  border-color: rgb(var(--stop)) !important;
+}
+
+.btn-ai {
+  background-color: rgb(var(--accent) / 0.1) !important;
+  color: rgb(var(--accent)) !important;
+  border: 1px solid rgb(var(--accent) / 0.45) !important;
+}
+.btn-ai:hover {
+  background-color: rgb(var(--accent) / 0.17) !important;
+  border-color: rgb(var(--accent)) !important;
+}
+
+.btn-icon {
+  background-color: transparent !important;
+  color: rgb(var(--muted)) !important;
+  border: 1px solid transparent !important;
+  border-radius: 4px !important;
+  transition: background-color 110ms ease, color 110ms ease;
+}
+.btn-icon:hover {
+  background-color: rgb(var(--ink) / 0.07) !important;
+  color: rgb(var(--ink)) !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Underline tabs (drawer, edit form, bench)
+   --------------------------------------------------------------------------- */
+.pb-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-bottom: 1px solid rgb(var(--line));
+}
+.pb-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  height: 40px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: rgb(var(--muted));
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 110ms ease, border-color 110ms ease;
+}
+.pb-tab:hover {
+  color: rgb(var(--ink));
+}
+.pb-tab.pb-tab-active {
+  color: rgb(var(--ink)) !important;
+  border-bottom-color: rgb(var(--ink)) !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Segmented switch (grid/list, theme, preview/edit)
+   --------------------------------------------------------------------------- */
+.pb-segmented {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 5px;
+  background-color: rgb(var(--well)) !important;
+  border: 1px solid rgb(var(--line)) !important;
+}
+.pb-segmented > button {
+  border-radius: 3px;
+  font-weight: 500 !important;
+  color: rgb(var(--muted));
+  transition: background-color 110ms ease, color 110ms ease;
+}
+.pb-segmented > button:hover {
+  color: rgb(var(--ink));
+}
+.pb-seg-active {
+  background-color: rgb(var(--paper)) !important;
+  color: rgb(var(--ink)) !important;
+  box-shadow: 0 0 0 1px rgb(var(--line)), 0 1px 2px rgb(0 0 0 / 0.08) !important;
+  opacity: 1 !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Quantity stepper
+   --------------------------------------------------------------------------- */
+.pb-stepper {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  background-color: rgb(var(--paper));
+  border: 1px solid rgb(var(--line));
+  overflow: hidden;
+}
+.pb-stepper > button {
+  background-color: transparent;
+  color: rgb(var(--ink-2));
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.pb-stepper > button:hover {
+  background-color: rgb(var(--ink) / 0.07);
+  color: rgb(var(--ink));
+}
+.pb-stepper > button:active {
+  background-color: rgb(var(--ink) / 0.14);
+}
+.pb-stepper > span {
+  color: rgb(var(--ink));
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+.pb-qty-low {
+  color: rgb(var(--stop)) !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Bin label tape — the signature element
+   --------------------------------------------------------------------------- */
+.pb-bin-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  background-color: rgb(var(--tape));
+  color: rgb(var(--tape-ink));
+  border: 0;
+  border-radius: 2px;
+  font-family: var(--font-sans);
+  font-variation-settings: 'wdth' 75;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.14);
+  transition: filter 110ms ease, box-shadow 110ms ease;
+}
+button.pb-bin-tag:hover {
+  filter: brightness(0.95);
+  box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.14), 0 0 0 2px rgb(var(--tape) / 0.45);
+}
+.pb-bin-tag.is-empty {
+  background: transparent;
+  color: rgb(var(--muted));
+  box-shadow: inset 0 0 0 1px rgb(var(--line));
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+   Badges & status
+   --------------------------------------------------------------------------- */
+.pb-badge {
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 1px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.pb-badge-neutral {
+  background-color: rgb(var(--ink) / 0.06);
+  color: rgb(var(--ink-2));
+}
+.pb-badge-emerald {
+  background-color: rgb(var(--go) / 0.12);
+  color: rgb(var(--go));
+}
+.pb-badge-amber {
+  background-color: rgb(var(--stop) / 0.1);
+  color: rgb(var(--stop));
+}
+
+/* Small status text used on cards: an LED dot + words */
+.pb-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  min-width: 0;
+}
+.pb-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.pb-status.is-go {
+  color: rgb(var(--go));
+}
+.pb-status.is-go::before {
+  box-shadow: 0 0 0 3px rgb(var(--go) / 0.18);
+}
+.pb-status.is-stop {
+  color: rgb(var(--stop));
+}
+
+/* Latching toggle chips (bench guide picker, glossary filters) */
+.pb-toggle-chip {
+  background-color: rgb(var(--paper));
+  color: rgb(var(--ink-2));
+  border: 1px solid rgb(var(--line)) !important;
+  border-radius: 4px !important;
+  transition: background-color 110ms ease, color 110ms ease, border-color 110ms ease;
+}
+.pb-toggle-chip:hover {
+  border-color: rgb(var(--ink) / 0.5) !important;
+  color: rgb(var(--ink));
+}
+.pb-toggle-chip[aria-pressed='true'] {
+  background-color: rgb(var(--ink)) !important;
+  color: rgb(var(--on-ink)) !important;
+  border-color: rgb(var(--ink)) !important;
+}
+.pb-toggle-chip[aria-pressed='true'] .pb-chip-count {
+  background-color: transparent !important;
+  color: inherit !important;
+  opacity: 0.7;
+}
+
+/* Caution box: probe red */
+.pb-alert-warn {
+  background-color: rgb(var(--stop) / 0.07);
+  border: 1px solid rgb(var(--stop) / 0.35);
+  border-radius: var(--radius);
+  color: rgb(var(--ink));
+}
+.pb-alert-warn-title {
+  color: rgb(var(--stop));
+}
+
+/* Toggle switch */
+.pinbin-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 38px;
+  height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.pinbin-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.pinbin-switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background-color: rgb(var(--line));
+  transition: background-color 140ms ease;
+}
+.pinbin-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background-color: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pinbin-switch input:checked + .pinbin-switch-track {
+  background-color: rgb(var(--accent));
+}
+.pinbin-switch input:checked + .pinbin-switch-track::after {
+  transform: translateX(16px);
+}
+.pinbin-switch input:focus-visible + .pinbin-switch-track {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+/* Glossary list */
+.pb-gloss-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 14px;
+  text-align: left;
+  border-left: 3px solid transparent;
+  transition: background-color 100ms ease;
+}
+.pb-gloss-item:hover {
+  background: rgb(var(--ink) / 0.04);
+}
+.pb-gloss-item.is-active {
+  background: rgb(var(--well));
+  border-left-color: rgb(var(--ink));
+}
+
+/* Inline glossary term inside part text */
+.pb-term {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: rgb(var(--accent));
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  cursor: help;
+}
+.pb-term:hover {
+  color: rgb(var(--accent));
+}
+
+/* ---------------------------------------------------------------------------
+   Drawer
+   --------------------------------------------------------------------------- */
+#drawerPanel {
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  background-color: rgb(var(--paper)) !important;
+  border-color: rgb(var(--line)) !important;
+}
+/* Shadow only while open: a closed drawer sits just off-screen and its shadow would show at the edge. */
+.drawer-open #drawerPanel {
+  box-shadow: -16px 0 48px rgb(0 0 0 / 0.18);
+}
+.dark .drawer-open #drawerPanel {
+  box-shadow: -16px 0 48px rgb(0 0 0 / 0.55);
+}
+#drawerBackdrop {
+  transition: opacity 180ms ease;
+}
 @media (max-width: 639px) {
   .drawer-closed #drawerPanel {
     transform: translateY(100%);
@@ -31,7 +911,6 @@
     transform: translateY(0);
   }
 }
-
 @media (min-width: 640px) {
   .drawer-closed #drawerPanel {
     transform: translateX(100%);
@@ -41,12 +920,70 @@
   }
 }
 
-/* Subtle spin for loading states */
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
+/* Modals */
+.pb-modal {
+  background: rgb(var(--paper));
+  border: 1px solid rgb(var(--line));
+  border-radius: 8px;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.3);
+}
+
+/* Toast */
+#toast {
+  background: rgb(var(--ink));
+  color: rgb(var(--on-ink));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
   }
 }
-.animate-spin-fast {
-  animation: spin 0.7s linear infinite;
+
+/* ---------------------------------------------------------------------------
+   Print: bin QR labels only
+   --------------------------------------------------------------------------- */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #111 !important;
+  }
+  header,
+  #inventoryFilterBar,
+  #inventoryView,
+  #projectsView,
+  #shoppingView,
+  #glossaryView,
+  #drawerRoot,
+  #settingsModal,
+  #lightboxModal,
+  #restoreModal,
+  #glossaryModal,
+  #glossaryPopover,
+  #toast,
+  .no-print {
+    display: none !important;
+  }
+  #benchView {
+    display: block !important;
+  }
+  #binLabelsPrintSheet {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+  .bin-label-card {
+    break-inside: avoid;
+    border: 1px solid #cbd5e1 !important;
+    background: #ffffff !important;
+    color: #111 !important;
+    box-shadow: none !important;
+  }
+}
+
+.pb-table th.text-right {
+  text-align: right;
 }

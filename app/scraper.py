@@ -130,7 +130,48 @@ async def _safe_fetch_bytes(
     raise ScrapeError("Too many redirects while fetching URL", status_code=400)
 
 
-def _extract_meta(soup: BeautifulSoup) -> tuple[str, str, str]:
+def _extract_price(soup: BeautifulSoup) -> str:
+    """Best-effort extraction of product price from OpenGraph meta or JSON-LD Offer."""
+    def meta_val(attr_name: str, val: str) -> str:
+        tag = soup.find("meta", attrs={attr_name: val})
+        return str(tag["content"]).strip() if tag and tag.get("content") else ""
+
+    amount = (
+        meta_val("property", "product:price:amount")
+        or meta_val("property", "og:price:amount")
+        or meta_val("name", "twitter:data1")
+    )
+    currency = (
+        meta_val("property", "product:price:currency")
+        or meta_val("property", "og:price:currency")
+    )
+    if amount:
+        return f"{amount} {currency}".strip()[:40]
+
+    for script in soup.find_all("script", type="application/ld+json"):
+        raw = script.string or ""
+        if not raw.strip():
+            continue
+        try:
+            ld = json.loads(raw)
+        except Exception:
+            continue
+        items = ld if isinstance(ld, list) else [ld]
+        for obj in items:
+            if not isinstance(obj, dict):
+                continue
+            offers = obj.get("offers")
+            if isinstance(offers, list) and offers:
+                offers = offers[0]
+            if isinstance(offers, dict):
+                p = offers.get("price") or offers.get("lowPrice")
+                cur = offers.get("priceCurrency") or ""
+                if p is not None and str(p).strip():
+                    return f"{str(p).strip()} {str(cur).strip()}".strip()[:40]
+    return ""
+
+
+def _extract_meta(soup: BeautifulSoup) -> tuple[str, str, str, str]:
     def meta_content(attr_name: str, attr_val: str) -> str:
         tag = soup.find("meta", attrs={attr_name: attr_val})
         if tag and tag.get("content"):
@@ -168,7 +209,8 @@ def _extract_meta(soup: BeautifulSoup) -> tuple[str, str, str]:
                 image_src = src
                 break
 
-    return title[:300], description[:1000], image_src
+    price = _extract_price(soup)
+    return title[:300], description[:1000], image_src, price
 
 
 async def scrape_url(url: str, images_dir: Path, max_bytes: int) -> dict[str, Any]:
@@ -203,7 +245,7 @@ async def scrape_url(url: str, images_dir: Path, max_bytes: int) -> dict[str, An
         # HTML page
         html_text = body.decode("utf-8", errors="replace")
         soup = BeautifulSoup(html_text, "html.parser")
-        title, description, raw_img_url = _extract_meta(soup)
+        title, description, raw_img_url, price = _extract_meta(soup)
 
         saved_filename = ""
         if raw_img_url:
@@ -218,6 +260,7 @@ async def scrape_url(url: str, images_dir: Path, max_bytes: int) -> dict[str, An
         return {
             "title": title,
             "description": description,
+            "price": price,
             "image_url": f"/images/{saved_filename}" if saved_filename else "",
             "image_path": saved_filename,
             "source_url": final_url,
