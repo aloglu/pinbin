@@ -1,0 +1,21 @@
+services:
+  pinbin:
+    # Set PINBIN_IMAGE=ghcr.io/<your-github-username>/pinbin:latest in .env to pull prebuilt images
+    image: ${PINBIN_IMAGE:-pinbin:local}
+    build: .
+    container_name: pinbin
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      # Strictly bind to localhost — expose externally only via Cloudflare Tunnel
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/data
+      - ./seed.json:/app/seed.json:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

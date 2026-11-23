@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+*.zip
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+pinbin_65_item_seed_data.json
+pinbin_technical_specification.md
+workbench_inventory_ui_preview.html

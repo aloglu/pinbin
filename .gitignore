@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+*.zip
+__pycache__/
+*.pyc
+.venv/
+.DS_Store

@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pinbin — Electronics Workbench Inventory</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+          colors: {
+            canvas: {
+              light: '#F8F9FA',
+              dark: '#0F1115',
+            },
+            surface: {
+              light: '#FFFFFF',
+              dark: '#171A21',
+            },
+            matte: {
+              light: '#F1F3F5',
+              dark: '#12151B',
+            },
+            hairline: {
+              light: '#E4E6EB',
+              dark: '#262A34',
+            },
+            accent: {
+              DEFAULT: '#3B82F6',
+              hover: '#2563EB',
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="bg-canvas-light text-[#111318] dark:bg-canvas-dark dark:text-[#E6E8EC] font-sans antialiased min-h-screen transition-colors duration-150 selection:bg-blue-500/20">
+
+  <!-- ======================================================================= -->
+  <!-- 1. STICKY SINGLE-ROW TOP BAR                                            -->
+  <!-- ======================================================================= -->
+  <header class="sticky top-0 z-30 bg-canvas-light/90 dark:bg-canvas-dark/90 backdrop-blur-md border-b border-hairline-light dark:border-hairline-dark">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+
+      <!-- Left: Minimal Brand + Total Count -->
+      <div class="flex items-center gap-2.5 shrink-0">
+        <div class="w-6 h-6 rounded-md bg-[#111318] dark:bg-[#E6E8EC] text-white dark:text-[#0F1115] flex items-center justify-center">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6" y="6" width="12" height="12" rx="2"/>
+            <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>
+          </svg>
+        </div>
+        <span class="text-sm font-semibold tracking-tight">Pinbin</span>
+        <span id="totalCountBadge" class="font-mono text-xs text-[#6B7280] dark:text-[#7A8291] pl-0.5">0</span>
+      </div>
+
+      <!-- Center: Instant Search with '/' Shortcut -->
+      <div class="relative flex-1 max-w-md">
+        <svg class="w-3.5 h-3.5 text-[#8A919E] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+        </svg>
+        <input
+          id="searchInput"
+          type="text"
+          autocomplete="off"
+          placeholder="Search parts, clues, projects, or bins..."
+          class="w-full h-9 pl-8 pr-10 text-sm rounded-lg bg-surface-light dark:bg-surface-dark border border-hairline-light dark:border-hairline-dark text-[#111318] dark:text-[#E6E8EC] placeholder-[#8A919E] focus:outline-none focus:border-accent dark:focus:border-accent transition-colors"
+        />
+        <kbd id="searchShortcutHint" class="hidden sm:inline-flex items-center justify-center absolute right-2.5 top-1/2 -translate-y-1/2 px-1.5 h-5 font-mono text-[11px] text-[#8A919E] bg-matte-light dark:bg-[#20242E] border border-hairline-light dark:border-hairline-dark rounded pointer-events-none">/</kbd>
+        <button id="clearSearchBtn" type="button" class="hidden absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#8A919E] hover:text-[#111318] dark:hover:text-white rounded" aria-label="Clear search">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Right: Primary Action + Backup Menu + Theme Toggle -->
+      <div class="flex items-center gap-2 shrink-0">
+        <button
+          id="addPartBtn"
+          type="button"
+          class="h-9 px-3 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs sm:text-sm font-medium transition-colors flex items-center gap-1.5"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="hidden sm:inline">Add Part</span>
+          <span class="sm:hidden">Add</span>
+        </button>
+
+        <!-- Backup / Restore Menu -->
+        <div class="relative" id="backupMenuWrapper">
+          <button
+            id="backupMenuBtn"
+            type="button"
+            class="h-9 w-9 rounded-lg border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark text-[#5F6672] dark:text-[#8B92A0] hover:text-[#111318] dark:hover:text-white transition-colors flex items-center justify-center"
+            aria-label="Backup and Restore"
+            title="Backup & Restore"
+            aria-expanded="false"
+          >
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
+
+          <div
+            id="backupDropdown"
+            class="hidden absolute right-0 mt-1.5 w-52 rounded-xl bg-surface-light dark:bg-surface-dark border border-hairline-light dark:border-hairline-dark shadow-lg py-1.5 z-40"
+          >
+            <button
+              id="downloadBackupBtn"
+              type="button"
+              class="w-full px-3 py-2 text-left text-xs font-medium text-[#111318] dark:text-[#E6E8EC] hover:bg-matte-light dark:hover:bg-[#20242E] flex items-center gap-2 transition-colors"
+            >
+              <svg class="w-3.5 h-3.5 text-[#6B7280]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Download Backup (.zip)</span>
+            </button>
+            <label
+              class="w-full px-3 py-2 text-left text-xs font-medium text-[#111318] dark:text-[#E6E8EC] hover:bg-matte-light dark:hover:bg-[#20242E] flex items-center gap-2 transition-colors cursor-pointer"
+            >
+              <svg class="w-3.5 h-3.5 text-[#6B7280]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <span>Restore Backup (.zip)</span>
+              <input id="restoreFileInput" type="file" accept=".zip,application/zip" class="hidden" />
+            </label>
+          </div>
+        </div>
+
+        <button
+          id="themeToggleBtn"
+          type="button"
+          class="h-9 w-9 rounded-lg border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark text-[#5F6672] dark:text-[#8B92A0] hover:text-[#111318] dark:hover:text-white transition-colors flex items-center justify-center"
+          aria-label="Toggle theme"
+          title="Toggle Light / Dark mode"
+        >
+          <!-- Sun (shown in dark) -->
+          <svg class="w-4 h-4 hidden dark:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+          </svg>
+          <!-- Moon (shown in light) -->
+          <svg class="w-4 h-4 block dark:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+          </svg>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ======================================================================= -->
+  <!-- 2. FILTER STRIP (Categories + Active Bin + Quick Toggle Chips)          -->
+  <!-- ======================================================================= -->
+  <div class="border-b border-hairline-light dark:border-hairline-dark bg-canvas-light dark:bg-canvas-dark">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+      <div class="flex items-center gap-2 min-w-0 flex-1 overflow-x-auto no-scrollbar">
+        <div id="categoryStrip" class="flex items-center gap-1.5">
+          <!-- Category pills rendered by JS -->
+        </div>
+
+        <!-- Dismissible Active Bin Pill -->
+        <button
+          id="activeLocationPill"
+          type="button"
+          class="hidden shrink-0 h-7 px-2.5 rounded-md border border-accent bg-blue-500/[0.10] text-accent dark:text-blue-400 font-mono text-xs font-medium inline-flex items-center gap-1.5 transition-colors hover:bg-blue-500/[0.18]"
+          title="Clear bin filter"
+        >
+          <span id="activeLocationLabel">Bin: </span>
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+
+      <!-- Right-aligned Quick Toggle Chips -->
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button
+          id="needsPhotoBtn"
+          type="button"
+          aria-pressed="false"
+          class="shrink-0 h-7 px-2.5 rounded-md border text-xs font-medium transition-colors flex items-center gap-1.5 border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark text-[#5F6672] dark:text-[#9CA3AF] hover:text-[#111318] dark:hover:text-white"
+        >
+          <svg class="w-3.5 h-3.5 opacity-75" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+            <circle cx="12" cy="13" r="3"/>
+          </svg>
+          <span>Needs Photo</span>
+          <span id="needsPhotoCount" class="font-mono text-[11px] px-1 rounded bg-matte-light dark:bg-[#232732]">0</span>
+        </button>
+
+        <button
+          id="inUseBtn"
+          type="button"
+          aria-pressed="false"
+          class="shrink-0 h-7 px-2.5 rounded-md border text-xs font-medium transition-colors flex items-center gap-1.5 border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark text-[#5F6672] dark:text-[#9CA3AF] hover:text-[#111318] dark:hover:text-white"
+        >
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+          <span>In Use</span>
+          <span id="inUseCount" class="font-mono text-[11px] px-1 rounded bg-matte-light dark:bg-[#232732]">0</span>
+        </button>
+
+        <button
+          id="lowStockBtn"
+          type="button"
+          aria-pressed="false"
+          class="shrink-0 h-7 px-2.5 rounded-md border text-xs font-medium transition-colors flex items-center gap-1.5 border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark text-[#5F6672] dark:text-[#9CA3AF] hover:text-[#111318] dark:hover:text-white"
+        >
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+          <span>Low Stock</span>
+          <span id="lowStockCount" class="font-mono text-[11px] px-1 rounded bg-matte-light dark:bg-[#232732]">0</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- 3. PHOTO-FIRST CARD GRID                                                -->
+  <!-- ======================================================================= -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+    <div id="partsGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <!-- Cards rendered by JS -->
+    </div>
+
+    <!-- Empty State -->
+    <div id="emptyState" class="hidden py-20 text-center">
+      <p class="text-sm font-medium text-[#111318] dark:text-[#E6E8EC]">No matching parts</p>
+      <p class="text-xs text-[#6B7280] dark:text-[#7A8291] mt-1">Adjust your search query or clear active filters.</p>
+      <button id="clearAllFiltersBtn" type="button" class="mt-4 h-8 px-3 rounded-md border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark text-xs font-medium hover:border-accent transition-colors">
+        Reset filters
+      </button>
+    </div>
+  </main>
+
+  <!-- ======================================================================= -->
+  <!-- 4. SLIDE-OVER DETAIL & ADD DRAWER                                       -->
+  <!-- ======================================================================= -->
+  <div id="drawerRoot" class="fixed inset-0 z-50 pointer-events-none drawer-closed" aria-hidden="true">
+    <!-- Backdrop -->
+    <div id="drawerBackdrop" class="absolute inset-0 bg-black/45 dark:bg-black/65 opacity-0"></div>
+
+    <!-- Panel (Bottom sheet on mobile, right panel on sm+) -->
+    <aside
+      id="drawerPanel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="drawerHeading"
+      class="absolute bottom-0 inset-x-0 sm:inset-y-0 sm:left-auto sm:right-0 w-full sm:max-w-lg max-h-[92vh] sm:max-h-none bg-surface-light dark:bg-surface-dark border-t sm:border-t-0 sm:border-l border-hairline-light dark:border-hairline-dark rounded-t-2xl sm:rounded-none flex flex-col overflow-hidden"
+    >
+      <!-- Drawer Header -->
+      <div class="h-14 px-5 border-b border-hairline-light dark:border-hairline-dark flex items-center justify-between gap-2 shrink-0">
+        <div class="flex items-center gap-2 min-w-0">
+          <h2 id="drawerHeading" class="text-sm font-semibold truncate">Part Details</h2>
+          <span id="drawerCategoryPill" class="hidden text-[10px] font-mono px-1.5 py-0.5 rounded bg-matte-light dark:bg-[#20242E] border border-hairline-light dark:border-hairline-dark text-[#6B7280] dark:text-[#9CA3AF] shrink-0"></span>
+          <span id="drawerSavedPill" class="hidden text-[11px] font-mono text-emerald-600 dark:text-emerald-400">Saved</span>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button id="switchToEditBtn" type="button" class="hidden h-8 px-2.5 rounded-md border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-[#1E222B] hover:border-accent text-xs font-medium inline-flex items-center gap-1.5 transition-colors">
+            <svg class="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9CA3AF]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            <span>Edit</span>
+          </button>
+          <button id="switchToPreviewBtn" type="button" class="hidden h-8 px-2.5 rounded-md border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-[#1E222B] hover:border-accent text-xs font-medium inline-flex items-center gap-1.5 transition-colors">
+            <svg class="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9CA3AF]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span>Preview</span>
+          </button>
+          <button id="closeDrawerBtn" type="button" class="h-8 w-8 rounded-md text-[#6B7280] hover:text-[#111318] dark:hover:text-white hover:bg-matte-light dark:hover:bg-[#232732] flex items-center justify-center transition-colors" aria-label="Close drawer">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Drawer Preview Mode Body -->
+      <div id="drawerPreviewBody" class="hidden flex-1 overflow-y-auto p-5 space-y-5">
+        <!-- Rendered dynamically by renderDrawerPreview() -->
+      </div>
+
+      <!-- Drawer Edit / Create Mode Body -->
+      <div id="drawerEditBody" class="flex-1 overflow-y-auto p-5 space-y-5">
+
+        <!-- Main Photo Area + 3 Input Methods -->
+        <div class="space-y-2.5">
+          <div id="drawerPhotoFrame" class="relative aspect-[16/10] w-full rounded-xl bg-matte-light dark:bg-matte-dark border border-hairline-light dark:border-hairline-dark overflow-hidden flex items-center justify-center">
+            <!-- Rendered dynamically -->
+          </div>
+
+          <!-- Action Row: Camera/File Upload + Clipboard Hint + Remove -->
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="cursor-pointer h-8 px-3 rounded-md border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-[#1E222B] hover:border-accent text-xs font-medium inline-flex items-center gap-1.5 transition-colors">
+              <svg class="w-3.5 h-3.5 text-[#6B7280] dark:text-[#9CA3AF]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+                <circle cx="12" cy="13" r="3"/>
+              </svg>
+              <span>Upload / Camera</span>
+              <input id="photoFileInput" type="file" accept="image/*" capture="environment" class="hidden" />
+            </label>
+
+            <span class="h-8 px-2.5 rounded-md bg-matte-light dark:bg-[#1C2029] text-[11px] text-[#6B7280] dark:text-[#8B92A0] inline-flex items-center gap-1.5">
+              <span>or press</span>
+              <kbd class="font-mono text-[10px] px-1 py-0.5 rounded border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark">Ctrl+V</kbd>
+            </span>
+
+            <a id="googleImagesSearchLink" href="#" target="_blank" rel="noopener noreferrer" class="h-8 px-2.5 rounded-md border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-[#1E222B] hover:border-accent text-[11px] font-medium text-[#5F6672] dark:text-[#9CA3AF] hover:text-accent dark:hover:text-blue-400 inline-flex items-center gap-1 transition-colors" title="Search Google Images in a new tab, copy image, then Ctrl+V here">
+              <span>Google Images</span>
+              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </a>
+
+            <button id="removePhotoBtn" type="button" class="hidden ml-auto h-8 px-2.5 rounded-md text-xs text-[#6B7280] hover:text-red-500 transition-colors">
+              Remove
+            </button>
+          </div>
+
+          <!-- Fetch from Store URL + Optional Smart Autofill -->
+          <div class="flex gap-1.5">
+            <input
+              id="photoUrlInput"
+              type="url"
+              placeholder="Paste store product page or image URL..."
+              class="flex-1 h-8 px-2.5 text-xs rounded-md bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors"
+            />
+            <button id="fetchUrlBtn" type="button" class="h-8 px-3 rounded-md border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-[#1E222B] hover:border-accent text-xs font-medium transition-colors shrink-0">
+              Fetch
+            </button>
+            <button id="smartAutofillBtn" type="button" class="hidden h-8 px-2.5 rounded-md border border-blue-500/40 bg-blue-500/10 hover:bg-blue-500/20 text-accent dark:text-blue-400 text-xs font-medium transition-colors shrink-0 inline-flex items-center gap-1" title="Use AI to autofill part details">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+              <span>Smart Autofill</span>
+            </button>
+          </div>
+          <p id="urlFetchStatus" class="hidden text-[11px] leading-relaxed px-2.5 py-2 rounded-md border"></p>
+
+          <!-- Candidate Thumbnail Picker (populated by Smart Autofill web search) -->
+          <div id="imagePickerBox" class="hidden space-y-1.5 pt-1">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0]">Suggested photos — click to attach</span>
+              <button id="dismissImagePickerBtn" type="button" class="text-[11px] text-[#6B7280] hover:text-[#111318] dark:hover:text-white transition-colors">Dismiss</button>
+            </div>
+            <div id="imagePickerGrid" class="grid grid-cols-3 gap-2"></div>
+          </div>
+        </div>
+
+        <!-- Subtle Warning Callout (shown when populated) -->
+        <div id="drawerWarningCallout" class="hidden p-3 rounded-lg bg-amber-500/[0.08] border border-amber-500/25 text-xs text-amber-800 dark:text-amber-300/90 leading-relaxed">
+          <div class="font-medium flex items-center gap-1.5 mb-0.5">
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/></svg>
+            <span>Warning / Caution</span>
+          </div>
+          <p id="drawerWarningPreview" class="opacity-90"></p>
+        </div>
+
+        <!-- Highlighted What It Does Block (shown when populated) -->
+        <div id="drawerWhatItDoesCallout" class="hidden p-3 rounded-lg bg-blue-500/[0.06] border border-blue-500/20 text-xs text-[#1E293B] dark:text-[#CBD5E1] leading-relaxed">
+          <div class="font-medium text-accent dark:text-blue-400 mb-0.5">What it does</div>
+          <p id="drawerWhatItDoesPreview"></p>
+        </div>
+
+        <!-- Collapsible Pinout / Wiring Reference Section -->
+        <details id="pinoutSection" class="rounded-xl border border-hairline-light dark:border-hairline-dark bg-canvas-light/60 dark:bg-canvas-dark/60 overflow-hidden">
+          <summary class="px-3.5 py-2.5 text-xs font-medium text-[#111318] dark:text-[#E6E8EC] cursor-pointer select-none flex items-center justify-between">
+            <span class="flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 text-[#6B7280]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
+              <span>Pinout / Wiring Reference</span>
+            </span>
+            <span id="pinoutBadge" class="text-[10px] font-mono text-[#6B7280] dark:text-[#8B92A0]">Optional</span>
+          </summary>
+
+          <div class="px-3.5 pb-3.5 pt-1 space-y-2.5 border-t border-hairline-light dark:border-hairline-dark">
+            <div id="drawerPinoutFrame" class="relative aspect-[16/9] w-full rounded-lg bg-matte-light dark:bg-matte-dark border border-hairline-light dark:border-hairline-dark overflow-hidden flex items-center justify-center">
+              <!-- Rendered dynamically -->
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <label class="cursor-pointer h-7 px-2.5 rounded-md border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-[#1E222B] hover:border-accent text-[11px] font-medium inline-flex items-center gap-1.5 transition-colors">
+                <span>Upload Pinout</span>
+                <input id="pinoutFileInput" type="file" accept="image/*" capture="environment" class="hidden" />
+              </label>
+
+              <button id="pinoutPasteToggleBtn" type="button" class="h-7 px-2.5 rounded-md border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-[#1E222B] text-[11px] text-[#6B7280] dark:text-[#8B92A0] hover:border-accent transition-colors">
+                Paste Target: Off
+              </button>
+
+              <button id="removePinoutBtn" type="button" class="hidden ml-auto h-7 px-2 rounded-md text-[11px] text-[#6B7280] hover:text-red-500 transition-colors">
+                Remove
+              </button>
+            </div>
+
+            <div>
+              <label for="fPinoutUrl" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Pinout / Datasheet Link</label>
+              <div class="flex gap-1.5">
+                <input id="fPinoutUrl" type="url" placeholder="https://..." class="flex-1 h-8 px-2.5 text-xs rounded-md bg-surface-light dark:bg-surface-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+                <a id="openPinoutUrlLink" href="#" target="_blank" rel="noopener noreferrer" class="hidden h-8 w-8 rounded-md border border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark hover:border-accent text-[#6B7280] hover:text-accent flex items-center justify-center transition-colors shrink-0" title="Open pinout link">
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                </a>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Editable Form Fields -->
+        <form id="partForm" class="space-y-3.5">
+          <div>
+            <label for="fName" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Part Name</label>
+            <input id="fName" type="text" required placeholder="e.g., ESP32 ESP-32S Dev Board (30-Pin)" class="w-full h-9 px-3 text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+          </div>
+
+          <div>
+            <label for="fSubtitle" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Subtitle</label>
+            <input id="fSubtitle" type="text" placeholder="e.g., WiFi + Bluetooth Dual-Mode Microcontroller" class="w-full h-9 px-3 text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+          </div>
+
+          <div class="grid grid-cols-3 gap-2.5">
+            <div class="col-span-1">
+              <label for="fCategory" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Category</label>
+              <select id="fCategory" class="w-full h-9 px-2 text-xs rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors">
+                <option value="Microcontrollers">Microcontrollers</option>
+                <option value="Sensors">Sensors</option>
+                <option value="Displays">Displays</option>
+                <option value="Actuators">Actuators</option>
+                <option value="Passives">Passives</option>
+                <option value="Prototyping">Prototyping</option>
+                <option value="Tools">Tools</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="fQuantity" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Quantity</label>
+              <input id="fQuantity" type="number" min="0" value="1" class="w-full h-9 px-3 font-mono text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+            </div>
+
+            <div>
+              <label for="fLowStock" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Low Stock &le;</label>
+              <input id="fLowStock" type="number" min="0" placeholder="None" class="w-full h-9 px-3 font-mono text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2.5">
+            <div>
+              <label for="fLocation" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Bin / Location</label>
+              <input id="fLocation" type="text" list="locationSuggestions" placeholder="e.g., Mano-A3" class="w-full h-9 px-3 font-mono text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+              <datalist id="locationSuggestions"></datalist>
+            </div>
+
+            <div>
+              <label for="fInUseProject" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">In Use Project</label>
+              <input id="fInUseProject" type="text" placeholder="e.g., Desk Weather Station" class="w-full h-9 px-3 text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+            </div>
+          </div>
+
+          <div>
+            <label for="fWhatItDoes" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">What It Does</label>
+            <textarea id="fWhatItDoes" rows="2" placeholder="Beginner-friendly explanation of what this component does..." class="w-full p-2.5 text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors resize-none"></textarea>
+          </div>
+
+          <div>
+            <label for="fVisualTell" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Visual Tell (1-line physical clue)</label>
+            <input id="fVisualTell" type="text" placeholder="e.g., 3 legs, tiny black half-cylinder engraved LM35" class="w-full h-9 px-3 text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+          </div>
+
+          <div>
+            <label for="fWarning" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Warning / Lookalike Caution</label>
+            <input id="fWarning" type="text" placeholder="e.g., 3.3V logic only — do not wire 5V directly to GPIO" class="w-full h-9 px-3 text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+          </div>
+
+          <div>
+            <label for="fNotes" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Notes</label>
+            <textarea id="fNotes" rows="2" placeholder="I2C address, pin order, wiring reminder..." class="w-full p-2.5 text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors resize-none"></textarea>
+          </div>
+
+          <div>
+            <label for="fSourceUrl" class="block text-[11px] font-medium text-[#6B7280] dark:text-[#8B92A0] mb-1">Store / Reorder URL</label>
+            <div class="flex gap-1.5">
+              <input id="fSourceUrl" type="url" placeholder="https://..." class="flex-1 h-9 px-3 text-sm rounded-lg bg-canvas-light dark:bg-canvas-dark border border-hairline-light dark:border-hairline-dark focus:outline-none focus:border-accent transition-colors" />
+              <a id="openSourceUrlLink" href="#" target="_blank" rel="noopener noreferrer" class="hidden h-9 w-9 rounded-lg border border-hairline-light dark:border-hairline-dark bg-canvas-light dark:bg-canvas-dark hover:border-accent text-[#6B7280] hover:text-accent flex items-center justify-center transition-colors shrink-0" title="Open store page">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              </a>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <!-- Drawer Footer (Preview Mode) -->
+      <div id="drawerPreviewFooter" class="hidden px-5 py-3.5 border-t border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark flex items-center justify-between gap-3 shrink-0">
+        <button id="closePreviewFooterBtn" type="button" class="h-9 px-3 rounded-lg border border-hairline-light dark:border-hairline-dark text-xs font-medium hover:bg-matte-light dark:hover:bg-[#232732] transition-colors">
+          Close
+        </button>
+        <button id="editFromPreviewFooterBtn" type="button" class="h-9 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors inline-flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          <span>Edit Part</span>
+        </button>
+      </div>
+
+      <!-- Drawer Footer (Edit / Create Mode) -->
+      <div id="drawerEditFooter" class="px-5 py-3.5 border-t border-hairline-light dark:border-hairline-dark bg-surface-light dark:bg-surface-dark flex items-center justify-between gap-3 shrink-0">
+        <!-- Inline Delete Confirmation (no browser confirm()) -->
+        <div id="deleteArea" class="flex items-center gap-2">
+          <button id="deleteInitBtn" type="button" class="text-xs text-[#6B7280] hover:text-red-500 transition-colors">
+            Delete part
+          </button>
+          <div id="deleteConfirmGroup" class="hidden items-center gap-1.5">
+            <button id="deleteConfirmBtn" type="button" class="h-7 px-2.5 rounded-md bg-red-600 hover:bg-red-700 text-white text-xs font-medium transition-colors">Confirm</button>
+            <button id="deleteCancelBtn" type="button" class="h-7 px-2 rounded-md text-xs text-[#6B7280] hover:text-[#111318] dark:hover:text-white">Cancel</button>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 ml-auto">
+          <button id="cancelDrawerBtn" type="button" class="h-9 px-3 rounded-lg border border-hairline-light dark:border-hairline-dark text-xs font-medium hover:bg-matte-light dark:hover:bg-[#232732] transition-colors">
+            Cancel
+          </button>
+          <button id="saveDrawerBtn" type="button" class="h-9 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors">
+            Save Part
+          </button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- 5. FULL-SIZE IMAGE LIGHTBOX MODAL                                       -->
+  <!-- ======================================================================= -->
+  <div id="lightboxModal" class="hidden fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Image lightbox">
+    <button id="closeLightboxBtn" type="button" class="absolute top-4 right-4 h-10 w-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors" aria-label="Close image">
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+    <img id="lightboxImg" src="" alt="Full-size preview" class="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" />
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- 6. RESTORE CONFIRMATION MODAL (No window.confirm)                       -->
+  <!-- ======================================================================= -->
+  <div id="restoreModal" class="hidden fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="restoreModalTitle">
+    <div class="w-full max-w-sm rounded-xl bg-surface-light dark:bg-surface-dark border border-hairline-light dark:border-hairline-dark p-5 space-y-4 shadow-xl">
+      <div>
+        <h3 id="restoreModalTitle" class="text-sm font-semibold text-[#111318] dark:text-[#E6E8EC]">Restore from Backup?</h3>
+        <p class="text-xs text-[#6B7280] dark:text-[#8B92A0] mt-1 leading-relaxed">
+          This will replace your current inventory database and local photos with <span id="restoreFilename" class="font-mono text-[#111318] dark:text-[#E6E8EC]"></span>.
+        </p>
+      </div>
+      <div class="flex items-center justify-end gap-2">
+        <button id="cancelRestoreBtn" type="button" class="h-8 px-3 rounded-lg border border-hairline-light dark:border-hairline-dark text-xs font-medium hover:bg-matte-light dark:hover:bg-[#232732] transition-colors">
+          Cancel
+        </button>
+        <button id="confirmRestoreBtn" type="button" class="h-8 px-3.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-medium transition-colors">
+          Restore Backup
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Subtle Toast Notification -->
+  <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded-lg bg-[#111318] dark:bg-[#E6E8EC] text-white dark:text-[#0F1115] text-xs font-medium opacity-0 pointer-events-none transition-opacity duration-200 shadow-lg">
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
