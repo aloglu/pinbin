@@ -1260,9 +1260,15 @@ function renderShopping() {
             <button type="button" data-shop-step="1" data-shop-id="${escapeHTML(it.id)}" class="w-7 h-7 text-sm" aria-label="Buy one more">+</button>
           </div>
           <button type="button" data-shop-bought="${escapeHTML(it.id)}" class="btn-primary h-8 px-3 text-[13px]" title="Add this to your inventory">Bought</button>
-          <button type="button" data-shop-del="${escapeHTML(it.id)}" class="btn-icon h-8 w-8 flex items-center justify-center" title="Remove from list" aria-label="Remove from list">
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
+          <div class="inline-flex items-center gap-1.5" data-inline-confirm>
+            <button type="button" data-confirm-init class="btn-icon h-8 w-8 flex items-center justify-center" title="Remove from list" aria-label="Remove from list">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+            <div class="hidden items-center gap-1.5" data-confirm-group>
+              <button type="button" data-shop-del="${escapeHTML(it.id)}" class="btn-danger h-8 px-2.5 rounded text-xs font-medium">Remove</button>
+              <button type="button" data-confirm-cancel class="btn-secondary h-8 px-2.5 rounded text-xs font-medium">Cancel</button>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -1450,15 +1456,21 @@ function renderProjects() {
       const selectedVariantObj = variants.find((v) => v.id === activeTab);
       const variantBanner =
         selectedVariantObj
-          ? `<div class="px-4 py-2 bg-ink/[0.025] border-b border-line flex items-center justify-between gap-2 text-xs">
-               <span class="text-muted truncate">${escapeHTML(selectedVariantObj.description || `Showing Core + ${selectedVariantObj.name}`)}</span>
+          ? `<div class="px-4 py-2 bg-ink/[0.025] border-b border-line flex flex-wrap items-center justify-between gap-2 text-xs">
+               <span class="text-muted truncate min-w-0">${escapeHTML(selectedVariantObj.description || `Showing Core + ${selectedVariantObj.name}`)}</span>
                <div class="flex items-center gap-2 shrink-0">
                  ${
                    selectedVariantObj.is_selected
                      ? `<span class="text-go font-medium">Selected build</span>`
                      : `<button type="button" data-select-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" class="btn-secondary h-6 px-2 text-[11px]">Use this option</button>`
                  }
-                 <button type="button" data-delete-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" data-variant-name="${escapeHTML(selectedVariantObj.name)}" class="btn-danger-outline h-6 px-2 text-[11px] rounded" title="Delete this sub-build">Delete</button>
+                 <div class="inline-flex items-center gap-1.5" data-inline-confirm>
+                   <button type="button" data-confirm-init class="btn-danger-outline h-6 px-2 text-[11px] rounded" title="Delete this sub-build">Delete</button>
+                   <div class="hidden items-center gap-1.5" data-confirm-group>
+                     <button type="button" data-delete-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" data-variant-name="${escapeHTML(selectedVariantObj.name)}" class="btn-danger h-6 px-2 text-[11px] rounded" title="Parts linked only to this sub-build will be unlinked">Confirm</button>
+                     <button type="button" data-confirm-cancel class="btn-secondary h-6 px-2 text-[11px] rounded">Cancel</button>
+                   </div>
+                 </div>
                </div>
              </div>`
           : '';
@@ -1685,8 +1697,20 @@ function renderContextDrawer() {
     const hasStoreUrl = it.url && /^https?:\/\//i.test(it.url);
     const dangerHtml =
       ctx.projectId && ctx.projectItemId
-        ? `<button type="button" id="ctxUnlinkShopBtn" class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium" title="Remove from this project. The item stays on the shopping list.">Unlink</button>`
-        : `<button type="button" id="ctxDeleteShopBtn" class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium">Delete</button>`;
+        ? `<div class="inline-flex items-center gap-1.5" data-inline-confirm>
+             <button type="button" data-confirm-init class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium" title="Remove from this project. The item stays on the shopping list.">Unlink</button>
+             <div class="hidden items-center gap-1.5" data-confirm-group>
+               <button type="button" id="ctxUnlinkShopBtn" class="btn-danger h-8 px-2.5 rounded text-xs font-medium">Confirm</button>
+               <button type="button" data-confirm-cancel class="btn-secondary h-8 px-2.5 rounded text-xs font-medium">Cancel</button>
+             </div>
+           </div>`
+        : `<div class="inline-flex items-center gap-1.5" data-inline-confirm>
+             <button type="button" data-confirm-init class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium">Delete</button>
+             <div class="hidden items-center gap-1.5" data-confirm-group>
+               <button type="button" id="ctxDeleteShopBtn" class="btn-danger h-8 px-2.5 rounded text-xs font-medium">Confirm</button>
+               <button type="button" data-confirm-cancel class="btn-secondary h-8 px-2.5 rounded text-xs font-medium">Cancel</button>
+             </div>
+           </div>`;
 
     if (ctx.mode !== 'edit') {
       const specsEntries = Object.entries(it.specs || {});
@@ -1742,7 +1766,13 @@ function renderContextDrawer() {
                            }
                            ${
                              (it.offers || []).length > 1
-                               ? `<button type="button" data-delete-offer="${escapeHTML(off.id)}" class="btn-icon h-7 w-7 flex items-center justify-center" title="Remove store option" aria-label="Remove store option"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>`
+                               ? `<div class="inline-flex items-center gap-1.5" data-inline-confirm>
+                                    <button type="button" data-confirm-init class="btn-icon h-7 w-7 flex items-center justify-center" title="Remove store option" aria-label="Remove store option"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+                                    <div class="hidden items-center gap-1.5" data-confirm-group>
+                                      <button type="button" data-delete-offer="${escapeHTML(off.id)}" class="btn-danger h-7 px-2 rounded text-[11px] font-medium">Remove</button>
+                                      <button type="button" data-confirm-cancel class="btn-secondary h-7 px-2 rounded text-[11px] font-medium">Cancel</button>
+                                    </div>
+                                  </div>`
                                : ''
                            }
                          </div>
@@ -1854,7 +1884,13 @@ function renderContextDrawer() {
 
     const variants = proj.variants || [];
     const varObj = pItem.variant_id ? variants.find((v) => v.id === pItem.variant_id) : null;
-    const dangerHtml = `<button type="button" id="ctxRemoveProjItemBtn" class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium" title="Remove from this project. The part stays in inventory.">Remove</button>`;
+    const dangerHtml = `<div class="inline-flex items-center gap-1.5" data-inline-confirm>
+      <button type="button" data-confirm-init class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium" title="Remove from this project. The part stays in inventory.">Remove</button>
+      <div class="hidden items-center gap-1.5" data-confirm-group>
+        <button type="button" id="ctxRemoveProjItemBtn" class="btn-danger h-8 px-2.5 rounded text-xs font-medium">Confirm</button>
+        <button type="button" data-confirm-cancel class="btn-secondary h-8 px-2.5 rounded text-xs font-medium">Cancel</button>
+      </div>
+    </div>`;
     const short = Number(pItem.owned_quantity) < Number(pItem.quantity_needed || 1);
 
     if (ctx.mode !== 'edit') {
@@ -2500,14 +2536,46 @@ function switchEditTab(tabName) {
   });
 }
 
+function resetInlineConfirm(wrap) {
+  if (!wrap) return;
+  wrap.classList.remove('is-confirming');
+  const init = wrap.querySelector('[data-confirm-init]');
+  const grp = wrap.querySelector('[data-confirm-group]');
+  if (init) init.classList.remove('hidden');
+  if (grp) {
+    grp.classList.add('hidden');
+    grp.classList.remove('flex', 'inline-flex');
+  }
+}
+
+function resetAllInlineConfirms(exceptWrap = null) {
+  document.querySelectorAll('[data-inline-confirm].is-confirming').forEach((wrap) => {
+    if (wrap !== exceptWrap) resetInlineConfirm(wrap);
+  });
+}
+
+function openInlineConfirm(wrap) {
+  if (!wrap) return;
+  resetAllInlineConfirms(wrap);
+  wrap.classList.add('is-confirming');
+  const init = wrap.querySelector('[data-confirm-init]');
+  const grp = wrap.querySelector('[data-confirm-group]');
+  if (init) init.classList.add('hidden');
+  if (grp) {
+    grp.classList.remove('hidden');
+    grp.classList.add('inline-flex');
+  }
+}
+
 function renderDrawerPhoto() {
   const frame = document.getElementById('drawerPhotoFrame');
-  const removeBtn = document.getElementById('removePhotoBtn');
+  const removeArea = document.getElementById('removePhotoArea');
+  resetInlineConfirm(removeArea);
 
   if (state.draftImagePath) {
     const src = imageUrl(state.draftImagePath);
     frame.innerHTML = `<img src="${escapeHTML(src)}" alt="Part photo" class="w-full h-full object-contain p-3 bg-white cursor-zoom-in" data-lightbox-src="${escapeHTML(src)}" />`;
-    removeBtn.classList.remove('hidden');
+    removeArea.classList.remove('hidden');
   } else {
     frame.innerHTML = `
       <div class="text-center px-4 text-muted">
@@ -2515,21 +2583,22 @@ function renderDrawerPhoto() {
         <p class="text-[13px]">No photo. Upload one, or paste with Ctrl+V.</p>
       </div>
     `;
-    removeBtn.classList.add('hidden');
+    removeArea.classList.add('hidden');
   }
 }
 
 function renderDrawerPinout() {
   const frame = document.getElementById('drawerPinoutFrame');
-  const removeBtn = document.getElementById('removePinoutBtn');
+  const removeArea = document.getElementById('removePinoutArea');
+  resetInlineConfirm(removeArea);
 
   if (state.draftPinoutImagePath) {
     const src = imageUrl(state.draftPinoutImagePath);
     frame.innerHTML = `<img src="${escapeHTML(src)}" alt="Pinout diagram" class="w-full h-full object-contain p-2.5 bg-white cursor-zoom-in" data-lightbox-src="${escapeHTML(src)}" />`;
-    removeBtn.classList.remove('hidden');
+    removeArea.classList.remove('hidden');
   } else {
     frame.innerHTML = `<span class="text-[13px] text-muted text-center px-4">No pinout diagram</span>`;
-    removeBtn.classList.add('hidden');
+    removeArea.classList.add('hidden');
   }
 }
 
@@ -2994,7 +3063,6 @@ async function handleImageFileSelected(file, slot = 'main') {
 }
 
 async function handleRemovePhoto(slot = 'main') {
-  if (!window.confirm(slot === 'pinout' ? 'Remove this pinout image?' : 'Remove this photo?')) return;
   if (state.drawerMode === 'edit' && state.activePartId) {
     try {
       const updated = await apiFetch(
@@ -3701,8 +3769,6 @@ function bindEvents() {
     const delBtn = e.target.closest('button[data-shop-del]');
     if (delBtn) {
       const id = delBtn.dataset.shopDel;
-      const item = state.shoppingItems.find((x) => x.id === id);
-      if (!window.confirm(`Remove "${item ? item.name : 'this item'}" from your shopping list?`)) return;
       try {
         await apiFetch(`/api/shopping/${encodeURIComponent(id)}`, { method: 'DELETE' });
         state.shoppingItems = state.shoppingItems.filter((x) => x.id !== id);
@@ -3830,9 +3896,6 @@ function bindEvents() {
     const delVarBtn = e.target.closest('button[data-delete-variant]');
     if (delVarBtn) {
       const vName = delVarBtn.dataset.variantName || 'this sub-build';
-      if (!window.confirm(`Delete "${vName}"? Parts linked only to it will be unlinked from this project.`)) {
-        return;
-      }
       try {
         await apiFetch(
           `/api/projects/${encodeURIComponent(delVarBtn.dataset.projId)}/variants/${encodeURIComponent(delVarBtn.dataset.deleteVariant)}`,
@@ -3974,7 +4037,6 @@ function bindEvents() {
     }
     const delOfferBtn = e.target.closest('button[data-delete-offer]');
     if (delOfferBtn && ctx.type === 'shopping') {
-      if (!window.confirm('Remove this store option?')) return;
       const offerId = delOfferBtn.dataset.deleteOffer;
       try {
         const updated = await apiFetch(
@@ -4071,8 +4133,6 @@ function bindEvents() {
       return;
     }
     if (e.target.closest('#ctxDeleteShopBtn') && ctx.type === 'shopping') {
-      const item = state.shoppingItems.find((x) => x.id === ctx.id);
-      if (!window.confirm(`Remove "${item ? item.name : 'this item'}" from your shopping list?`)) return;
       try {
         await apiFetch(`/api/shopping/${encodeURIComponent(ctx.id)}`, { method: 'DELETE' });
         state.shoppingItems = state.shoppingItems.filter((x) => x.id !== ctx.id);
@@ -4087,7 +4147,6 @@ function bindEvents() {
       return;
     }
     if (e.target.closest('#ctxUnlinkShopBtn') && ctx.projectId && ctx.projectItemId) {
-      if (!window.confirm('Unlink this item from the project? It will stay on your shopping list.')) return;
       try {
         await apiFetch(`/api/projects/${encodeURIComponent(ctx.projectId)}/items/${encodeURIComponent(ctx.projectItemId)}`, {
           method: 'DELETE',
@@ -4123,7 +4182,6 @@ function bindEvents() {
       return;
     }
     if (e.target.closest('#ctxRemoveProjItemBtn') && ctx.type === 'project_part') {
-      if (!window.confirm('Remove this part from the project?')) return;
       try {
         await apiFetch(`/api/projects/${encodeURIComponent(ctx.projectId)}/items/${encodeURIComponent(ctx.projectItemId)}`, {
           method: 'DELETE',
@@ -4486,6 +4544,31 @@ function bindEvents() {
   document.getElementById('removePhotoBtn').addEventListener('click', () => handleRemovePhoto('main'));
   document.getElementById('removePinoutBtn').addEventListener('click', () => handleRemovePhoto('pinout'));
 
+  // Generic inline destructive confirmation (swaps trigger button -> Confirm / Cancel in place)
+  document.addEventListener('click', (e) => {
+    const initBtn = e.target.closest('[data-confirm-init]');
+    if (initBtn) {
+      const wrap = initBtn.closest('[data-inline-confirm]');
+      if (wrap) {
+        e.stopPropagation();
+        openInlineConfirm(wrap);
+      }
+      return;
+    }
+    const cancelBtn = e.target.closest('[data-confirm-cancel]');
+    if (cancelBtn) {
+      const wrap = cancelBtn.closest('[data-inline-confirm]');
+      if (wrap) {
+        e.stopPropagation();
+        resetInlineConfirm(wrap);
+      }
+      return;
+    }
+    if (!e.target.closest('[data-inline-confirm]')) {
+      resetAllInlineConfirms();
+    }
+  });
+
   // Inline Delete Confirmation
   document.getElementById('deleteInitBtn').addEventListener('click', () => {
     document.getElementById('deleteInitBtn').classList.add('hidden');
@@ -4549,6 +4632,10 @@ function bindEvents() {
     }
 
     if (e.key === 'Escape') {
+      if (document.querySelector('[data-inline-confirm].is-confirming')) {
+        resetAllInlineConfirms();
+        return;
+      }
       if (!document.getElementById('glossaryPopover').classList.contains('hidden')) {
         closeGlossaryPopover();
         return;

@@ -396,9 +396,15 @@
           <div id="editTabMedia" class="hidden space-y-5">
             <!-- Main Photo -->
             <div class="space-y-3">
-              <div class="flex items-center justify-between">
+              <div class="flex items-center justify-between gap-2">
                 <span class="text-sm font-semibold">Photo</span>
-                <button id="removePhotoBtn" type="button" class="btn-danger-outline hidden h-7 px-2.5 rounded-md text-[11px] font-medium">Remove</button>
+                <div id="removePhotoArea" class="hidden inline-flex items-center gap-1.5" data-inline-confirm>
+                  <button id="removePhotoInitBtn" type="button" data-confirm-init class="btn-danger-outline h-7 px-2.5 rounded-md text-[11px] font-medium">Remove</button>
+                  <div class="hidden items-center gap-1.5" data-confirm-group>
+                    <button id="removePhotoBtn" type="button" class="btn-danger h-7 px-2.5 rounded-md text-[11px] font-medium">Confirm</button>
+                    <button type="button" data-confirm-cancel class="btn-secondary h-7 px-2.5 rounded-md text-[11px] font-medium">Cancel</button>
+                  </div>
+                </div>
               </div>
 
               <div id="drawerPhotoFrame" class="pb-well w-full h-44 rounded-md overflow-hidden flex items-center justify-center">
@@ -460,9 +466,15 @@
 
             <!-- Pinout Image -->
             <div class="pb-divider-t pt-5 space-y-3">
-              <div class="flex items-center justify-between">
+              <div class="flex items-center justify-between gap-2">
                 <span class="text-sm font-semibold">Pinout diagram</span>
-                <button id="removePinoutBtn" type="button" class="btn-danger-outline hidden h-7 px-2.5 rounded-md text-[11px] font-medium">Remove</button>
+                <div id="removePinoutArea" class="hidden inline-flex items-center gap-1.5" data-inline-confirm>
+                  <button id="removePinoutInitBtn" type="button" data-confirm-init class="btn-danger-outline h-7 px-2.5 rounded-md text-[11px] font-medium">Remove</button>
+                  <div class="hidden items-center gap-1.5" data-confirm-group>
+                    <button id="removePinoutBtn" type="button" class="btn-danger h-7 px-2.5 rounded-md text-[11px] font-medium">Confirm</button>
+                    <button type="button" data-confirm-cancel class="btn-secondary h-7 px-2.5 rounded-md text-[11px] font-medium">Cancel</button>
+                  </div>
+                </div>
               </div>
 
               <div id="drawerPinoutFrame" class="pb-well w-full h-40 rounded-md overflow-hidden flex items-center justify-center">
@@ -937,6 +949,6 @@
 
   <script src="/static/brand.js?v=35"></script>
   <script src="/static/workbench.js?v=35"></script>
-  <script src="/static/app.js?v=35"></script>
+  <script src="/static/app.js?v=36"></script>
 </body>
 </html>
