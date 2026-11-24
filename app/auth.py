@@ -9,21 +9,8 @@ from starlette.responses import JSONResponse, Response
 from app.config import Settings
 
 
-PUBLIC_ICON_PATHS = frozenset(
-    {
-        "/manifest.webmanifest",
-        "/apple-touch-icon.png",
-        "/apple-touch-icon-precomposed.png",
-        "/static/brand/apple-touch-icon.png",
-        "/static/brand/icon-192.png",
-        "/static/brand/icon-512.png",
-        "/static/brand/favicon.svg",
-    }
-)
-
-
 class CloudflareAccessMiddleware(BaseHTTPMiddleware):
-    """Validates Cloudflare Access JWTs on every route except /healthz and public web-app icons when LOCAL_DEV_MODE=false."""
+    """Validates Cloudflare Access JWTs on every route except /healthz when LOCAL_DEV_MODE=false."""
 
     def __init__(self, app, settings: Settings) -> None:
         super().__init__(app)
@@ -49,9 +36,6 @@ class CloudflareAccessMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         if request.url.path == "/healthz":
-            return await call_next(request)
-
-        if request.method in ("GET", "HEAD") and request.url.path in PUBLIC_ICON_PATHS:
             return await call_next(request)
 
         if self.settings.local_dev_mode:
