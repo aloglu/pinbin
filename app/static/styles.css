@@ -322,6 +322,7 @@ body {
     display: flex;
     gap: 4px;
     overflow-x: auto;
+    overflow-y: hidden;
     scrollbar-width: none;
   }
   .pb-side-list::-webkit-scrollbar {
@@ -1123,6 +1124,14 @@ div.pb-overlay,
   #glossaryLayout:not(.is-detail) #glossaryDetailPane {
     display: none;
   }
+}
+
+/* A strip that scrolls sideways must not scroll up and down. With
+   overflow-x: auto, the browser also makes overflow-y auto. Then 1px of
+   tab underline is enough to make the strip catch a vertical swipe, and the
+   strip moves in place of the page. */
+.overflow-x-auto:not(.overflow-y-auto):not(.overflow-auto) {
+  overflow-y: hidden;
 }
 
 /* Touch screens: bigger targets, no keyboard-only hints */
