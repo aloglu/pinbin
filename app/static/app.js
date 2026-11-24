@@ -3990,9 +3990,18 @@ function trackVisibleViewport() {
   apply();
 }
 
+// No zoom on phones. iOS Safari ignores user-scalable=no in the viewport
+// meta, so pinch gestures are stopped here (gesture* events exist only there).
+function blockPinchZoom() {
+  for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+    document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+  }
+}
+
 // Boot
 window.addEventListener('DOMContentLoaded', async () => {
   trackVisibleViewport();
+  blockPinchZoom();
   loadCachedTheme();
   const binParam = new URLSearchParams(window.location.search).get('bin');
   if (binParam && binParam.trim()) {

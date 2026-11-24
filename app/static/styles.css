@@ -1134,6 +1134,13 @@ div.pb-overlay,
   overflow-y: hidden;
 }
 
+/* No zoom on phones (the viewport meta blocks pinch zoom and zoom on focus).
+   This also stops double-tap zoom. app.js blocks pinch zoom on iOS Safari,
+   which ignores user-scalable=no. */
+html {
+  touch-action: manipulation;
+}
+
 /* Touch screens: bigger targets, no keyboard-only hints */
 @media (pointer: coarse) {
   /* iOS zooms the page when a field with text under 16px gets focus */
