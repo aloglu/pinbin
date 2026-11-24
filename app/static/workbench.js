@@ -913,16 +913,6 @@ function bindInteractiveGuideEvents() {
   const root = document.getElementById('benchView');
   if (!root) return;
 
-  root.querySelectorAll('button[data-wb-sub]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      wbState.subTab = btn.dataset.wbSub;
-      if (typeof window.syncBenchUrl === 'function') {
-        window.syncBenchUrl(wbState.subTab);
-      }
-      renderWorkbench();
-    });
-  });
-
   root.querySelectorAll('button[data-wb-guide]').forEach((btn) => {
     btn.addEventListener('click', () => {
       wbState.activeGuide = btn.dataset.wbGuide;
@@ -1211,6 +1201,9 @@ function bindCompatibilityEvents() {
       renderWorkbench();
     });
   }
+  const validIds = new Set((typeof state !== 'undefined' && Array.isArray(state.parts) ? state.parts : []).map((p) => p.id));
+  wbState.compatSelectedIds = wbState.compatSelectedIds.filter((id) => validIds.has(id));
+
   document.querySelectorAll('input[data-compat-part]').forEach((cb) => {
     cb.addEventListener('change', () => {
       const id = cb.dataset.compatPart;

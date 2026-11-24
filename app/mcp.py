@@ -19,6 +19,7 @@ from app.config import CATEGORIES, Settings
 from app.db import (
     PROJECT_STATUSES,
     add_project_item,
+    add_shopping_offer,
     create_glossary_term,
     create_part,
     create_project,
@@ -30,14 +31,17 @@ from app.db import (
     delete_project_item,
     delete_project_variant,
     delete_shopping_item,
+    delete_shopping_offer,
     get_part,
     get_project,
     get_shopping_item,
     list_glossary,
     list_parts,
     list_projects,
+    list_retailers,
     list_shopping_items,
     move_shopping_item_to_inventory,
+    optimize_shopping_carts,
     teardown_project,
     update_glossary_term,
     update_part,
@@ -45,6 +49,8 @@ from app.db import (
     update_project_item,
     update_project_variant,
     update_shopping_item,
+    update_shopping_offer,
+    upsert_retailer,
 )
 from app.glossary_seed import GLOSSARY_CATEGORIES
 from app.images import safe_delete_image
@@ -53,6 +59,8 @@ from app.scraper import ScrapeError, scrape_url
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 DEFAULT_PROTOCOL_VERSION = "2025-03-26"
 MAX_BATCH_UPDATES = 50
+MAX_MCP_BODY_BYTES = 1024 * 1024
+MAX_MCP_BATCH_SIZE = 30
 
 SERVER_INSTRUCTIONS = (
     "Pinbin is a personal electronics workbench inventory, project planner, shopping list, and glossary. "
@@ -61,6 +69,9 @@ SERVER_INSTRUCTIONS = (
     "Instead, add unbought items to the shopping list (create_shopping_item, with fetch_metadata=true to grab product photos) "
     "and link both owned parts and shopping items into first-class projects (create_project, create_project_variant, add_project_item) "
     "with project-scoped notes in project_notes. "
+    "Each shopping item supports multiple retailer offers (pass offers=[...] on create_shopping_item or call add_shopping_offer). "
+    "When planning a project shopping list, try to find parts on the same retailer(s) to minimize separate orders, attach alternative "
+    "store offers when found, and call optimize_shopping_carts to check for consolidation opportunities or single-item straggler stores. "
     "All notes fields (notes, project_notes, why_needed) render as Markdown—write them in clean Markdown "
     "(short headings, bullet lists, inline code for pins/values, and checklists where helpful). "
     "When writing descriptions, warnings, notes, or glossary terms, prefer short, plain ASD-STE100 "
@@ -118,6 +129,10 @@ GLOSSARY_WRITABLE_FIELDS = {"term", "category", "summary", "rule_of_thumb", "key
 
 class McpToolError(Exception):
     """Raised when a tool call fails with a user/agent-readable message."""
+
+
+class UnknownToolError(Exception):
+    """Raised when an unknown MCP tool name is requested."""
 
 
 def verify_mcp_access(request: Request, settings: Settings) -> JSONResponse | None:
@@ -294,6 +309,42 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
             },
             "annotations": {
                 "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "list_retailers",
+            "description": "List saved retailer shipping rules (shipping_cost, free_shipping_threshold, currency).",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "optimize_shopping_carts",
+            "description": (
+                "Analyze shopping items across their saved retailer offers to minimize separate orders (fewest_orders) "
+                "or minimize total landed cost including shipping (lowest_cost), and identify single-item straggler stores."
+                + ("" if read_only else " Set apply=true to switch selected offers to the recommended plan.")
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "Optional project_id to scope optimization to."},
+                    "tag": {"type": "string", "description": "Optional project/tag name filter."},
+                    "mode": {"type": "string", "enum": ["fewest_orders", "lowest_cost"], "default": "fewest_orders"},
+                    "include_out_of_stock": {"type": "boolean", "default": False},
+                    **({} if read_only else {"apply": {"type": "boolean", "default": False}}),
+                },
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": read_only,
                 "destructiveHint": False,
                 "idempotentHint": True,
                 "openWorldHint": False,
@@ -561,6 +612,21 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                     "project_id": {"type": "string", "description": "Optional project_id to link this shopping item to immediately."},
                     "variant_id": {"type": ["string", "null"], "description": "Optional variant_id inside project_id (null for Core)."},
                     "fetch_metadata": {"type": "boolean", "default": True},
+                    "offers": {
+                        "type": "array",
+                        "description": "Optional list of retailer offers ({url, retailer, price, in_stock, is_selected, notes}).",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "url": {"type": "string"},
+                                "retailer": {"type": "string"},
+                                "price": {"type": "string"},
+                                "in_stock": {"type": "string", "enum": ["", "in_stock", "out_of_stock"]},
+                                "is_selected": {"type": "boolean"},
+                                "notes": {"type": "string"},
+                            },
+                        },
+                    },
                 },
                 "required": ["name"],
                 "additionalProperties": False,
@@ -614,6 +680,92 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
             "annotations": {
                 "readOnlyHint": False,
                 "destructiveHint": True,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "add_shopping_offer",
+            "description": "Add an alternative retailer listing (offer) to an existing shopping item. Set fetch_metadata=true to scrape price/stock from url.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "item_id": {"type": "string"},
+                    "url": {"type": "string"},
+                    "retailer": {"type": "string"},
+                    "price": {"type": "string"},
+                    "in_stock": {"type": "string", "enum": ["", "in_stock", "out_of_stock"]},
+                    "is_selected": {"type": "boolean", "default": False},
+                    "notes": {"type": "string"},
+                    "fetch_metadata": {"type": "boolean", "default": True},
+                },
+                "required": ["item_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": True,
+            },
+        },
+        {
+            "name": "select_shopping_offer",
+            "description": "Switch a shopping item's active retailer to a saved offer_id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "item_id": {"type": "string"},
+                    "offer_id": {"type": "string"},
+                },
+                "required": ["item_id", "offer_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "remove_shopping_offer",
+            "description": "Delete a saved retailer offer from a shopping item.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "item_id": {"type": "string"},
+                    "offer_id": {"type": "string"},
+                },
+                "required": ["item_id", "offer_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "upsert_retailer",
+            "description": "Save optional shipping_cost and free_shipping_threshold metadata for a retailer domain (e.g. 'robolinkmarket.com').",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string"},
+                    "name": {"type": "string"},
+                    "shipping_cost": {"type": ["number", "null"], "minimum": 0},
+                    "free_shipping_threshold": {"type": ["number", "null"], "minimum": 0},
+                    "currency": {"type": "string", "description": "e.g. TRY, USD, EUR"},
+                    "notes": {"type": "string"},
+                },
+                "required": ["domain"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": False,
+                "destructiveHint": False,
                 "idempotentHint": True,
                 "openWorldHint": False,
             },
@@ -774,6 +926,10 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         "create_shopping_item",
         "update_shopping_item",
         "delete_shopping_item",
+        "add_shopping_offer",
+        "select_shopping_offer",
+        "remove_shopping_offer",
+        "upsert_retailer",
         "move_shopping_to_inventory",
         "create_glossary_term",
         "update_glossary_term",
@@ -785,6 +941,22 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
     # --- Read tools ---
     if name == "inventory_summary":
         return _compute_inventory_summary(settings)
+
+    if name == "list_retailers":
+        return {"retailers": list_retailers(settings.db_path)}
+
+    if name == "optimize_shopping_carts":
+        apply_flag = bool(args.get("apply", False))
+        if apply_flag and settings.mcp_read_only:
+            raise McpToolError("Cannot apply optimization in read-only mode (MCP_READ_ONLY=true).")
+        return optimize_shopping_carts(
+            settings.db_path,
+            project_id=args.get("project_id"),
+            tag=args.get("tag"),
+            mode=str(args.get("mode") or "fewest_orders"),
+            include_out_of_stock=bool(args.get("include_out_of_stock", False)),
+            apply=apply_flag,
+        )
 
     if name == "list_parts":
         parts = list_parts(
@@ -1036,6 +1208,8 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             raise McpToolError("name is required")
         data = {k: v for k, v in args.items() if k in SHOPPING_WRITABLE_FIELDS}
         data["name"] = item_name
+        if isinstance(args.get("offers"), list):
+            data["offers"] = args["offers"]
         fetch_meta = bool(args.get("fetch_metadata", True))
         if fetch_meta and data.get("url"):
             try:
@@ -1082,14 +1256,14 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         updates = {k: v for k, v in args.items() if k in SHOPPING_WRITABLE_FIELDS}
         fetch_meta = bool(args.get("fetch_metadata", False))
         target_url = str(updates.get("url") or existing.get("url") or "").strip()
+        old_img = existing.get("image_path") or ""
+        new_img = ""
         if fetch_meta and target_url:
             try:
                 scraped = await scrape_url(target_url, settings.images_dir, settings.max_upload_bytes)
                 if scraped.get("image_path"):
-                    old_img = existing.get("image_path") or ""
-                    updates["image_path"] = scraped["image_path"]
-                    if old_img and old_img != scraped["image_path"]:
-                        safe_delete_image(old_img, settings.images_dir)
+                    new_img = scraped["image_path"]
+                    updates["image_path"] = new_img
                 if not updates.get("price") and not existing.get("price") and scraped.get("price"):
                     updates["price"] = scraped["price"]
                 if scraped.get("retailer"):
@@ -1101,9 +1275,15 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         try:
             updated = update_shopping_item(settings.db_path, item_id, updates)
         except ValueError as exc:
+            if new_img:
+                safe_delete_image(new_img, settings.images_dir)
             raise McpToolError(str(exc)) from exc
         if updated is None:
+            if new_img:
+                safe_delete_image(new_img, settings.images_dir)
             raise McpToolError(f"Shopping item not found: {item_id}")
+        if new_img and old_img and old_img != new_img:
+            safe_delete_image(old_img, settings.images_dir)
         updated["has_photo"] = bool((updated.pop("image_path", "") or "").strip())
         return updated
 
@@ -1116,6 +1296,80 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             raise McpToolError(f"Shopping item not found: {item_id}")
         safe_delete_image(deleted.get("image_path", ""), settings.images_dir)
         return {"status": "deleted", "id": item_id, "name": deleted.get("name", "")}
+
+    if name == "add_shopping_offer":
+        item_id = str(args.get("item_id") or "").strip()
+        if not item_id:
+            raise McpToolError("item_id is required")
+        offer_data: dict[str, Any] = {
+            "url": str(args.get("url") or "").strip(),
+            "retailer": str(args.get("retailer") or "").strip(),
+            "price": str(args.get("price") or "").strip(),
+            "in_stock": str(args.get("in_stock") or "").strip(),
+            "is_selected": bool(args.get("is_selected", False)),
+            "notes": str(args.get("notes") or "").strip(),
+        }
+        scraped_img = ""
+        if bool(args.get("fetch_metadata", True)) and offer_data["url"]:
+            try:
+                scraped = await scrape_url(offer_data["url"], settings.images_dir, settings.max_upload_bytes)
+                if not offer_data["price"] and scraped.get("price"):
+                    offer_data["price"] = scraped["price"]
+                if not offer_data["retailer"] and scraped.get("retailer"):
+                    offer_data["retailer"] = scraped["retailer"]
+                if not offer_data["in_stock"] and scraped.get("in_stock"):
+                    offer_data["in_stock"] = scraped["in_stock"]
+                scraped_img = scraped.get("image_path") or ""
+            except ScrapeError:
+                pass
+        try:
+            updated = add_shopping_offer(settings.db_path, item_id, offer_data)
+        except ValueError as exc:
+            if scraped_img:
+                safe_delete_image(scraped_img, settings.images_dir)
+            raise McpToolError(str(exc)) from exc
+        if updated is None:
+            if scraped_img:
+                safe_delete_image(scraped_img, settings.images_dir)
+            raise McpToolError(f"Shopping item not found: {item_id}")
+        if scraped_img:
+            if not updated.get("image_path"):
+                updated = update_shopping_item(settings.db_path, item_id, {"image_path": scraped_img}) or updated
+            else:
+                safe_delete_image(scraped_img, settings.images_dir)
+        updated["has_photo"] = bool((updated.pop("image_path", "") or "").strip())
+        return updated
+
+    if name == "select_shopping_offer":
+        item_id = str(args.get("item_id") or "").strip()
+        offer_id = str(args.get("offer_id") or "").strip()
+        if not item_id or not offer_id:
+            raise McpToolError("item_id and offer_id are required")
+        updated = update_shopping_offer(settings.db_path, item_id, offer_id, {"is_selected": True})
+        if updated is None:
+            raise McpToolError(f"Offer not found: {offer_id}")
+        updated["has_photo"] = bool((updated.pop("image_path", "") or "").strip())
+        return updated
+
+    if name == "remove_shopping_offer":
+        item_id = str(args.get("item_id") or "").strip()
+        offer_id = str(args.get("offer_id") or "").strip()
+        if not item_id or not offer_id:
+            raise McpToolError("item_id and offer_id are required")
+        updated = delete_shopping_offer(settings.db_path, item_id, offer_id)
+        if updated is None:
+            raise McpToolError(f"Offer not found: {offer_id}")
+        updated["has_photo"] = bool((updated.pop("image_path", "") or "").strip())
+        return updated
+
+    if name == "upsert_retailer":
+        domain = str(args.get("domain") or "").strip()
+        if not domain:
+            raise McpToolError("domain is required")
+        try:
+            return upsert_retailer(settings.db_path, domain, args)
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
 
     if name == "move_shopping_to_inventory":
         item_id = str(args.get("item_id") or "").strip()
@@ -1155,7 +1409,7 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             raise McpToolError(f"Glossary term not found: {term_id}")
         return {"status": "deleted", "id": term_id}
 
-    raise KeyError(f"Unknown tool: {name}")
+    raise UnknownToolError(f"Unknown tool: {name}")
 
 
 RESOURCES = [
@@ -1275,7 +1529,7 @@ async def _handle_single_rpc(settings: Settings, msg: Any) -> dict[str, Any] | N
                     "isError": False,
                 },
             )
-        except KeyError:
+        except UnknownToolError:
             return _jsonrpc_error(req_id, -32602, f"Unknown tool: {tool_name}")
         except McpToolError as exc:
             return _jsonrpc_result(
@@ -1312,8 +1566,11 @@ async def handle_mcp_post(request: Request, settings: Settings) -> Response:
     if auth_err is not None:
         return auth_err
 
+    raw_body = await request.body()
+    if len(raw_body) > MAX_MCP_BODY_BYTES:
+        return JSONResponse(status_code=413, content=_jsonrpc_error(None, -32600, "Request body too large"))
     try:
-        payload = await request.json()
+        payload = json.loads(raw_body.decode("utf-8"))
     except Exception:
         return JSONResponse(status_code=400, content=_jsonrpc_error(None, -32700, "Parse error: invalid JSON"))
 
@@ -1321,6 +1578,11 @@ async def handle_mcp_post(request: Request, settings: Settings) -> Response:
         if not payload:
             return JSONResponse(
                 status_code=400, content=_jsonrpc_error(None, -32600, "Invalid Request: empty batch")
+            )
+        if len(payload) > MAX_MCP_BATCH_SIZE:
+            return JSONResponse(
+                status_code=400,
+                content=_jsonrpc_error(None, -32600, f"Batch exceeds maximum size of {MAX_MCP_BATCH_SIZE}"),
             )
         responses = []
         for item in payload:

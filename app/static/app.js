@@ -17,6 +17,10 @@ const state = {
   projects: [],
   glossary: [],
   shoppingItems: [],
+  retailers: [],
+  consolidateOpen: false,
+  consolidateMode: 'fewest_orders', // 'fewest_orders' | 'lowest_cost'
+  consolidatePlan: null,
   shoppingGroupBy: 'project', // 'project' | 'store' | 'flat'
   shoppingTagFilter: 'All',
   projectActiveTab: {}, // projectId -> 'all' | 'core' | variantId
@@ -93,15 +97,19 @@ function _renderInlineMd(escapedLine) {
     codeSpans.push(`<code>${code}</code>`);
     return `\u0000CODE${idx}\u0000`;
   });
-  // Safe links [label](https://...)
+  // Safe links [label](https://...) — protect href from bold/italic regexes below
+  const linkSpans = [];
   s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => {
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    const idx = linkSpans.length;
+    linkSpans.push(`<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`);
+    return `\u0000LINK${idx}\u0000`;
   });
   // Bold & italic
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^\*])\*([^\*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
-  // Restore inline code
+  // Restore links and inline code
+  s = s.replace(/\u0000LINK(\d+)\u0000/g, (_, i) => linkSpans[Number(i)] || '');
   s = s.replace(/\u0000CODE(\d+)\u0000/g, (_, i) => codeSpans[Number(i)] || '');
   return s;
 }
@@ -463,9 +471,17 @@ async function loadGlossary() {
 
 async function loadShopping() {
   try {
-    state.shoppingItems = await apiFetch('/api/shopping');
+    const [items, retailers] = await Promise.all([
+      apiFetch('/api/shopping'),
+      apiFetch('/api/retailers').catch(() => []),
+    ]);
+    state.shoppingItems = items;
+    state.retailers = Array.isArray(retailers) ? retailers : [];
     updateNavBadges();
-    if (state.activePage === 'shopping') renderShopping();
+    if (state.activePage === 'shopping') {
+      renderShopping();
+      if (state.consolidateOpen) await refreshConsolidatePlan();
+    }
   } catch (err) {
     showToast(err.message);
   }
@@ -926,6 +942,152 @@ function _formatCostMap(costMap) {
     .join(' + ');
 }
 
+function _formatMoney(val, currency) {
+  if (val === null || val === undefined || Number.isNaN(Number(val))) return '';
+  const n = Number(val).toFixed(2);
+  if (currency === 'TRY') return `${n} TL`;
+  if (currency === 'USD') return `$${n}`;
+  if (currency === 'EUR') return `€${n}`;
+  if (currency === 'GBP') return `£${n}`;
+  return currency ? `${n} ${currency}` : n;
+}
+
+async function refreshConsolidatePlan() {
+  const panel = document.getElementById('shoppingConsolidatePanel');
+  if (!panel || !state.consolidateOpen) return;
+  try {
+    state.consolidatePlan = await apiFetch('/api/shopping/optimize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tag: state.shoppingTagFilter !== 'All' ? state.shoppingTagFilter : null,
+        mode: state.consolidateMode,
+        apply: false,
+      }),
+    });
+    renderConsolidatePanel();
+  } catch (err) {
+    panel.innerHTML = `<p class="text-xs text-stop">${escapeHTML(err.message)}</p>`;
+  }
+}
+
+function renderConsolidatePanel() {
+  const panel = document.getElementById('shoppingConsolidatePanel');
+  if (!panel || !state.consolidateOpen) return;
+  const plan = state.consolidatePlan;
+  if (!plan) {
+    panel.innerHTML = `<p class="text-xs text-muted">Checking store options...</p>`;
+    return;
+  }
+  const cur = plan.current || { store_count: 0, carts: [] };
+  const rec = plan.recommended || { store_count: 0, carts: [] };
+  const currency = rec.currency || cur.currency || '';
+  const scopeLabel = state.shoppingTagFilter !== 'All' ? state.shoppingTagFilter : 'All items';
+
+  const retailersByDomain = new Map((state.retailers || []).map((r) => [r.domain, r]));
+  const seenDomains = new Set();
+  (cur.carts || []).forEach((c) => seenDomains.add(c.retailer));
+  (rec.carts || []).forEach((c) => seenDomains.add(c.retailer));
+  const storeDomains = [...seenDomains].filter(Boolean).sort();
+
+  const summaryText =
+    rec.store_count === 0
+      ? 'No items with store links in this view yet.'
+      : plan.changes_count > 0
+      ? `Can switch ${plan.changes_count} ${plan.changes_count === 1 ? 'item' : 'items'}: ${cur.store_count} ${cur.store_count === 1 ? 'store' : 'stores'} &rarr; ${rec.store_count} ${rec.store_count === 1 ? 'store' : 'stores'}${rec.total !== null ? ` (${escapeHTML(_formatMoney(rec.total, currency))})` : ''}`
+      : `Already optimal: ${rec.store_count} ${rec.store_count === 1 ? 'store' : 'stores'}${rec.total !== null ? ` · Est. total ${escapeHTML(_formatMoney(rec.total, currency))}` : ''}`;
+
+  const cartsHtml = (rec.carts || [])
+    .map((c) => {
+      const shipNote =
+        c.shipping_cost === null
+          ? ''
+          : c.shipping_cost === 0 && c.free_shipping_threshold !== null
+          ? `<span class="text-go">Free shipping</span>`
+          : `<span>+ ${escapeHTML(_formatMoney(c.shipping_cost, currency))} shipping${c.free_shipping_remaining > 0 ? ` (${escapeHTML(_formatMoney(c.free_shipping_remaining, currency))} to free)` : ''}</span>`;
+      return `
+        <div class="pb-well rounded p-3 space-y-1.5">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-xs font-semibold text-ink">${escapeHTML(c.display_name || c.retailer)}</span>
+            <span class="text-[11px] font-mono text-muted">${c.item_count} ${c.item_count === 1 ? 'item' : 'items'}${c.subtotal !== null ? ` · ${escapeHTML(_formatMoney(c.subtotal, currency))}` : ''}</span>
+          </div>
+          ${shipNote ? `<div class="text-[11px] text-muted">${shipNote}</div>` : ''}
+          <ul class="space-y-0.5 text-xs text-ink-2">
+            ${(c.items || [])
+              .map(
+                (x) => `<li class="flex items-center justify-between gap-2">
+                  <button type="button" data-open-shop="${escapeHTML(x.item_id)}" class="hover:underline truncate text-left">${escapeHTML(x.name)}${x.quantity > 1 ? ` ×${x.quantity}` : ''}</button>
+                  <span class="font-mono text-[11px] text-muted shrink-0">${escapeHTML(x.price || '')}</span>
+                </li>`
+              )
+              .join('')}
+          </ul>
+        </div>
+      `;
+    })
+    .join('');
+
+  const stragglersHtml = (plan.stragglers || [])
+    .map(
+      (s) => `<div class="rounded border border-line px-3 py-2 text-xs text-ink-2 flex flex-wrap items-center justify-between gap-2">
+        <span>${escapeHTML(s.suggestion)}</span>
+        <span class="flex flex-wrap gap-1">${(s.items || [])
+          .map(
+            (x) => `<button type="button" data-open-shop="${escapeHTML(x.item_id)}" class="pb-badge pb-badge-neutral !text-[11px] hover:border-accent/50 cursor-pointer">${escapeHTML(x.name)}</button>`
+          )
+          .join('')}</span>
+      </div>`
+    )
+    .join('');
+
+  const shippingRowsHtml = storeDomains
+    .map((dom) => {
+      const meta = retailersByDomain.get(dom) || {};
+      return `
+        <div data-retailer-row class="flex flex-wrap sm:flex-nowrap items-center gap-2 text-xs">
+          <span class="font-mono text-ink min-w-[10rem] truncate">${escapeHTML(dom)}</span>
+          <input data-ret-ship type="number" min="0" step="any" placeholder="Shipping fee" value="${meta.shipping_cost ?? ''}" class="w-28 h-7 px-2 text-xs" />
+          <input data-ret-free type="number" min="0" step="any" placeholder="Free over..." value="${meta.free_shipping_threshold ?? ''}" class="w-28 h-7 px-2 text-xs" />
+          <button type="button" data-save-retailer="${escapeHTML(dom)}" class="btn-secondary h-7 px-2.5 text-xs shrink-0">Save</button>
+        </div>
+      `;
+    })
+    .join('');
+
+  const prevDetails = panel.querySelector('details[data-cons-shipping]');
+  const shippingWasOpen = Boolean(prevDetails && prevDetails.open);
+  const currencyNote = rec.mixed_currencies
+    ? `<p class="text-[11px] text-muted mb-2">Items use multiple currencies, so combined totals are omitted.</p>`
+    : '';
+
+  panel.innerHTML = `
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div>
+        <div class="text-xs font-semibold text-ink">Consolidate stores <span class="font-normal text-muted">· ${escapeHTML(scopeLabel)}</span></div>
+        <p class="text-xs text-muted mt-0.5">${summaryText}</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="pb-segmented inline-flex items-center rounded p-0.5" role="group" aria-label="Optimization mode">
+          <button type="button" data-cons-mode="fewest_orders" class="h-7 px-2.5 rounded-md text-xs font-medium ${state.consolidateMode === 'fewest_orders' ? 'pb-seg-active' : 'opacity-65'}">Fewest orders</button>
+          <button type="button" data-cons-mode="lowest_cost" class="h-7 px-2.5 rounded-md text-xs font-medium ${state.consolidateMode === 'lowest_cost' ? 'pb-seg-active' : 'opacity-65'}">Lowest total</button>
+        </div>
+        ${plan.changes_count > 0 ? `<button type="button" id="consApplyBtn" class="btn-primary h-7 px-3 text-xs">Apply (${plan.changes_count})</button>` : ''}
+      </div>
+    </div>
+    ${currencyNote}
+    ${cartsHtml ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">${cartsHtml}</div>` : ''}
+    ${stragglersHtml ? `<div class="space-y-1.5 mb-3">${stragglersHtml}</div>` : ''}
+    ${
+      storeDomains.length > 0
+        ? `<details data-cons-shipping ${shippingWasOpen ? 'open' : ''} class="pt-2 border-t border-line">
+             <summary class="text-xs font-medium text-muted cursor-pointer select-none">Shipping fees (optional)</summary>
+             <div class="mt-2 space-y-2">${shippingRowsHtml}</div>
+           </details>`
+        : ''
+    }
+  `;
+}
+
 function renderShopping() {
   const q = state.search.trim().toLowerCase();
   const wishGrid = document.getElementById('shoppingWishlistGrid');
@@ -1000,6 +1162,7 @@ function renderShopping() {
           `<span class="pb-badge pb-badge-neutral !text-[11px] !py-0 !px-1.5">${escapeHTML(lk.project_name)}${lk.variant_name ? ` · ${escapeHTML(lk.variant_name)}` : ' · Core'}</span>`
       )
       .join('');
+    const safeUrl = it.url && /^https?:\/\//i.test(it.url);
     return `
       <div class="elevated-card rounded-md p-3 flex flex-wrap items-center gap-3 hover:border-accent/40 transition-colors">
         <button type="button" data-open-shop="${escapeHTML(it.id)}" class="pb-well w-12 h-12 rounded flex items-center justify-center overflow-hidden shrink-0 cursor-pointer" title="View details">${smallThumb(it.image_path, it.category)}</button>
@@ -1010,7 +1173,8 @@ function renderShopping() {
           </div>
           <div class="text-[13px] text-muted flex flex-wrap items-center gap-2 min-w-0 mt-0.5">
             ${it.price ? `<span class="font-semibold text-ink">${escapeHTML(it.price)}</span>` : ''}
-            ${host && it.url ? `<a href="${escapeHTML(it.url)}" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline truncate">${escapeHTML(host)}</a>` : host ? `<span>${escapeHTML(host)}</span>` : ''}
+            ${host && safeUrl ? `<a href="${escapeHTML(it.url)}" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline truncate">${escapeHTML(host)}</a>` : host ? `<span>${escapeHTML(host)}</span>` : ''}
+            ${(it.offers || []).length > 1 ? `<button type="button" data-open-shop="${escapeHTML(it.id)}" class="pb-badge pb-badge-neutral !text-[11px] !py-0 !px-1.5 hover:border-accent/50 cursor-pointer" title="Compare store options">+${it.offers.length - 1} ${it.offers.length - 1 === 1 ? 'store' : 'stores'}</button>` : ''}
             ${stockBadge}
           </div>
           ${reason ? `<p class="text-xs text-muted mt-1 line-clamp-2">${escapeHTML(reason)}</p>` : ''}
@@ -1434,6 +1598,53 @@ function renderContextDrawer() {
           ${hasStoreUrl ? `<a href="${escapeHTML(it.url)}" target="_blank" rel="noopener noreferrer" class="btn-secondary h-9 px-3 text-[13px] inline-flex items-center gap-1.5">Store page ${ext}</a>` : ''}
           ${it.url ? `<button type="button" id="ctxFetchShopMetaBtn" class="btn-secondary h-9 px-3 text-[13px]">Fetch photo &amp; info</button>` : ''}
         </div>
+
+        <section>
+          <h4 class="pb-section-label mb-2">Store options</h4>
+          ${
+            (it.offers || []).length > 0
+              ? `<div class="space-y-1.5 mb-2.5">
+                   ${(it.offers || [])
+                     .map((off) => {
+                       const offHost = off.retailer || (off.url ? (() => { try { return new URL(off.url).hostname.replace(/^www\./, ''); } catch (_) { return ''; } })() : 'Store');
+                       const offUrlOk = off.url && /^https?:\/\//i.test(off.url);
+                       const offStock = off.in_stock === 'in_stock'
+                         ? '<span class="text-[11px] text-go font-medium">In stock</span>'
+                         : off.in_stock === 'out_of_stock'
+                         ? '<span class="text-[11px] text-stop font-medium">Out of stock</span>'
+                         : '';
+                       return `<div class="pb-well rounded px-2.5 py-2 flex flex-wrap items-center justify-between gap-2 ${off.is_selected ? 'border border-accent/60' : 'border border-transparent'}">
+                         <div class="min-w-0 flex-1">
+                           <div class="flex flex-wrap items-center gap-2 text-[13px]">
+                             ${offUrlOk ? `<a href="${escapeHTML(off.url)}" target="_blank" rel="noopener noreferrer" class="font-medium text-accent hover:underline truncate">${escapeHTML(offHost)}</a>` : `<span class="font-medium text-ink truncate">${escapeHTML(offHost)}</span>`}
+                             ${off.price ? `<span class="font-mono font-semibold text-ink">${escapeHTML(off.price)}</span>` : ''}
+                             ${offStock}
+                           </div>
+                         </div>
+                         <div class="flex items-center gap-1.5 shrink-0">
+                           ${
+                             off.is_selected
+                               ? '<span class="pb-badge pb-badge-neutral !text-[11px] text-go font-medium">Selected</span>'
+                               : `<button type="button" data-select-offer="${escapeHTML(off.id)}" class="btn-secondary h-7 px-2.5 text-xs">Use this</button>`
+                           }
+                           ${
+                             (it.offers || []).length > 1
+                               ? `<button type="button" data-delete-offer="${escapeHTML(off.id)}" class="btn-icon h-7 w-7 flex items-center justify-center" title="Remove store option" aria-label="Remove store option"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>`
+                               : ''
+                           }
+                         </div>
+                       </div>`;
+                     })
+                     .join('')}
+                 </div>`
+              : `<p class="text-xs text-muted mb-2">No store links saved yet.</p>`
+          }
+          <div class="flex flex-wrap sm:flex-nowrap items-center gap-1.5">
+            <input id="ctxAddOfferUrl" type="url" placeholder="Add another store link (https://...)" class="basis-full sm:basis-auto flex-1 min-w-0 h-8 px-2.5 text-xs" />
+            <input id="ctxAddOfferPrice" type="text" placeholder="Price (opt)" aria-label="Optional price" class="flex-1 sm:flex-none sm:w-24 min-w-0 h-8 px-2 text-xs" />
+            <button type="button" id="ctxAddOfferBtn" class="btn-secondary h-8 px-3 text-xs shrink-0">Add store</button>
+          </div>
+        </section>
 
         ${contextNotesHtml('Why it is on the list', it.why_needed || it.notes || '', 'No reason written yet.', 'Write a reason')}
 
@@ -1927,15 +2138,17 @@ function renderWithGlossaryTooltips(rawText) {
   if (!termMatchers.length) return safe;
 
   const escapedTerms = termMatchers.map((m) => m.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const re = new RegExp(`\\b(${escapedTerms.join('|')})\\b`, 'gi');
+  // Skip HTML entities like &amp; so terms such as "Amp" don't corrupt escaped ampersands
+  const re = new RegExp(`(&(?:amp|lt|gt|quot|#\\d+);)|\\b(${escapedTerms.join('|')})\\b`, 'gi');
   const seen = new Set();
 
-  return safe.replace(re, (match) => {
-    const low = match.toLowerCase();
+  return safe.replace(re, (match, entity, termMatch) => {
+    if (entity) return entity;
+    const low = termMatch.toLowerCase();
     const hit = termMatchers.find((m) => m.label.toLowerCase() === low);
     if (!hit || seen.has(hit.id)) return match;
     seen.add(hit.id);
-    return `<button type="button" data-glossary-peek="${escapeHTML(hit.id)}" class="pb-term">${match}</button>`;
+    return `<button type="button" data-glossary-peek="${escapeHTML(hit.id)}" class="pb-term">${termMatch}</button>`;
   });
 }
 
@@ -2543,6 +2756,8 @@ function openDrawer(mode, partId = null, initialTab = 'basics') {
       document.getElementById('drawerHeading').textContent = 'New part';
 
       document.getElementById('partForm').reset();
+      const fNotesEd = document.getElementById('fNotes')?.closest('[data-md-editor]');
+      if (fNotesEd) setMdEditorMode(fNotesEd, 'edit');
       document.getElementById('fCategory').value = state.category !== 'All' ? state.category : 'Sensors';
       document.getElementById('fQuantity').value = 1;
       document.getElementById('fLowStock').value = '';
@@ -3037,7 +3252,7 @@ async function handleRestoreConfirm() {
     document.getElementById('restoreModal').classList.add('hidden');
     closeSettingsModal();
     state.pendingRestoreFile = null;
-    await Promise.all([loadConfig(), loadParts()]);
+    await Promise.all([loadConfig(), loadParts(), loadProjects(), loadGlossary(), loadShopping()]);
     showToast(`Restored ${res.parts_count} parts & ${res.images_count} photos`);
   } catch (err) {
     showToast(err.message);
@@ -3133,6 +3348,7 @@ function bindEvents() {
       status.classList.add('hidden');
       updateNavBadges();
       renderShopping();
+      if (state.consolidateOpen) refreshConsolidatePlan();
       showToast('Added to shopping list');
     } catch (err) {
       status.textContent = err.message;
@@ -3165,6 +3381,7 @@ function bindEvents() {
       document.getElementById('shopManualQty').value = 1;
       updateNavBadges();
       renderShopping();
+      if (state.consolidateOpen) refreshConsolidatePlan();
       showToast('Added to shopping list');
     } catch (err) {
       showToast(err.message);
@@ -3183,7 +3400,87 @@ function bindEvents() {
     if (!btn) return;
     state.shoppingTagFilter = btn.dataset.shopTag;
     renderShopping();
+    if (state.consolidateOpen) refreshConsolidatePlan();
   });
+
+  const consolidateBtn = document.getElementById('toggleConsolidateBtn');
+  if (consolidateBtn) {
+    consolidateBtn.addEventListener('click', () => {
+      state.consolidateOpen = !state.consolidateOpen;
+      const panel = document.getElementById('shoppingConsolidatePanel');
+      if (panel) panel.classList.toggle('hidden', !state.consolidateOpen);
+      if (state.consolidateOpen) {
+        renderConsolidatePanel();
+        refreshConsolidatePlan();
+      }
+    });
+  }
+
+  const consolidatePanel = document.getElementById('shoppingConsolidatePanel');
+  if (consolidatePanel) {
+    consolidatePanel.addEventListener('click', async (e) => {
+      const modeBtn = e.target.closest('button[data-cons-mode]');
+      if (modeBtn) {
+        state.consolidateMode = modeBtn.dataset.consMode;
+        await refreshConsolidatePlan();
+        return;
+      }
+      if (e.target.closest('#consApplyBtn')) {
+        const btn = e.target.closest('#consApplyBtn');
+        btn.disabled = true;
+        btn.textContent = 'Applying...';
+        try {
+          const res = await apiFetch('/api/shopping/optimize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tag: state.shoppingTagFilter !== 'All' ? state.shoppingTagFilter : null,
+              mode: state.consolidateMode,
+              apply: true,
+            }),
+          });
+          await loadShopping();
+          await loadProjects();
+          showToast(`Updated ${res.changes_count} ${res.changes_count === 1 ? 'item' : 'items'}`);
+        } catch (err) {
+          showToast(err.message);
+          renderConsolidatePanel();
+        }
+        return;
+      }
+      const saveShipBtn = e.target.closest('button[data-save-retailer]');
+      if (saveShipBtn) {
+        const domain = saveShipBtn.dataset.saveRetailer;
+        const existingMeta = (state.retailers || []).find((r) => r.domain === domain);
+        const row = saveShipBtn.closest('[data-retailer-row]');
+        const shipRaw = row.querySelector('[data-ret-ship]').value.trim();
+        const freeRaw = row.querySelector('[data-ret-free]').value.trim();
+        try {
+          await apiFetch(`/api/retailers/${encodeURIComponent(domain)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: (existingMeta && existingMeta.name) || domain,
+              shipping_cost: shipRaw === '' ? null : parseFloat(shipRaw),
+              free_shipping_threshold: freeRaw === '' ? null : parseFloat(freeRaw),
+              currency: (existingMeta && existingMeta.currency) || '',
+              notes: (existingMeta && existingMeta.notes) || '',
+            }),
+          });
+          state.retailers = await apiFetch('/api/retailers');
+          await refreshConsolidatePlan();
+          showToast(`Saved shipping for ${domain}`);
+        } catch (err) {
+          showToast(err.message);
+        }
+        return;
+      }
+      const openShopBtn = e.target.closest('button[data-open-shop]');
+      if (openShopBtn) {
+        openContextDrawer({ type: 'shopping', id: openShopBtn.dataset.openShop });
+      }
+    });
+  }
 
   document.getElementById('copyShoppingChecklistBtn').addEventListener('click', async () => {
     const lines = [];
@@ -3218,14 +3515,21 @@ function bindEvents() {
       const id = stepBtn.dataset.shopId;
       const item = state.shoppingItems.find((x) => x.id === id);
       if (!item) return;
-      const next = Math.max(1, Number(item.quantity || 1) + parseInt(stepBtn.dataset.shopStep, 10));
-      const updated = await apiFetch(`/api/shopping/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity: next }),
-      });
-      Object.assign(item, updated);
-      renderShopping();
+      const curQty = Number(item.quantity || 1);
+      const next = Math.max(1, curQty + parseInt(stepBtn.dataset.shopStep, 10));
+      if (next === curQty) return;
+      try {
+        const updated = await apiFetch(`/api/shopping/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quantity: next }),
+        });
+        Object.assign(item, updated);
+        renderShopping();
+        if (state.consolidateOpen) refreshConsolidatePlan();
+      } catch (err) {
+        showToast(err.message);
+      }
       return;
     }
     const boughtBtn = e.target.closest('button[data-shop-bought]');
@@ -3238,6 +3542,7 @@ function bindEvents() {
         await loadProjects();
         updateNavBadges();
         renderShopping();
+        if (state.consolidateOpen) refreshConsolidatePlan();
         showToast('Moved to Inventory');
       } catch (err) {
         showToast(err.message);
@@ -3253,6 +3558,7 @@ function bindEvents() {
         await loadProjects();
         updateNavBadges();
         renderShopping();
+        if (state.consolidateOpen) refreshConsolidatePlan();
       } catch (err) {
         showToast(err.message);
       }
@@ -3300,7 +3606,6 @@ function bindEvents() {
     const hasText = Boolean(state.search);
     clearBtn.classList.toggle('hidden', !hasText);
     hint.classList.toggle('sm:inline-flex', !hasText);
-    hint.classList.toggle('hidden', hasText);
   }
 
   searchInput.addEventListener('input', (e) => {
@@ -3432,6 +3737,88 @@ function bindEvents() {
       }
       return;
     }
+    if (e.target.closest('#ctxAddOfferBtn') && ctx.type === 'shopping') {
+      const urlInput = document.getElementById('ctxAddOfferUrl');
+      const priceInput = document.getElementById('ctxAddOfferPrice');
+      const btn = e.target.closest('#ctxAddOfferBtn');
+      const url = (urlInput ? urlInput.value : '').trim();
+      const price = (priceInput ? priceInput.value : '').trim();
+      if (!url) {
+        showToast('Paste a store link first');
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Adding...';
+      try {
+        const updated = await apiFetch(`/api/shopping/${encodeURIComponent(ctx.id)}/offers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, price, fetch_metadata: true }),
+        });
+        const idx = state.shoppingItems.findIndex((x) => x.id === ctx.id);
+        if (idx >= 0) state.shoppingItems[idx] = updated;
+        await loadProjects();
+        renderContextDrawer();
+        if (state.activePage === 'shopping') {
+          renderShopping();
+          if (state.consolidateOpen) refreshConsolidatePlan();
+        }
+        showToast('Store option added');
+      } catch (err) {
+        showToast(err.message);
+        btn.disabled = false;
+        btn.textContent = 'Add store';
+      }
+      return;
+    }
+    const selOfferBtn = e.target.closest('button[data-select-offer]');
+    if (selOfferBtn && ctx.type === 'shopping') {
+      const offerId = selOfferBtn.dataset.selectOffer;
+      try {
+        const updated = await apiFetch(
+          `/api/shopping/${encodeURIComponent(ctx.id)}/offers/${encodeURIComponent(offerId)}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_selected: true }),
+          }
+        );
+        const idx = state.shoppingItems.findIndex((x) => x.id === ctx.id);
+        if (idx >= 0) state.shoppingItems[idx] = updated;
+        await loadProjects();
+        renderContextDrawer();
+        if (state.activePage === 'shopping') {
+          renderShopping();
+          if (state.consolidateOpen) refreshConsolidatePlan();
+        }
+        showToast('Switched active store');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    const delOfferBtn = e.target.closest('button[data-delete-offer]');
+    if (delOfferBtn && ctx.type === 'shopping') {
+      const offerId = delOfferBtn.dataset.deleteOffer;
+      try {
+        const updated = await apiFetch(
+          `/api/shopping/${encodeURIComponent(ctx.id)}/offers/${encodeURIComponent(offerId)}`,
+          { method: 'DELETE' }
+        );
+        const idx = state.shoppingItems.findIndex((x) => x.id === ctx.id);
+        if (idx >= 0) state.shoppingItems[idx] = updated;
+        await loadProjects();
+        renderContextDrawer();
+        if (state.activePage === 'shopping') {
+          renderShopping();
+          if (state.consolidateOpen) refreshConsolidatePlan();
+        }
+        showToast('Store option removed');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
     if (e.target.closest('#ctxFetchShopMetaBtn') && ctx.type === 'shopping') {
       const btn = e.target.closest('#ctxFetchShopMetaBtn');
       btn.disabled = true;
@@ -3442,7 +3829,10 @@ function bindEvents() {
         if (idx >= 0) state.shoppingItems[idx] = updated;
         await loadProjects();
         renderContextDrawer();
-        if (state.activePage === 'shopping') renderShopping();
+        if (state.activePage === 'shopping') {
+          renderShopping();
+          if (state.consolidateOpen) refreshConsolidatePlan();
+        }
         showToast('Product photo and info updated');
       } catch (err) {
         showToast(err.message);
@@ -3452,13 +3842,18 @@ function bindEvents() {
       return;
     }
     if (e.target.closest('#ctxSaveShopBtn') && ctx.type === 'shopping') {
+      const nameVal = document.getElementById('ctxShopName').value.trim();
+      if (!nameVal) {
+        showToast('Item name cannot be empty');
+        return;
+      }
       const whyVal = document.getElementById('ctxShopWhy').value.trim();
       try {
         const updated = await apiFetch(`/api/shopping/${encodeURIComponent(ctx.id)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            name: document.getElementById('ctxShopName').value.trim(),
+            name: nameVal,
             price: document.getElementById('ctxShopPrice').value.trim(),
             quantity: Math.max(1, parseInt(document.getElementById('ctxShopQty').value, 10) || 1),
             tag: document.getElementById('ctxShopTag').value.trim(),
@@ -3473,8 +3868,11 @@ function bindEvents() {
         if (idx >= 0) state.shoppingItems[idx] = updated;
         await loadProjects();
         renderCurrentPage();
-        state.contextDrawer.mode = 'view';
-        renderContextDrawer();
+        if (state.activePage === 'shopping' && state.consolidateOpen) refreshConsolidatePlan();
+        if (state.contextDrawer && state.contextDrawer.id === ctx.id) {
+          state.contextDrawer.mode = 'view';
+          renderContextDrawer();
+        }
         showToast('Shopping item saved');
       } catch (err) {
         showToast(err.message);
@@ -3489,6 +3887,7 @@ function bindEvents() {
         closeContextDrawer();
         await loadProjects();
         renderCurrentPage();
+        if (state.activePage === 'shopping' && state.consolidateOpen) refreshConsolidatePlan();
         showToast('Moved to Inventory and linked in project');
       } catch (err) {
         showToast(err.message);
@@ -3502,6 +3901,7 @@ function bindEvents() {
         closeContextDrawer();
         await loadProjects();
         renderCurrentPage();
+        if (state.activePage === 'shopping' && state.consolidateOpen) refreshConsolidatePlan();
         showToast('Removed from shopping list');
       } catch (err) {
         showToast(err.message);
@@ -3923,8 +4323,10 @@ function bindEvents() {
     try {
       await apiFetch(`/api/parts/${encodeURIComponent(state.activePartId)}`, { method: 'DELETE' });
       state.parts = state.parts.filter((p) => p.id !== state.activePartId);
-      renderGrid();
       closeDrawer();
+      await loadProjects();
+      updateNavBadges();
+      renderCurrentPage();
       showToast('Part deleted');
     } catch (err) {
       showToast(err.message);
@@ -3936,7 +4338,20 @@ function bindEvents() {
     const tag = (e.target && e.target.tagName) || '';
     const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
-    if (e.key === '/' && !isTyping && !state.drawerMode && document.getElementById('settingsModal').classList.contains('hidden')) {
+    const anyModalOpen = [
+      'settingsModal',
+      'projectModal',
+      'projectActionModal',
+      'glossaryModal',
+      'lightboxModal',
+      'restoreModal',
+      'glossaryPopover',
+    ].some((id) => {
+      const el = document.getElementById(id);
+      return el && !el.classList.contains('hidden');
+    });
+
+    if (e.key === '/' && !isTyping && !state.drawerMode && !state.contextDrawer && !anyModalOpen) {
       e.preventDefault();
       searchInput.focus();
       return;

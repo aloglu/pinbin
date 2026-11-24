@@ -116,6 +116,9 @@ def restore_backup_zip_bytes(raw_bytes: bytes, settings: Settings) -> dict[str, 
 
     with zf:
         infos = zf.infolist()
+        if len(infos) > 5000:
+            raise BackupError("Backup archive contains too many entries")
+
         has_db = False
         image_infos: list[zipfile.ZipInfo] = []
 
@@ -129,6 +132,20 @@ def restore_backup_zip_bytes(raw_bytes: bytes, settings: Settings) -> dict[str, 
         if not has_db:
             raise BackupError("Backup archive is missing inventory.db")
 
+        max_total_extracted = 512 * 1024 * 1024  # 512 MB uncompressed cap
+        extracted_total = 0
+
+        def _copy_bounded(src, dst) -> None:
+            nonlocal extracted_total
+            while True:
+                chunk = src.read(65536)
+                if not chunk:
+                    break
+                extracted_total += len(chunk)
+                if extracted_total > max_total_extracted:
+                    raise BackupError("Backup archive exceeds maximum uncompressed size limit", status_code=413)
+                dst.write(chunk)
+
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(settings.data_dir)) as stage_dir_str:
             stage_dir = Path(stage_dir_str)
@@ -138,7 +155,7 @@ def restore_backup_zip_bytes(raw_bytes: bytes, settings: Settings) -> dict[str, 
 
             # Extract inventory.db
             with zf.open("inventory.db", "r") as src, staged_db.open("wb") as dst:
-                shutil.copyfileobj(src, dst)
+                _copy_bounded(src, dst)
 
             parts_count = _verify_sqlite_file(staged_db)
 
@@ -147,9 +164,9 @@ def restore_backup_zip_bytes(raw_bytes: bytes, settings: Settings) -> dict[str, 
                 fname = PurePosixPath(info.filename).name
                 dest = staged_images / fname
                 with zf.open(info, "r") as src, dest.open("wb") as dst:
-                    shutil.copyfileobj(src, dst)
+                    _copy_bounded(src, dst)
 
-            # Atomic swap under db_lock
+            # Atomic swap and schema migration under db_lock
             with db_lock:
                 # Remove stale WAL/SHM sidecars before replacing DB
                 for suffix in ("-wal", "-shm"):
@@ -167,8 +184,8 @@ def restore_backup_zip_bytes(raw_bytes: bytes, settings: Settings) -> dict[str, 
                     os.replace(settings.images_dir, old_images)
                 os.replace(staged_images, settings.images_dir)
 
-            # Ensure WAL mode and schema tables exist on restored DB
-            init_db(settings)
+                # Ensure WAL mode and schema tables exist on restored DB before releasing lock
+                init_db(settings)
 
     return {
         "status": "ok",

@@ -15,8 +15,8 @@
   <link rel="apple-touch-icon" sizes="180x180" href="https://cdn.jsdelivr.net/gh/aloglu/pinbin@main/app/static/brand/apple-touch-icon.png" />
   <link rel="preload" href="/static/fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin />
   <!-- styles.css first: Tailwind utilities (such as "hidden") must win over component styles. -->
-  <link rel="stylesheet" href="/static/styles.css?v=31" />
-  <link rel="stylesheet" href="/static/tailwind.css?v=31" />
+  <link rel="stylesheet" href="/static/styles.css?v=32" />
+  <link rel="stylesheet" href="/static/tailwind.css?v=32" />
 </head>
 <body class="font-sans antialiased min-h-screen">
 
@@ -191,12 +191,13 @@
           <h1 class="pb-page-title">Shopping</h1>
           <p class="pb-page-lede">Parts to buy, grouped by project or store, plus bins that are low.</p>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
+        <div class="flex flex-wrap items-center gap-2">
           <div class="pb-segmented inline-flex items-center rounded p-0.5" role="group" aria-label="Group shopping items">
             <button type="button" data-shop-group="project" class="h-7 px-2.5 rounded-md text-xs font-medium transition-colors">By project</button>
             <button type="button" data-shop-group="store" class="h-7 px-2.5 rounded-md text-xs font-medium transition-colors">By store</button>
             <button type="button" data-shop-group="flat" class="h-7 px-2.5 rounded-md text-xs font-medium transition-colors">All</button>
           </div>
+          <button id="toggleConsolidateBtn" type="button" class="btn-secondary h-8 px-3 text-sm">Consolidate stores</button>
           <button id="copyShoppingChecklistBtn" type="button" class="btn-secondary h-8 px-3 text-sm">Copy list</button>
         </div>
       </div>
@@ -236,6 +237,7 @@
       </details>
 
       <div id="shoppingTagFilterBar" class="hidden flex flex-wrap items-center gap-1.5 mb-5"></div>
+      <div id="shoppingConsolidatePanel" class="hidden elevated-card rounded-md p-4 mb-5"></div>
 
       <div class="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div>
@@ -595,7 +597,7 @@
   <!-- ======================================================================= -->
   <!-- 5. SETTINGS MODAL (Synced to SQLite)                                    -->
   <!-- ======================================================================= -->
-  <div id="settingsModal" class="pb-overlay hidden fixed inset-0 z-[55] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="settingsHeading">
+  <div id="settingsModal" class="pb-overlay hidden fixed inset-0 z-[55] bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="settingsHeading">
     <div class="pb-modal w-full max-w-md overflow-hidden">
       <div class="h-13 px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
         <h3 id="settingsHeading" class="text-sm font-semibold text-ink">Settings</h3>
@@ -718,7 +720,7 @@
   <!-- ======================================================================= -->
   <!-- 7. RESTORE CONFIRMATION MODAL (No window.confirm)                       -->
   <!-- ======================================================================= -->
-  <div id="restoreModal" class="pb-overlay hidden fixed inset-0 z-[65] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="restoreModalTitle">
+  <div id="restoreModal" class="pb-overlay hidden fixed inset-0 z-[65] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="restoreModalTitle">
     <div class="w-full max-w-sm pb-modal p-5 space-y-4">
       <div>
         <h3 id="restoreModalTitle" class="text-sm font-semibold text-ink">Restore from Backup?</h3>
@@ -740,7 +742,7 @@
   <!-- ======================================================================= -->
   <!-- 8. GLOSSARY ADD / EDIT MODAL                                            -->
   <!-- ======================================================================= -->
-  <div id="glossaryModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="glossaryModalHeading">
+  <div id="glossaryModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="glossaryModalHeading">
     <div class="pb-modal w-full max-w-lg overflow-hidden">
       <div class="px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
         <h3 id="glossaryModalHeading" class="text-sm font-semibold text-ink">Add Glossary Term</h3>
@@ -856,7 +858,7 @@
   <!-- ======================================================================= -->
   <!-- 11. PROJECT CREATE / EDIT MODAL                                         -->
   <!-- ======================================================================= -->
-  <div id="projectModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectModalHeading">
+  <div id="projectModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectModalHeading">
     <div class="pb-modal w-full max-w-lg overflow-hidden">
       <div class="px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
         <h3 id="projectModalHeading" class="text-sm font-semibold text-ink">New Project</h3>
@@ -913,7 +915,7 @@
   <!-- ======================================================================= -->
   <!-- 12. ADD ITEM / VARIANT TO PROJECT MODAL                                 -->
   <!-- ======================================================================= -->
-  <div id="projectActionModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectActionModalHeading">
+  <div id="projectActionModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectActionModalHeading">
     <div class="pb-modal w-full max-w-md overflow-hidden">
       <div class="px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
         <h3 id="projectActionModalHeading" class="text-sm font-semibold text-ink">Add to Project</h3>
@@ -933,8 +935,8 @@
   <div id="toast" class="fixed bottom-24 sm:bottom-5 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded bg-ink text-paper text-xs font-medium opacity-0 pointer-events-none transition-opacity duration-200 shadow-lg">
   </div>
 
-  <script src="/static/brand.js?v=31"></script>
-  <script src="/static/workbench.js?v=31"></script>
-  <script src="/static/app.js?v=31"></script>
+  <script src="/static/brand.js?v=32"></script>
+  <script src="/static/workbench.js?v=32"></script>
+  <script src="/static/app.js?v=32"></script>
 </body>
 </html>

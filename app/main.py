@@ -19,6 +19,7 @@ from app.config import CATEGORIES, Settings, load_settings
 from app.db import (
     PROJECT_STATUSES,
     add_project_item,
+    add_shopping_offer,
     create_glossary_term,
     create_part,
     create_project,
@@ -29,7 +30,9 @@ from app.db import (
     delete_project,
     delete_project_item,
     delete_project_variant,
+    delete_retailer,
     delete_shopping_item,
+    delete_shopping_offer,
     get_ai_usage_today,
     get_part,
     get_project,
@@ -40,8 +43,10 @@ from app.db import (
     list_glossary,
     list_parts,
     list_projects,
+    list_retailers,
     list_shopping_items,
     move_shopping_item_to_inventory,
+    optimize_shopping_carts,
     seed_if_empty,
     teardown_project,
     update_glossary_term,
@@ -50,7 +55,9 @@ from app.db import (
     update_project_item,
     update_project_variant,
     update_shopping_item,
+    update_shopping_offer,
     update_ui_settings,
+    upsert_retailer,
     upsert_suggested_glossary_terms,
     utc_today_str,
 )
@@ -211,6 +218,43 @@ class ShoppingItemCreate(BaseModel):
     project_id: str | None = None
     variant_id: str | None = None
     fetch_metadata: bool = False
+    offers: list[dict[str, Any]] | None = None
+
+
+class ShoppingOfferCreate(BaseModel):
+    url: str = ""
+    retailer: str = ""
+    price: str = ""
+    in_stock: str = ""
+    is_selected: bool = False
+    notes: str = ""
+    fetch_metadata: bool = False
+
+
+class ShoppingOfferPatch(BaseModel):
+    url: str | None = None
+    retailer: str | None = None
+    price: str | None = None
+    in_stock: str | None = None
+    is_selected: bool | None = None
+    notes: str | None = None
+
+
+class RetailerUpsert(BaseModel):
+    name: str = ""
+    shipping_cost: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    free_shipping_threshold: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    currency: str = ""
+    notes: str = ""
+
+
+class ShoppingOptimizeRequest(BaseModel):
+    item_ids: list[str] | None = None
+    project_id: str | None = None
+    tag: str | None = None
+    mode: str = "fewest_orders"
+    include_out_of_stock: bool = False
+    apply: bool = False
 
 
 class ShoppingItemPatch(BaseModel):
@@ -491,18 +535,24 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         except ScrapeError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         updates: dict[str, Any] = {}
-        if scraped.get("image_path"):
-            old_img = item.get("image_path") or ""
-            updates["image_path"] = scraped["image_path"]
-            if old_img and old_img != scraped["image_path"]:
-                safe_delete_image(old_img, settings.images_dir)
+        old_img = item.get("image_path") or ""
+        new_img = scraped.get("image_path") or ""
+        if new_img:
+            updates["image_path"] = new_img
         if scraped.get("price") and not item.get("price"):
             updates["price"] = scraped["price"]
         if scraped.get("retailer"):
             updates["retailer"] = scraped["retailer"]
         if scraped.get("in_stock"):
             updates["in_stock"] = scraped["in_stock"]
-        updated = update_shopping_item(settings.db_path, item_id, updates)
+        try:
+            updated = update_shopping_item(settings.db_path, item_id, updates)
+        except Exception:
+            if new_img:
+                safe_delete_image(new_img, settings.images_dir)
+            raise
+        if new_img and old_img and old_img != new_img:
+            safe_delete_image(old_img, settings.images_dir)
         return updated or item
 
     @application.patch("/api/shopping/{item_id}")
@@ -529,6 +579,90 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         if created_part is None:
             raise HTTPException(status_code=404, detail="Shopping item not found")
         return created_part
+
+    @application.post("/api/shopping/{item_id}/offers", status_code=201)
+    async def api_add_shopping_offer(item_id: str, payload: ShoppingOfferCreate) -> dict[str, Any]:
+        data = payload.model_dump()
+        fetch_meta = bool(data.pop("fetch_metadata", False))
+        scraped_img = ""
+        if fetch_meta and data.get("url"):
+            try:
+                scraped = await scrape_url(data["url"], settings.images_dir, settings.max_upload_bytes)
+                if not data.get("price") and scraped.get("price"):
+                    data["price"] = scraped["price"]
+                if not data.get("retailer") and scraped.get("retailer"):
+                    data["retailer"] = scraped["retailer"]
+                if not data.get("in_stock") and scraped.get("in_stock"):
+                    data["in_stock"] = scraped["in_stock"]
+                scraped_img = scraped.get("image_path") or ""
+            except ScrapeError:
+                pass
+        try:
+            updated = add_shopping_offer(settings.db_path, item_id, data)
+        except ValueError as exc:
+            if scraped_img:
+                safe_delete_image(scraped_img, settings.images_dir)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            if scraped_img:
+                safe_delete_image(scraped_img, settings.images_dir)
+            raise HTTPException(status_code=404, detail="Shopping item not found")
+        if scraped_img:
+            if not updated.get("image_path"):
+                updated = update_shopping_item(settings.db_path, item_id, {"image_path": scraped_img}) or updated
+            else:
+                safe_delete_image(scraped_img, settings.images_dir)
+        return updated
+
+    @application.patch("/api/shopping/{item_id}/offers/{offer_id}")
+    async def api_patch_shopping_offer(
+        item_id: str, offer_id: str, payload: ShoppingOfferPatch
+    ) -> dict[str, Any]:
+        try:
+            updated = update_shopping_offer(
+                settings.db_path, item_id, offer_id, payload.model_dump(exclude_unset=True)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Offer not found")
+        return updated
+
+    @application.delete("/api/shopping/{item_id}/offers/{offer_id}")
+    async def api_delete_shopping_offer(item_id: str, offer_id: str) -> dict[str, Any]:
+        updated = delete_shopping_offer(settings.db_path, item_id, offer_id)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Offer not found")
+        return updated
+
+    @application.post("/api/shopping/optimize")
+    async def api_optimize_shopping(payload: ShoppingOptimizeRequest) -> dict[str, Any]:
+        return optimize_shopping_carts(
+            settings.db_path,
+            item_ids=payload.item_ids,
+            project_id=payload.project_id,
+            tag=payload.tag,
+            mode=payload.mode,
+            include_out_of_stock=payload.include_out_of_stock,
+            apply=payload.apply,
+        )
+
+    @application.get("/api/retailers")
+    async def api_list_retailers() -> list[dict[str, Any]]:
+        return list_retailers(settings.db_path)
+
+    @application.put("/api/retailers/{domain}")
+    async def api_upsert_retailer(domain: str, payload: RetailerUpsert) -> dict[str, Any]:
+        try:
+            return upsert_retailer(settings.db_path, domain, payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.delete("/api/retailers/{domain}")
+    async def api_delete_retailer(domain: str) -> dict[str, str]:
+        if not delete_retailer(settings.db_path, domain):
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        return {"status": "deleted", "domain": domain}
 
     @application.post("/api/compatibility")
     async def api_compatibility_check(payload: CompatibilityRequest) -> dict[str, Any]:
@@ -563,12 +697,17 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             "location", "in_use_project", "what_it_does", "visual_tell", "warning",
             "notes", "source_url", "pinout_url", "specs",
         ]
+        def _csv_safe(val: Any) -> Any:
+            if isinstance(val, str) and val and val[0] in ("=", "+", "-", "@", "\t", "\r"):
+                return "'" + val
+            return val
+
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=fieldnames)
         writer.writeheader()
         for p in parts:
-            row = {k: p.get(k, "") for k in fieldnames}
-            row["specs"] = json.dumps(p.get("specs") or {}, ensure_ascii=False)
+            row = {k: _csv_safe(p.get(k, "")) for k in fieldnames}
+            row["specs"] = _csv_safe(json.dumps(p.get("specs") or {}, ensure_ascii=False))
             writer.writerow(row)
         # UTF-8 with BOM for clean Excel compatibility
         csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")

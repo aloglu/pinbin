@@ -81,6 +81,8 @@ class Settings:
                     f"settings are missing: {', '.join(missing)}. Set LOCAL_DEV_MODE=true only "
                     f"for local development."
                 )
+            if not self.cf_team_domain.startswith("https://"):
+                raise RuntimeError("Refusing to start: CF_TEAM_DOMAIN must start with https://")
 
     def __repr__(self) -> str:
         # Ensure AI_API_KEY and MCP_API_TOKEN are never accidentally exposed in logs or tracebacks

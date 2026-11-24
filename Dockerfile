@@ -28,7 +28,11 @@ COPY app/ ./app/
 COPY --from=css /build/app/static/tailwind.css ./app/static/tailwind.css
 COPY seed.json ./seed.json
 
-RUN mkdir -p /data/images
+RUN useradd --system --uid 10001 --create-home --home-dir /home/pinbin pinbin \
+    && mkdir -p /data/images \
+    && chown -R pinbin:pinbin /app /data
+
+USER pinbin
 
 EXPOSE 8080
 

@@ -513,11 +513,13 @@ async def check_parts_compatibility_ai(settings: Settings, parts: list[dict[str,
         status = str(parsed.get("status") or "caution").strip().lower()
         if status not in ("ok", "caution", "danger"):
             status = "caution"
+        raw_issues = parsed.get("issues")
+        raw_steps = parsed.get("wiring_steps")
         return {
             "status": status,
             "summary": str(parsed.get("summary") or "").strip(),
-            "issues": [str(x).strip() for x in (parsed.get("issues") or []) if str(x).strip()][:8],
-            "wiring_steps": [str(x).strip() for x in (parsed.get("wiring_steps") or []) if str(x).strip()][:8],
+            "issues": [str(x).strip() for x in raw_issues if str(x).strip()][:8] if isinstance(raw_issues, list) else [],
+            "wiring_steps": [str(x).strip() for x in raw_steps if str(x).strip()][:8] if isinstance(raw_steps, list) else [],
         }
     except EnrichError:
         raise

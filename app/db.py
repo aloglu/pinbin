@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import itertools
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -110,6 +112,30 @@ CREATE TABLE IF NOT EXISTS project_items (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS shopping_item_offers (
+    id TEXT PRIMARY KEY,
+    shopping_item_id TEXT NOT NULL REFERENCES shopping_items(id) ON DELETE CASCADE,
+    retailer TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    price TEXT DEFAULT '',
+    in_stock TEXT DEFAULT '',
+    is_selected INTEGER NOT NULL DEFAULT 0,
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS retailers (
+    domain TEXT PRIMARY KEY,
+    name TEXT DEFAULT '',
+    shipping_cost REAL DEFAULT NULL,
+    free_shipping_threshold REAL DEFAULT NULL,
+    currency TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 PROJECT_STATUSES = ("planning", "active", "completed", "archived")
@@ -203,7 +229,42 @@ def init_db(settings: Settings) -> None:
                     conn.execute(f"ALTER TABLE shopping_items ADD COLUMN {col_name} {col_def}")
 
             _migrate_legacy_in_use_projects(conn)
+            _migrate_shopping_item_offers(conn)
             _seed_glossary_if_empty(conn)
+
+
+def _migrate_shopping_item_offers(conn: sqlite3.Connection) -> None:
+    """Backfill initial selected offer for existing shopping_items that have a url or retailer."""
+    rows = conn.execute(
+        """
+        SELECT si.id, si.retailer, si.url, si.price, si.in_stock, si.created_at, si.updated_at
+        FROM shopping_items si
+        WHERE NOT EXISTS (
+            SELECT 1 FROM shopping_item_offers o WHERE o.shopping_item_id = si.id
+        )
+        AND (TRIM(COALESCE(si.url, '')) != '' OR TRIM(COALESCE(si.retailer, '')) != '')
+        """
+    ).fetchall()
+    for r in rows:
+        url = str(r["url"] or "").strip()
+        retailer = str(r["retailer"] or "").strip() or _extract_retailer(url)
+        conn.execute(
+            """
+            INSERT INTO shopping_item_offers (
+                id, shopping_item_id, retailer, url, price, in_stock, is_selected, notes, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, '', ?, ?)
+            """,
+            (
+                uuid.uuid4().hex,
+                r["id"],
+                retailer[:80],
+                url,
+                str(r["price"] or "").strip()[:40],
+                str(r["in_stock"] or "").strip().lower(),
+                r["created_at"],
+                r["updated_at"],
+            ),
+        )
 
 
 def _migrate_legacy_in_use_projects(conn: sqlite3.Connection) -> None:
@@ -538,10 +599,10 @@ def create_part(db_path: Path, data: dict[str, Any]) -> dict[str, Any]:
                     str(data.get("visual_tell", "") or "").strip(),
                     str(data.get("warning", "") or "").strip(),
                     str(data.get("notes", "") or "").strip(),
-                    str(data.get("source_url", "") or "").strip(),
+                    _validate_http_url(data.get("source_url", "")),
                     str(data.get("image_path", "") or "").strip(),
                     str(data.get("pinout_image_path", "") or "").strip(),
-                    str(data.get("pinout_url", "") or "").strip(),
+                    _validate_http_url(data.get("pinout_url", "")),
                     specs_json,
                     now,
                     now,
@@ -570,6 +631,8 @@ def update_part(db_path: Path, part_id: str, updates: dict[str, Any]) -> dict[st
             filtered[key] = name_val
         elif key == "specs":
             filtered[key] = json.dumps(_normalize_specs(val))
+        elif key in ("source_url", "pinout_url"):
+            filtered[key] = _validate_http_url(val)
         else:
             filtered[key] = str(val or "").strip()
 
@@ -770,40 +833,21 @@ def _extract_retailer(url: str) -> str:
         return ""
 
 
+def _validate_http_url(url: str) -> str:
+    clean = str(url or "").strip()
+    if not clean:
+        return ""
+    parsed = urlparse(clean)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        raise ValueError("URL must start with http:// or https://")
+    return clean
+
+
 def _parse_price_amount(price_str: str) -> tuple[float | None, str]:
-    """Parse a human-formatted price string like '232.36 TL' or '1,107.25 TL + KDV'."""
-    raw = str(price_str or "").strip()
-    if not raw:
-        return None, ""
-    m = re.search(r"([0-9][0-9.,]*)", raw)
-    if not m:
-        return None, ""
-    num_s = m.group(1)
-    # Handle European/Turkish format like 1.107,25 vs US 1,107.25
-    if "," in num_s and "." in num_s:
-        if num_s.rfind(",") > num_s.rfind("."):
-            num_s = num_s.replace(".", "").replace(",", ".")
-        else:
-            num_s = num_s.replace(",", "")
-    elif "," in num_s:
-        parts_comma = num_s.split(",")
-        if len(parts_comma[-1]) == 2:
-            num_s = num_s.replace(",", ".")
-        else:
-            num_s = num_s.replace(",", "")
-    try:
-        val = float(num_s)
-    except ValueError:
-        return None, ""
-    up = raw.upper()
-    if "TL" in up or "TRY" in up or "₺" in raw:
+    """Parse a human-formatted price string via the unified parse_price helper."""
+    val, cur = parse_price(price_str)
+    if cur == "TRY":
         cur = "TL"
-    elif "USD" in up or "$" in raw:
-        cur = "USD"
-    elif "EUR" in up or "€" in raw:
-        cur = "EUR"
-    else:
-        cur = ""
     return val, cur
 
 
@@ -825,9 +869,9 @@ def _sync_project_in_use_flags(conn: sqlite3.Connection, project_id: str) -> Non
     if status != "active":
         return
 
-    # Find selected variant (if any)
+    # Find selected variant (fall back to first variant if variants exist, matching _hydrate_project)
     sel_var = conn.execute(
-        "SELECT id FROM project_variants WHERE project_id = ? AND is_selected = 1 LIMIT 1",
+        "SELECT id FROM project_variants WHERE project_id = ? ORDER BY is_selected DESC, sort_order ASC, created_at ASC LIMIT 1",
         (project_id,),
     ).fetchone()
     sel_vid = sel_var["id"] if sel_var else None
@@ -1317,6 +1361,60 @@ def teardown_project(db_path: Path, project_name: str) -> int:
             return cur.rowcount
 
 
+def _normalize_domain(raw: str) -> str:
+    text = str(raw or "").strip().lower()
+    if not text:
+        return ""
+    if "://" in text:
+        try:
+            host = (urlparse(text).hostname or "").lower()
+            text = host
+        except Exception:
+            pass
+    else:
+        text = text.split("/", 1)[0].split(":", 1)[0]
+    if text.startswith("www."):
+        text = text[4:]
+    return text.strip()[:80]
+
+
+def _sync_shopping_item_from_selected_offer(conn: sqlite3.Connection, item_id: str) -> None:
+    """Keep shopping_items.(retailer, url, price, in_stock) synced with the selected offer."""
+    offers = conn.execute(
+        """
+        SELECT * FROM shopping_item_offers
+        WHERE shopping_item_id = ?
+        ORDER BY is_selected DESC, created_at ASC, rowid ASC
+        """,
+        (item_id,),
+    ).fetchall()
+    now = utc_now_iso()
+    if not offers:
+        conn.execute(
+            "UPDATE shopping_items SET retailer = '', url = '', price = '', in_stock = '', updated_at = ? WHERE id = ?",
+            (now, item_id),
+        )
+        return
+    chosen = offers[0]
+    if not chosen["is_selected"]:
+        conn.execute("UPDATE shopping_item_offers SET is_selected = 1 WHERE id = ?", (chosen["id"],))
+    conn.execute(
+        """
+        UPDATE shopping_items
+        SET retailer = ?, url = ?, price = ?, in_stock = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            str(chosen["retailer"] or "").strip()[:80],
+            str(chosen["url"] or "").strip(),
+            str(chosen["price"] or "").strip()[:40],
+            str(chosen["in_stock"] or "").strip().lower(),
+            now,
+            item_id,
+        ),
+    )
+
+
 def _hydrate_shopping_item(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     item = _row_to_dict(row)
     if not item.get("retailer") and item.get("url"):
@@ -1333,6 +1431,22 @@ def _hydrate_shopping_item(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[s
         (item["id"],),
     ).fetchall()
     item["project_links"] = [dict(lk) for lk in links]
+    offer_rows = conn.execute(
+        """
+        SELECT id, shopping_item_id, retailer, url, price, in_stock, is_selected, notes, created_at, updated_at
+        FROM shopping_item_offers
+        WHERE shopping_item_id = ?
+        ORDER BY is_selected DESC, created_at ASC, rowid ASC
+        """,
+        (item["id"],),
+    ).fetchall()
+    item["offers"] = [
+        {
+            **dict(o),
+            "is_selected": bool(o["is_selected"]),
+        }
+        for o in offer_rows
+    ]
     return item
 
 
@@ -1354,7 +1468,7 @@ def create_shopping_item(db_path: Path, data: dict[str, Any]) -> dict[str, Any]:
     item_id = str(data.get("id") or uuid.uuid4().hex).strip()
     now = utc_now_iso()
     qty = max(1, int(data.get("quantity", 1) or 1))
-    url = str(data.get("url", "") or "").strip()
+    url = _validate_http_url(data.get("url", ""))
     retailer = str(data.get("retailer", "") or "").strip() or _extract_retailer(url)
     cat = str(data.get("category", "") or "").strip()
     if cat and cat not in CATEGORIES:
@@ -1394,6 +1508,73 @@ def create_shopping_item(db_path: Path, data: dict[str, Any]) -> dict[str, Any]:
                     now,
                 ),
             )
+            raw_offers = data.get("offers")
+            offer_list: list[dict[str, Any]] = []
+            if isinstance(raw_offers, list):
+                for o in raw_offers:
+                    if isinstance(o, dict):
+                        o_url = _validate_http_url(o.get("url", ""))
+                        o_ret = str(o.get("retailer", "") or "").strip() or _extract_retailer(o_url)
+                        if not o_url and not o_ret:
+                            continue
+                        o_stock = str(o.get("in_stock", "") or "").strip().lower()
+                        if o_stock not in ("in_stock", "out_of_stock", ""):
+                            o_stock = ""
+                        offer_list.append(
+                            {
+                                "retailer": o_ret[:80],
+                                "url": o_url,
+                                "price": str(o.get("price", "") or "").strip()[:40],
+                                "in_stock": o_stock,
+                                "is_selected": bool(o.get("is_selected", False)),
+                                "notes": str(o.get("notes", "") or "").strip()[:200],
+                            }
+                        )
+            if url or retailer:
+                already_has_primary = any(
+                    (url and o["url"] == url) or (not url and retailer and o["retailer"].lower() == retailer.lower())
+                    for o in offer_list
+                )
+                if not already_has_primary:
+                    offer_list.insert(
+                        0,
+                        {
+                            "retailer": retailer[:80],
+                            "url": url,
+                            "price": str(data.get("price", "") or "").strip()[:40],
+                            "in_stock": in_stock,
+                            "is_selected": not any(o["is_selected"] for o in offer_list),
+                            "notes": "",
+                        },
+                    )
+            if offer_list:
+                if not any(o["is_selected"] for o in offer_list):
+                    offer_list[0]["is_selected"] = True
+                selected_seen = False
+                for o in offer_list:
+                    sel = 1 if (o["is_selected"] and not selected_seen) else 0
+                    if sel:
+                        selected_seen = True
+                    conn.execute(
+                        """
+                        INSERT INTO shopping_item_offers (
+                            id, shopping_item_id, retailer, url, price, in_stock, is_selected, notes, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            uuid.uuid4().hex,
+                            item_id,
+                            o["retailer"],
+                            o["url"],
+                            o["price"],
+                            o["in_stock"],
+                            sel,
+                            o["notes"],
+                            now,
+                            now,
+                        ),
+                    )
+                _sync_shopping_item_from_selected_offer(conn, item_id)
             row = conn.execute("SELECT * FROM shopping_items WHERE id = ?", (item_id,)).fetchone()
             return _hydrate_shopping_item(conn, row)
 
@@ -1432,6 +1613,8 @@ def update_shopping_item(db_path: Path, item_id: str, updates: dict[str, Any]) -
         elif k == "in_stock":
             sv = str(v or "").strip().lower()
             filtered[k] = sv if sv in ("in_stock", "out_of_stock", "") else ""
+        elif k == "url":
+            filtered[k] = _validate_http_url(v)
         else:
             filtered[k] = str(v or "").strip()
 
@@ -1453,6 +1636,59 @@ def update_shopping_item(db_path: Path, item_id: str, updates: dict[str, Any]) -
                 f"UPDATE shopping_items SET {set_clause} WHERE id = ?",
                 list(filtered.values()) + [item_id],
             )
+            offer_sync_fields = {"url", "retailer", "price", "in_stock"}
+            if offer_sync_fields.intersection(filtered.keys()):
+                updated_row = conn.execute("SELECT * FROM shopping_items WHERE id = ?", (item_id,)).fetchone()
+                sel_offer = conn.execute(
+                    """
+                    SELECT id FROM shopping_item_offers
+                    WHERE shopping_item_id = ?
+                    ORDER BY is_selected DESC, created_at ASC, rowid ASC
+                    LIMIT 1
+                    """,
+                    (item_id,),
+                ).fetchone()
+                now = utc_now_iso()
+                clean_ret = str(updated_row["retailer"] or "").strip()[:80]
+                clean_url = str(updated_row["url"] or "").strip()
+                if sel_offer:
+                    if not clean_ret and not clean_url:
+                        conn.execute("DELETE FROM shopping_item_offers WHERE id = ?", (sel_offer["id"],))
+                        _sync_shopping_item_from_selected_offer(conn, item_id)
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE shopping_item_offers
+                            SET retailer = ?, url = ?, price = ?, in_stock = ?, is_selected = 1, updated_at = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                clean_ret,
+                                clean_url,
+                                str(updated_row["price"] or "").strip()[:40],
+                                str(updated_row["in_stock"] or "").strip().lower(),
+                                now,
+                                sel_offer["id"],
+                            ),
+                        )
+                elif clean_url or clean_ret:
+                    conn.execute(
+                        """
+                        INSERT INTO shopping_item_offers (
+                            id, shopping_item_id, retailer, url, price, in_stock, is_selected, notes, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, 1, '', ?, ?)
+                        """,
+                        (
+                            uuid.uuid4().hex,
+                            item_id,
+                            str(updated_row["retailer"] or "").strip()[:80],
+                            str(updated_row["url"] or "").strip(),
+                            str(updated_row["price"] or "").strip()[:40],
+                            str(updated_row["in_stock"] or "").strip().lower(),
+                            now,
+                            now,
+                        ),
+                    )
             row = conn.execute("SELECT * FROM shopping_items WHERE id = ?", (item_id,)).fetchone()
             return _hydrate_shopping_item(conn, row)
 
@@ -1613,3 +1849,571 @@ def import_parts_from_rows(db_path: Path, rows: list[dict[str, Any]]) -> int:
                     )
                 count += 1
     return count
+
+
+# =============================================================================
+# Shopping item offers, retailer metadata, and cart consolidation optimizer
+# =============================================================================
+
+
+def add_shopping_offer(db_path: Path, item_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    url = _validate_http_url(data.get("url", ""))
+    retailer = str(data.get("retailer", "") or "").strip() or _extract_retailer(url)
+    if not url and not retailer:
+        raise ValueError("Offer must include a URL or retailer")
+    price = str(data.get("price", "") or "").strip()[:40]
+    in_stock = str(data.get("in_stock", "") or "").strip().lower()
+    if in_stock not in ("in_stock", "out_of_stock", ""):
+        in_stock = ""
+    notes = str(data.get("notes", "") or "").strip()[:200]
+    want_selected = bool(data.get("is_selected", False))
+    now = utc_now_iso()
+
+    with db_lock:
+        with get_connection(db_path) as conn:
+            item_row = conn.execute("SELECT id FROM shopping_items WHERE id = ?", (item_id,)).fetchone()
+            if not item_row:
+                return None
+            existing_count = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM shopping_item_offers WHERE shopping_item_id = ?",
+                (item_id,),
+            ).fetchone()["cnt"]
+            select_flag = 1 if (want_selected or existing_count == 0) else 0
+            if select_flag:
+                conn.execute(
+                    "UPDATE shopping_item_offers SET is_selected = 0 WHERE shopping_item_id = ?",
+                    (item_id,),
+                )
+            offer_id = uuid.uuid4().hex
+            conn.execute(
+                """
+                INSERT INTO shopping_item_offers (
+                    id, shopping_item_id, retailer, url, price, in_stock, is_selected, notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (offer_id, item_id, retailer[:80], url, price, in_stock, select_flag, notes, now, now),
+            )
+            if select_flag:
+                _sync_shopping_item_from_selected_offer(conn, item_id)
+            row = conn.execute("SELECT * FROM shopping_items WHERE id = ?", (item_id,)).fetchone()
+            return _hydrate_shopping_item(conn, row)
+
+
+def update_shopping_offer(
+    db_path: Path, item_id: str, offer_id: str, updates: dict[str, Any]
+) -> dict[str, Any] | None:
+    allowed = {"retailer", "url", "price", "in_stock", "is_selected", "notes"}
+    filtered: dict[str, Any] = {}
+    for k, v in updates.items():
+        if k not in allowed:
+            continue
+        if k == "is_selected":
+            filtered[k] = 1 if bool(v) else 0
+        elif k == "in_stock":
+            sv = str(v or "").strip().lower()
+            filtered[k] = sv if sv in ("in_stock", "out_of_stock", "") else ""
+        elif k == "price":
+            filtered[k] = str(v or "").strip()[:40]
+        elif k == "retailer":
+            filtered[k] = str(v or "").strip()[:80]
+        elif k == "notes":
+            filtered[k] = str(v or "").strip()[:200]
+        elif k == "url":
+            filtered[k] = _validate_http_url(v)
+        else:
+            filtered[k] = str(v or "").strip()
+
+    if "url" in filtered and "retailer" not in filtered:
+        derived = _extract_retailer(filtered["url"])
+        if derived:
+            filtered["retailer"] = derived
+
+    with db_lock:
+        with get_connection(db_path) as conn:
+            offer = conn.execute(
+                "SELECT * FROM shopping_item_offers WHERE id = ? AND shopping_item_id = ?",
+                (offer_id, item_id),
+            ).fetchone()
+            if not offer:
+                return None
+            if filtered:
+                if filtered.get("is_selected") == 1:
+                    conn.execute(
+                        "UPDATE shopping_item_offers SET is_selected = 0 WHERE shopping_item_id = ?",
+                        (item_id,),
+                    )
+                filtered["updated_at"] = utc_now_iso()
+                set_clause = ", ".join(f"{k} = ?" for k in filtered.keys())
+                conn.execute(
+                    f"UPDATE shopping_item_offers SET {set_clause} WHERE id = ? AND shopping_item_id = ?",
+                    list(filtered.values()) + [offer_id, item_id],
+                )
+                _sync_shopping_item_from_selected_offer(conn, item_id)
+            row = conn.execute("SELECT * FROM shopping_items WHERE id = ?", (item_id,)).fetchone()
+            return _hydrate_shopping_item(conn, row) if row else None
+
+
+def delete_shopping_offer(db_path: Path, item_id: str, offer_id: str) -> dict[str, Any] | None:
+    with db_lock:
+        with get_connection(db_path) as conn:
+            offer = conn.execute(
+                "SELECT id FROM shopping_item_offers WHERE id = ? AND shopping_item_id = ?",
+                (offer_id, item_id),
+            ).fetchone()
+            if not offer:
+                return None
+            conn.execute(
+                "DELETE FROM shopping_item_offers WHERE id = ? AND shopping_item_id = ?",
+                (offer_id, item_id),
+            )
+            _sync_shopping_item_from_selected_offer(conn, item_id)
+            row = conn.execute("SELECT * FROM shopping_items WHERE id = ?", (item_id,)).fetchone()
+            return _hydrate_shopping_item(conn, row) if row else None
+
+
+def list_retailers(db_path: Path) -> list[dict[str, Any]]:
+    with db_lock:
+        with get_connection(db_path) as conn:
+            rows = conn.execute("SELECT * FROM retailers ORDER BY domain ASC").fetchall()
+            return [dict(r) for r in rows]
+
+
+def upsert_retailer(db_path: Path, domain: str, data: dict[str, Any]) -> dict[str, Any]:
+    norm = _normalize_domain(domain)
+    if not norm:
+        raise ValueError("Retailer domain cannot be empty")
+
+    def _opt_float(val: Any) -> float | None:
+        if val is None or val == "":
+            return None
+        f = float(val)
+        if not math.isfinite(f) or f < 0:
+            raise ValueError("Shipping values must be finite non-negative numbers")
+        return round(f, 2)
+
+    name = str(data.get("name", "") or "").strip()[:80]
+    shipping_cost = _opt_float(data.get("shipping_cost"))
+    free_threshold = _opt_float(data.get("free_shipping_threshold"))
+    currency = str(data.get("currency", "") or "").strip().upper()[:10]
+    notes = str(data.get("notes", "") or "").strip()[:200]
+    now = utc_now_iso()
+
+    with db_lock:
+        with get_connection(db_path) as conn:
+            existing = conn.execute("SELECT domain FROM retailers WHERE domain = ?", (norm,)).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE retailers
+                    SET name = ?, shipping_cost = ?, free_shipping_threshold = ?, currency = ?, notes = ?, updated_at = ?
+                    WHERE domain = ?
+                    """,
+                    (name, shipping_cost, free_threshold, currency, notes, now, norm),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO retailers (
+                        domain, name, shipping_cost, free_shipping_threshold, currency, notes, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (norm, name, shipping_cost, free_threshold, currency, notes, now, now),
+                )
+            row = conn.execute("SELECT * FROM retailers WHERE domain = ?", (norm,)).fetchone()
+            return dict(row)
+
+
+def delete_retailer(db_path: Path, domain: str) -> bool:
+    norm = _normalize_domain(domain)
+    if not norm:
+        return False
+    with db_lock:
+        with get_connection(db_path) as conn:
+            cur = conn.execute("DELETE FROM retailers WHERE domain = ?", (norm,))
+            return cur.rowcount > 0
+
+
+def parse_price(price_str: str) -> tuple[float | None, str]:
+    """Parse common price strings like '249,90 TL', '₺1.249,50', '$12.50', '€8.99'."""
+    s = str(price_str or "").strip()
+    if not s:
+        return None, ""
+    upper = s.upper()
+    currency = ""
+    if "₺" in s or "TRY" in upper or re.search(r"\bTL\b", upper):
+        currency = "TRY"
+    elif "$" in s or "USD" in upper:
+        currency = "USD"
+    elif "€" in s or "EUR" in upper:
+        currency = "EUR"
+    elif "£" in s or "GBP" in upper:
+        currency = "GBP"
+
+    m = re.search(r"\d[\d.,]*", s)
+    if not m:
+        return None, currency
+    num = m.group(0)
+    if "." in num and "," in num:
+        if num.rfind(",") > num.rfind("."):
+            num = num.replace(".", "").replace(",", ".")
+        else:
+            num = num.replace(",", "")
+    elif "," in num:
+        parts = num.split(",")
+        if len(parts) == 2 and len(parts[1]) in (1, 2):
+            num = f"{parts[0]}.{parts[1]}"
+        else:
+            num = num.replace(",", "")
+    elif "." in num:
+        parts = num.split(".")
+        # Multiple dots (e.g. '1.200.000') are thousands separators.
+        # A single dot with 3 trailing digits is only a thousands separator if integer part != '0'
+        # (so '$0.125' stays 0.125) and currency is not USD/GBP (where '.' is decimal).
+        if len(parts) > 2 or (
+            len(parts) == 2
+            and len(parts[1]) == 3
+            and parts[0] != "0"
+            and 1 <= len(parts[0]) <= 3
+            and currency not in ("USD", "GBP")
+        ):
+            num = num.replace(".", "")
+
+    try:
+        val = float(num)
+        return (round(val, 4) if val < 1 else round(val, 2)), currency
+    except ValueError:
+        return None, currency
+
+
+def _build_cart_plan_summary(
+    assignments: list[tuple[dict[str, Any], dict[str, Any]]],
+    retailer_meta: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    by_store: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for item, offer in assignments:
+        store = _normalize_domain(offer.get("retailer") or offer.get("url") or "") or (offer.get("retailer") or "Unknown")
+        by_store.setdefault(store, []).append((item, offer))
+
+    carts: list[dict[str, Any]] = []
+    grand_subtotal = 0.0
+    grand_shipping = 0.0
+    all_priced = True
+    currencies: set[str] = set()
+
+    for store in sorted(by_store.keys()):
+        entries = by_store[store]
+        meta = retailer_meta.get(store, {})
+        subtotal = 0.0
+        store_priced = True
+        cart_items: list[dict[str, Any]] = []
+
+        for item, offer in entries:
+            unit_price, cur = parse_price(offer.get("price", ""))
+            if cur:
+                currencies.add(cur)
+            qty = max(1, int(item.get("quantity") or 1))
+            line_total = round(unit_price * qty, 2) if unit_price is not None else None
+            if line_total is not None:
+                subtotal = round(subtotal + line_total, 2)
+            else:
+                store_priced = False
+                all_priced = False
+            cart_items.append(
+                {
+                    "item_id": item["id"],
+                    "name": item["name"],
+                    "quantity": qty,
+                    "offer_id": offer["id"],
+                    "price": offer.get("price", ""),
+                    "unit_price": unit_price,
+                    "line_total": line_total,
+                    "in_stock": offer.get("in_stock", ""),
+                    "url": offer.get("url", ""),
+                }
+            )
+
+        if meta.get("currency"):
+            currencies.add(str(meta["currency"]).upper())
+
+        shipping_cost = meta.get("shipping_cost")
+        free_threshold = meta.get("free_shipping_threshold")
+        applied_shipping = 0.0
+        free_shipping_remaining: float | None = None
+        if shipping_cost is not None:
+            if free_threshold is not None and store_priced and subtotal >= free_threshold:
+                applied_shipping = 0.0
+                free_shipping_remaining = 0.0
+            else:
+                applied_shipping = round(float(shipping_cost), 2)
+                if free_threshold is not None and store_priced:
+                    free_shipping_remaining = round(max(0.0, float(free_threshold) - subtotal), 2)
+
+        grand_subtotal = round(grand_subtotal + subtotal, 2)
+        grand_shipping = round(grand_shipping + applied_shipping, 2)
+
+        carts.append(
+            {
+                "retailer": store,
+                "display_name": meta.get("name") or store,
+                "item_count": len(cart_items),
+                "subtotal": subtotal if store_priced else None,
+                "shipping_cost": applied_shipping if shipping_cost is not None else None,
+                "free_shipping_threshold": free_threshold,
+                "free_shipping_remaining": free_shipping_remaining,
+                "total": round(subtotal + applied_shipping, 2) if store_priced else None,
+                "items": cart_items,
+            }
+        )
+
+    carts.sort(key=lambda c: (-c["item_count"], c["retailer"]))
+    mixed_currencies = len(currencies) > 1
+    comparable_totals = all_priced and bool(carts) and not mixed_currencies
+    return {
+        "store_count": len(carts),
+        "carts": carts,
+        "subtotal": grand_subtotal if comparable_totals else None,
+        "shipping_total": grand_shipping if not mixed_currencies else None,
+        "total": round(grand_subtotal + grand_shipping, 2) if comparable_totals else None,
+        "currency": next(iter(currencies)) if len(currencies) == 1 else "",
+        "all_priced": all_priced,
+        "mixed_currencies": mixed_currencies,
+    }
+
+
+def optimize_shopping_carts(
+    db_path: Path,
+    *,
+    item_ids: list[str] | None = None,
+    project_id: str | None = None,
+    tag: str | None = None,
+    mode: str = "fewest_orders",
+    include_out_of_stock: bool = False,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Compute an optimal retailer assignment across shopping items."""
+    clean_mode = "lowest_cost" if mode == "lowest_cost" else "fewest_orders"
+    all_items = list_shopping_items(db_path)
+    retailers_list = list_retailers(db_path)
+    retailer_meta = {r["domain"]: r for r in retailers_list}
+
+    # Filter items by requested scope
+    items = all_items
+    if item_ids:
+        wanted = set(item_ids)
+        items = [it for it in items if it["id"] in wanted]
+    if project_id:
+        items = [
+            it for it in items
+            if any(lk.get("project_id") == project_id for lk in (it.get("project_links") or []))
+        ]
+    if tag and tag.strip() and tag.strip().lower() != "all":
+        t_low = tag.strip().lower()
+        def _matches_tag(it: dict[str, Any]) -> bool:
+            item_tag = (it.get("tag") or "").strip().lower()
+            links = it.get("project_links") or []
+            if t_low == "general" and not item_tag and not links:
+                return True
+            if item_tag == t_low:
+                return True
+            return any((lk.get("project_name") or "").strip().lower() == t_low for lk in links)
+        items = [it for it in items if _matches_tag(it)]
+
+    assignable: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    unassigned_items: list[dict[str, Any]] = []
+    current_assignments: list[tuple[dict[str, Any], dict[str, Any]]] = []
+
+    for it in items:
+        offers = it.get("offers") or []
+        if not offers:
+            unassigned_items.append({"item_id": it["id"], "name": it["name"], "quantity": it["quantity"]})
+            continue
+        selected = next((o for o in offers if o.get("is_selected")), offers[0])
+        current_assignments.append((it, selected))
+
+        if include_out_of_stock:
+            candidates = list(offers)
+        else:
+            in_stock_candidates = [o for o in offers if o.get("in_stock") != "out_of_stock"]
+            candidates = in_stock_candidates if in_stock_candidates else list(offers)
+        assignable.append((it, candidates))
+
+    def _offer_store(offer: dict[str, Any]) -> str:
+        return _normalize_domain(offer.get("retailer") or offer.get("url") or "") or (offer.get("retailer") or "Unknown")
+
+    def _offer_cost(item: dict[str, Any], offer: dict[str, Any]) -> float:
+        p, _ = parse_price(offer.get("price", ""))
+        if p is None:
+            return 1e9
+        return round(p * max(1, int(item.get("quantity") or 1)), 2)
+
+    def _evaluate_subset(
+        stores: set[str],
+    ) -> tuple[int, float, int, list[tuple[dict[str, Any], dict[str, Any]]]] | None:
+        chosen: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        subtotals: dict[str, float] = {}
+        store_all_priced: dict[str, bool] = {}
+        unpriced_penalty = 0
+        for item, cands in assignable:
+            matching = [o for o in cands if _offer_store(o) in stores]
+            if not matching:
+                return None
+            # Prefer in_stock, then lowest price (priced beats unpriced), then currently selected
+            best = min(
+                matching,
+                key=lambda o: (
+                    1 if o.get("in_stock") == "out_of_stock" else 0,
+                    _offer_cost(item, o),
+                    0 if o.get("is_selected") else 1,
+                ),
+            )
+            chosen.append((item, best))
+            st = _offer_store(best)
+            p, _ = parse_price(best.get("price", ""))
+            if p is not None:
+                subtotals[st] = subtotals.get(st, 0.0) + p * max(1, int(item.get("quantity") or 1))
+                store_all_priced.setdefault(st, True)
+            else:
+                unpriced_penalty += 1
+                store_all_priced[st] = False
+
+        used_stores = {_offer_store(o) for _, o in chosen}
+        total_cost = sum(subtotals.values())
+        for st in used_stores:
+            meta = retailer_meta.get(st, {})
+            sc = meta.get("shipping_cost")
+            ft = meta.get("free_shipping_threshold")
+            if sc is not None:
+                if ft is None or not store_all_priced.get(st, False) or subtotals.get(st, 0.0) < float(ft):
+                    total_cost += float(sc)
+        return (unpriced_penalty, round(total_cost, 2), len(used_stores), chosen)
+
+    all_stores = sorted({_offer_store(o) for _, cands in assignable for o in cands})
+    best_assignments: list[tuple[dict[str, Any], dict[str, Any]]] = list(current_assignments)
+
+    if assignable and all_stores:
+        if len(all_stores) <= 12:
+            best_score: tuple[Any, ...] | None = None
+            for k in range(1, len(all_stores) + 1):
+                found_at_k = False
+                for combo in itertools.combinations(all_stores, k):
+                    res = _evaluate_subset(set(combo))
+                    if res is None:
+                        continue
+                    found_at_k = True
+                    unpriced, cost, n_stores, chosen = res
+                    changes = sum(1 for _, o in chosen if not o.get("is_selected"))
+                    score = (
+                        (n_stores, unpriced, cost, changes)
+                        if clean_mode == "fewest_orders"
+                        else (unpriced, cost, n_stores, changes)
+                    )
+                    if best_score is None or score < best_score:
+                        best_score = score
+                        best_assignments = chosen
+                if clean_mode == "fewest_orders" and found_at_k:
+                    break
+        else:
+            # Greedy set cover fallback for large retailer counts
+            remaining = list(range(len(assignable)))
+            picked_stores: set[str] = set()
+            while remaining:
+                best_store = max(
+                    all_stores,
+                    key=lambda st: sum(
+                        1 for idx in remaining if any(_offer_store(o) == st for o in assignable[idx][1])
+                    ),
+                )
+                picked_stores.add(best_store)
+                remaining = [
+                    idx for idx in remaining
+                    if not any(_offer_store(o) == best_store for o in assignable[idx][1])
+                ]
+            res = _evaluate_subset(picked_stores)
+            if clean_mode == "lowest_cost":
+                cheapest_stores = {
+                    _offer_store(
+                        min(
+                            cands,
+                            key=lambda o: (
+                                1 if o.get("in_stock") == "out_of_stock" else 0,
+                                _offer_cost(it, o),
+                                0 if o.get("is_selected") else 1,
+                            ),
+                        )
+                    )
+                    for it, cands in assignable
+                }
+                res_cheap = _evaluate_subset(cheapest_stores)
+                if res_cheap is not None and (res is None or (res_cheap[0], res_cheap[1]) < (res[0], res[1])):
+                    res = res_cheap
+            if res is not None:
+                best_assignments = res[3]
+
+    current_summary = _build_cart_plan_summary(current_assignments, retailer_meta)
+    recommended_summary = _build_cart_plan_summary(best_assignments, retailer_meta)
+
+    changes_list: list[dict[str, Any]] = []
+    current_by_item = {it["id"]: off for it, off in current_assignments}
+    for it, off in best_assignments:
+        cur = current_by_item.get(it["id"])
+        if cur and cur["id"] != off["id"]:
+            changes_list.append(
+                {
+                    "item_id": it["id"],
+                    "name": it["name"],
+                    "from_offer_id": cur["id"],
+                    "from_retailer": _offer_store(cur),
+                    "from_price": cur.get("price", ""),
+                    "to_offer_id": off["id"],
+                    "to_retailer": _offer_store(off),
+                    "to_price": off.get("price", ""),
+                }
+            )
+
+    # Straggler detection: stores with 1-2 items when another store has strictly more items
+    stragglers: list[dict[str, Any]] = []
+    rec_carts = recommended_summary["carts"]
+    if len(rec_carts) >= 2:
+        primary_store = rec_carts[0]["retailer"]
+        primary_count = rec_carts[0]["item_count"]
+        for c in rec_carts[1:]:
+            if c["item_count"] <= 2 and c["item_count"] < primary_count:
+                stragglers.append(
+                    {
+                        "retailer": c["retailer"],
+                        "item_count": c["item_count"],
+                        "primary_retailer": primary_store,
+                        "items": [{"item_id": x["item_id"], "name": x["name"]} for x in c["items"]],
+                        "suggestion": (
+                            f"Only {c['item_count']} {'item' if c['item_count'] == 1 else 'items'} on {c['retailer']} — "
+                            f"check if available on {primary_store} to eliminate an extra order."
+                        ),
+                    }
+                )
+
+    applied = False
+    if apply and changes_list:
+        with db_lock:
+            with get_connection(db_path) as conn:
+                for ch in changes_list:
+                    conn.execute(
+                        "UPDATE shopping_item_offers SET is_selected = 0 WHERE shopping_item_id = ?",
+                        (ch["item_id"],),
+                    )
+                    conn.execute(
+                        "UPDATE shopping_item_offers SET is_selected = 1, updated_at = ? WHERE id = ? AND shopping_item_id = ?",
+                        (utc_now_iso(), ch["to_offer_id"], ch["item_id"]),
+                    )
+                    _sync_shopping_item_from_selected_offer(conn, ch["item_id"])
+        applied = True
+
+    return {
+        "mode": clean_mode,
+        "applied": applied,
+        "changes_count": len(changes_list),
+        "changes": changes_list,
+        "current": current_summary,
+        "recommended": recommended_summary,
+        "stragglers": stragglers,
+        "unassigned_items": unassigned_items,
+    }

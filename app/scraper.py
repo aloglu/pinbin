@@ -32,7 +32,8 @@ def _is_blocked_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> boo
         if _is_blocked_ip(ip_obj.ipv4_mapped):
             return True
     return (
-        ip_obj.is_private
+        not ip_obj.is_global
+        or ip_obj.is_private
         or ip_obj.is_loopback
         or ip_obj.is_link_local
         or ip_obj.is_multicast
@@ -41,7 +42,7 @@ def _is_blocked_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> boo
     )
 
 
-def _validate_url_sync(url: str) -> str:
+def _validate_url_sync(url: str) -> tuple[str, str, str]:
     parsed = urlparse(url.strip())
     if parsed.scheme not in ("http", "https"):
         raise ScrapeError("Only http:// and https:// URLs are allowed", status_code=400)
@@ -50,13 +51,17 @@ def _validate_url_sync(url: str) -> str:
     if not hostname:
         raise ScrapeError("URL must include a valid hostname", status_code=400)
 
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        raise ScrapeError("URL contains an invalid port number", status_code=400) from exc
 
     # Immediate check if hostname is an IP literal
     try:
         literal_ip = ipaddress.ip_address(hostname)
         if _is_blocked_ip(literal_ip):
             raise ScrapeError("Access to private or internal network addresses is blocked", status_code=400)
+        return parsed.geturl(), hostname, str(literal_ip)
     except ValueError:
         pass
 
@@ -69,6 +74,7 @@ def _validate_url_sync(url: str) -> str:
     if not addr_info:
         raise ScrapeError(f"No IP addresses resolved for hostname: {hostname}", status_code=400)
 
+    first_ip = ""
     for family, _socktype, _proto, _canonname, sockaddr in addr_info:
         ip_str = sockaddr[0]
         try:
@@ -78,29 +84,44 @@ def _validate_url_sync(url: str) -> str:
 
         if _is_blocked_ip(ip_obj):
             raise ScrapeError("Access to private or internal network addresses is blocked", status_code=400)
+        if not first_ip:
+            first_ip = ip_str
 
-    return parsed.geturl()
+    return parsed.geturl(), hostname, first_ip
 
 
-async def validate_url_ssrf(url: str) -> str:
+async def validate_url_ssrf(url: str) -> tuple[str, str, str]:
     return await asyncio.to_thread(_validate_url_sync, url)
+
+
+def _build_pinned_request(url: str, hostname: str, resolved_ip: str) -> tuple[str, dict[str, str], dict[str, Any]]:
+    """Build a DNS-pinned URL connecting directly to resolved_ip with Host + TLS SNI set to hostname."""
+    parsed = urlparse(url)
+    ip_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
+    port_suffix = f":{parsed.port}" if parsed.port else ""
+    pinned_netloc = f"{ip_host}{port_suffix}"
+    pinned_url = parsed._replace(netloc=pinned_netloc).geturl()
+    host_header = f"{hostname}{port_suffix}"
+    extensions: dict[str, Any] = {"sni_hostname": hostname} if parsed.scheme == "https" else {}
+    return pinned_url, {"Host": host_header}, extensions
 
 
 async def _safe_fetch_bytes(
     client: httpx.AsyncClient, url: str, max_bytes: int
 ) -> tuple[str, str, bytes]:
-    """SSRF-safe GET with manual redirect validation and streaming size limit."""
-    current_url = await validate_url_ssrf(url)
+    """SSRF-safe GET with DNS pinning, manual redirect validation, and streaming size limit."""
+    current_url, hostname, resolved_ip = await validate_url_ssrf(url)
 
     for _hop in range(MAX_REDIRECTS + 1):
         try:
-            async with client.stream("GET", current_url) as resp:
+            pinned_url, extra_headers, extensions = _build_pinned_request(current_url, hostname, resolved_ip)
+            async with client.stream("GET", pinned_url, headers=extra_headers, extensions=extensions) as resp:
                 if resp.status_code in (301, 302, 303, 307, 308):
                     location = resp.headers.get("location")
                     if not location:
                         raise ScrapeError("Redirect response missing Location header", status_code=400)
                     next_url = urljoin(current_url, location)
-                    current_url = await validate_url_ssrf(next_url)
+                    current_url, hostname, resolved_ip = await validate_url_ssrf(next_url)
                     continue
 
                 if resp.status_code >= 400:
@@ -300,46 +321,6 @@ async def scrape_url(url: str, images_dir: Path, max_bytes: int) -> dict[str, An
             "image_path": saved_filename,
             "source_url": final_url,
         }
-
-
-async def _search_wikimedia_images(client: httpx.AsyncClient, query: str) -> list[dict[str, str]]:
-    """Search Wikimedia Commons for raster photos matching an electronics component query."""
-    params = {
-        "action": "query",
-        "generator": "search",
-        "gsrnamespace": "6",
-        "gsrsearch": query,
-        "gsrlimit": "4",
-        "prop": "imageinfo",
-        "iiprop": "url|mime|size",
-        "iiurlwidth": "600",
-        "format": "json",
-    }
-    resp = await client.get("https://commons.wikimedia.org/w/api.php", params=params)
-    if resp.status_code != 200:
-        return []
-    data = resp.json()
-    pages = (data.get("query") or {}).get("pages") or {}
-    candidates: list[tuple[int, dict[str, str]]] = []
-    for page in pages.values():
-        infos = page.get("imageinfo") or []
-        if not infos:
-            continue
-        info = infos[0]
-        mime = (info.get("mime") or "").lower()
-        width = int(info.get("width") or 0)
-        height = int(info.get("height") or 0)
-        if mime not in ("image/jpeg", "image/png", "image/webp"):
-            continue
-        if width < 200 or height < 150:
-            continue
-        url = info.get("thumburl") or info.get("url") or ""
-        if url:
-            idx = int(page.get("index") or 99)
-            title = str(page.get("title") or "").replace("File:", "")
-            candidates.append((idx, {"url": url, "source": "wikimedia.org", "title": title[:80]}))
-    candidates.sort(key=lambda item: item[0])
-    return [c for _, c in candidates]
 
 
 def _is_likely_ui_asset(url: str) -> bool:

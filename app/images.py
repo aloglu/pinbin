@@ -49,7 +49,7 @@ def process_and_save_image(raw_bytes: bytes, images_dir: Path, max_bytes: int) -
             dest = images_dir / filename
             img.save(dest, format="WEBP", quality=WEBP_QUALITY, method=4)
             return filename
-    except (UnidentifiedImageError, OSError) as exc:
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError) as exc:
         raise ImageError("Invalid or unsupported image file", status_code=400) from exc
 
 
