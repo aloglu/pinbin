@@ -937,6 +937,12 @@ button.pb-bin-tag:hover {
   opacity: 1 !important;
 }
 @media (max-width: 639px) {
+  /* The bottom sheet leaves a strip of backdrop at the top (tap it to close).
+     100% is the height of the visible screen, see #drawerRoot. */
+  #drawerPanel,
+  #contextDrawerPanel {
+    max-height: calc(100% - 2.5rem);
+  }
   .drawer-closed #drawerPanel,
   .drawer-closed #contextDrawerPanel {
     transform: translateY(100%);
@@ -1029,10 +1035,33 @@ button.pb-bin-tag:hover {
   border: 1px solid rgb(var(--line));
   border-radius: 8px;
   box-shadow: 0 24px 64px rgb(0 0 0 / 0.3);
-  /* A tall modal scrolls inside itself, so on a short phone screen
-     (or with the on-screen keyboard open) the top never goes off-screen. */
-  max-height: calc(100dvh - 2rem);
+  /* A tall modal never goes past the visible screen (the area above the
+     on-screen keyboard on a phone). Its header and footer stay in view and
+     only .pb-modal-body scrolls. A modal without a body part scrolls as one. */
+  max-height: calc(var(--vv-h, 100dvh) - 2rem);
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.pb-modal > * {
+  flex-shrink: 0;
+}
+.pb-modal > .pb-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Popups follow the visible part of the screen. On a phone, this is the area
+   above the on-screen keyboard. app.js sets --vv-top and --vv-h from
+   window.visualViewport; without them, the popups fill the window. */
+div.pb-overlay,
+#drawerRoot,
+#contextDrawerRoot {
+  top: var(--vv-top, 0px);
+  bottom: auto;
+  height: var(--vv-h, 100dvh);
 }
 
 /* Toast */

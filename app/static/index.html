@@ -2,12 +2,12 @@
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
   <title>Pinbin</title>
   <link rel="preload" href="/static/fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin />
   <!-- styles.css first: Tailwind utilities (such as "hidden") must win over component styles. -->
-  <link rel="stylesheet" href="/static/styles.css?v=27" />
-  <link rel="stylesheet" href="/static/tailwind.css?v=27" />
+  <link rel="stylesheet" href="/static/styles.css?v=28" />
+  <link rel="stylesheet" href="/static/tailwind.css?v=28" />
 </head>
 <body class="font-sans antialiased min-h-screen">
 
@@ -298,7 +298,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="drawerHeading"
-      class="absolute bottom-0 inset-x-0 sm:inset-y-0 sm:left-auto sm:right-0 w-full sm:max-w-xl max-h-[92dvh] sm:max-h-none bg-surface-light border-t sm:border-t-0 sm:border-l border-hairline-light rounded-t-2xl sm:rounded-none flex flex-col overflow-hidden"
+      class="absolute bottom-0 inset-x-0 sm:inset-y-0 sm:left-auto sm:right-0 w-full sm:max-w-xl bg-surface-light border-t sm:border-t-0 sm:border-l border-hairline-light rounded-t-2xl sm:rounded-none flex flex-col overflow-hidden"
     >
       <!-- Drawer Header (Clean & Minimal — Mode Toggle Lives in Footer) -->
       <div class="h-14 px-5 pb-divider-b flex items-center justify-between gap-2 shrink-0">
@@ -586,7 +586,7 @@
   <!-- ======================================================================= -->
   <!-- 5. SETTINGS MODAL (Synced to SQLite)                                    -->
   <!-- ======================================================================= -->
-  <div id="settingsModal" class="hidden fixed inset-0 z-[55] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="settingsHeading">
+  <div id="settingsModal" class="pb-overlay hidden fixed inset-0 z-[55] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="settingsHeading">
     <div class="pb-modal w-full max-w-md overflow-hidden">
       <div class="h-13 px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
         <h3 id="settingsHeading" class="text-sm font-semibold text-ink">Settings</h3>
@@ -595,7 +595,7 @@
         </button>
       </div>
 
-      <div class="p-5 space-y-5 text-xs">
+      <div class="pb-modal-body p-5 space-y-5 text-xs">
         <!-- Appearance -->
         <div class="space-y-3">
           <h4 class="pb-section-label">Appearance</h4>
@@ -691,7 +691,7 @@
   <!-- ======================================================================= -->
   <!-- 6. FULL-SIZE IMAGE LIGHTBOX MODAL                                       -->
   <!-- ======================================================================= -->
-  <div id="lightboxModal" class="hidden fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Image lightbox">
+  <div id="lightboxModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Image lightbox">
     <button id="closeLightboxBtn" type="button" class="absolute top-4 right-4 h-10 w-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors" aria-label="Close image">
       <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
     </button>
@@ -701,7 +701,7 @@
   <!-- ======================================================================= -->
   <!-- 7. RESTORE CONFIRMATION MODAL (No window.confirm)                       -->
   <!-- ======================================================================= -->
-  <div id="restoreModal" class="hidden fixed inset-0 z-[65] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="restoreModalTitle">
+  <div id="restoreModal" class="pb-overlay hidden fixed inset-0 z-[65] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="restoreModalTitle">
     <div class="w-full max-w-sm pb-modal p-5 space-y-4">
       <div>
         <h3 id="restoreModalTitle" class="text-sm font-semibold text-ink">Restore from Backup?</h3>
@@ -723,7 +723,7 @@
   <!-- ======================================================================= -->
   <!-- 8. GLOSSARY ADD / EDIT MODAL                                            -->
   <!-- ======================================================================= -->
-  <div id="glossaryModal" class="hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="glossaryModalHeading">
+  <div id="glossaryModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="glossaryModalHeading">
     <div class="pb-modal w-full max-w-lg overflow-hidden">
       <div class="px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
         <h3 id="glossaryModalHeading" class="text-sm font-semibold text-ink">Add Glossary Term</h3>
@@ -732,7 +732,7 @@
         </button>
       </div>
 
-      <div class="p-5 space-y-3.5 text-xs">
+      <div class="pb-modal-body p-5 space-y-3.5 text-xs">
         <div class="flex gap-2 items-end">
           <div class="flex-1">
             <label for="gTerm" class="block text-[11px] font-medium text-muted mb-1">Term</label>
@@ -789,7 +789,7 @@
   <!-- ======================================================================= -->
   <!-- 9. INLINE GLOSSARY TOOLTIP POPOVER (Inside Part Preview)                -->
   <!-- ======================================================================= -->
-  <div id="glossaryPopover" class="hidden fixed inset-0 z-[65] bg-black/40 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+  <div id="glossaryPopover" class="pb-overlay hidden fixed inset-0 z-[65] bg-black/40 flex items-center justify-center p-4" role="dialog" aria-modal="true">
     <div class="w-full max-w-sm pb-modal p-4 space-y-2.5">
       <div class="flex items-start justify-between gap-2">
         <div>
@@ -820,7 +820,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="contextDrawerHeading"
-      class="absolute bottom-0 inset-x-0 sm:inset-y-0 sm:left-auto sm:right-0 w-full sm:max-w-xl max-h-[92dvh] sm:max-h-none bg-surface-light border-t sm:border-t-0 sm:border-l border-hairline-light rounded-t-2xl sm:rounded-none flex flex-col overflow-hidden"
+      class="absolute bottom-0 inset-x-0 sm:inset-y-0 sm:left-auto sm:right-0 w-full sm:max-w-xl bg-surface-light border-t sm:border-t-0 sm:border-l border-hairline-light rounded-t-2xl sm:rounded-none flex flex-col overflow-hidden"
     >
       <div class="h-14 px-5 pb-divider-b flex items-center justify-between gap-2 shrink-0">
         <div class="flex items-center gap-2.5 min-w-0">
@@ -839,7 +839,7 @@
   <!-- ======================================================================= -->
   <!-- 11. PROJECT CREATE / EDIT MODAL                                         -->
   <!-- ======================================================================= -->
-  <div id="projectModal" class="hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectModalHeading">
+  <div id="projectModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectModalHeading">
     <div class="pb-modal w-full max-w-lg overflow-hidden">
       <div class="px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
         <h3 id="projectModalHeading" class="text-sm font-semibold text-ink">New Project</h3>
@@ -847,7 +847,7 @@
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
       </div>
-      <div class="p-5 space-y-3.5 text-xs">
+      <div class="pb-modal-body p-5 space-y-3.5 text-xs">
         <div>
           <label for="pName" class="block text-[11px] font-medium text-muted mb-1">Project name</label>
           <input id="pName" type="text" placeholder="e.g., Smartwatch" class="w-full h-9 px-3 text-sm rounded bg-canvas-light border border-hairline-light focus:outline-none focus:border-accent" />
@@ -896,7 +896,7 @@
   <!-- ======================================================================= -->
   <!-- 12. ADD ITEM / VARIANT TO PROJECT MODAL                                 -->
   <!-- ======================================================================= -->
-  <div id="projectActionModal" class="hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectActionModalHeading">
+  <div id="projectActionModal" class="pb-overlay hidden fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="projectActionModalHeading">
     <div class="pb-modal w-full max-w-md overflow-hidden">
       <div class="px-5 py-3.5 border-b border-hairline-light flex items-center justify-between">
         <h3 id="projectActionModalHeading" class="text-sm font-semibold text-ink">Add to Project</h3>
@@ -904,7 +904,7 @@
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
       </div>
-      <div id="projectActionModalBody" class="p-5 space-y-3.5 text-xs"></div>
+      <div id="projectActionModalBody" class="pb-modal-body p-5 space-y-3.5 text-xs"></div>
       <div class="px-5 py-3.5 border-t border-hairline-light flex items-center justify-end gap-2">
         <button id="cancelProjectActionModalBtn" type="button" class="btn-secondary h-8 px-3 rounded text-xs font-medium">Cancel</button>
         <button id="saveProjectActionModalBtn" type="button" class="btn-primary h-8 px-4 rounded text-xs font-medium">Add</button>
@@ -916,7 +916,7 @@
   <div id="toast" class="fixed bottom-24 sm:bottom-5 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded bg-ink text-paper text-xs font-medium opacity-0 pointer-events-none transition-opacity duration-200 shadow-lg">
   </div>
 
-  <script src="/static/workbench.js?v=27"></script>
-  <script src="/static/app.js?v=27"></script>
+  <script src="/static/workbench.js?v=28"></script>
+  <script src="/static/app.js?v=28"></script>
 </body>
 </html>

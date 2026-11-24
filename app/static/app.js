@@ -3957,8 +3957,42 @@ function bindEvents() {
   });
 }
 
+// Popups fit the visible part of the screen. On a phone, the on-screen
+// keyboard covers the bottom of the window. Without this, it hides the Save
+// button of a bottom sheet, and the browser pushes the close button off the top.
+// styles.css reads --vv-top and --vv-h (see .pb-overlay and #drawerRoot).
+function trackVisibleViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const rootStyle = document.documentElement.style;
+  let frame = 0;
+  let resized = false;
+  const apply = () => {
+    frame = 0;
+    rootStyle.setProperty('--vv-top', `${Math.max(0, vv.offsetTop)}px`);
+    rootStyle.setProperty('--vv-h', `${vv.height}px`);
+    // Keep the field the user types in visible inside the popup's scroll area.
+    // Only after a resize (the keyboard opened), not on every scroll.
+    const active = document.activeElement;
+    if (resized && active && active.matches('input, textarea, select') && active.closest('[role="dialog"]')) {
+      active.scrollIntoView({ block: 'nearest' });
+    }
+    resized = false;
+  };
+  const schedule = () => {
+    if (!frame) frame = requestAnimationFrame(apply);
+  };
+  vv.addEventListener('resize', () => {
+    resized = true;
+    schedule();
+  });
+  vv.addEventListener('scroll', schedule);
+  apply();
+}
+
 // Boot
 window.addEventListener('DOMContentLoaded', async () => {
+  trackVisibleViewport();
   loadCachedTheme();
   const binParam = new URLSearchParams(window.location.search).get('bin');
   if (binParam && binParam.trim()) {
