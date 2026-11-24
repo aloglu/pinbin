@@ -1,6 +1,7 @@
 'use strict';
 
 const THEME_KEY = 'pinbin_theme_v1';
+const LOGO_COLOR_KEY = 'pinbin_logo_color_v1';
 const DEFAULT_CATEGORIES = [
   'Microcontrollers',
   'Sensors',
@@ -50,6 +51,7 @@ const state = {
     sort_by: 'recent',
     inline_tooltips: true,
     show_caution_badge: false,
+    logo_color: '#00e676',
   },
   search: '',
   category: 'All',
@@ -305,14 +307,45 @@ function loadCachedTheme() {
       applyTheme(saved);
     }
   } catch (_) {}
+  try {
+    const savedLogo = localStorage.getItem(LOGO_COLOR_KEY);
+    if (savedLogo) applyLogoColor(savedLogo);
+  } catch (_) {}
+}
+
+// Logo colour (Settings > Appearance). The colour fills the logo tile; the
+// perfboard drawing on it is black or white, whichever reads better.
+function applyLogoColor(color) {
+  const known = PinbinBrand.LOGO_COLORS.some((c) => c.value === color);
+  const tile = known ? color : PinbinBrand.DEFAULT_LOGO_COLOR;
+  const rootStyle = document.documentElement.style;
+  rootStyle.setProperty('--logo-bg', tile);
+  rootStyle.setProperty('--logo-ink', PinbinBrand.inkFor(tile));
+  const favicon = document.getElementById('faviconLink');
+  if (favicon) favicon.href = `data:image/svg+xml,${encodeURIComponent(PinbinBrand.faviconSvg(tile))}`;
+  try {
+    localStorage.setItem(LOGO_COLOR_KEY, tile);
+  } catch (_) {}
+}
+
+function renderBrand() {
+  const brand = document.getElementById('brandLogo');
+  if (brand) brand.innerHTML = PinbinBrand.wordSvg(22);
+  const picker = document.getElementById('settingLogoColors');
+  if (picker) {
+    picker.innerHTML = PinbinBrand.LOGO_COLORS.map(
+      (c) => `<button type="button" class="pb-logo-swatch" data-setting-logo="${c.value}" style="--swatch:${c.value};--swatch-ink:${PinbinBrand.inkFor(c.value)}" aria-label="${c.name}" title="${c.name}" aria-pressed="false"></button>`,
+    ).join('');
+  }
 }
 
 function saveUiSettings(patch) {
   Object.assign(state.uiSettings, patch);
   if (patch.theme) applyTheme(patch.theme);
+  if (patch.logo_color) applyLogoColor(patch.logo_color);
   syncSettingsModalUi();
   const keys = Object.keys(patch);
-  if (!(keys.length === 1 && keys[0] === 'theme')) {
+  if (!(keys.length === 1 && (keys[0] === 'theme' || keys[0] === 'logo_color'))) {
     renderCurrentPage();
     if (state.drawerMode === 'view' && state.activePartId) {
       const p = state.parts.find((x) => x.id === state.activePartId);
@@ -328,6 +361,7 @@ function saveUiSettings(patch) {
     .then((updated) => {
       state.uiSettings = { ...state.uiSettings, ...updated };
       applyTheme(state.uiSettings.theme);
+      applyLogoColor(state.uiSettings.logo_color);
       syncSettingsModalUi();
     })
     .catch((err) => {
@@ -336,7 +370,11 @@ function saveUiSettings(patch) {
 }
 
 function syncSettingsModalUi() {
-  const { theme, view_mode, sort_by, inline_tooltips, show_caution_badge } = state.uiSettings;
+  const { theme, view_mode, sort_by, inline_tooltips, show_caution_badge, logo_color } = state.uiSettings;
+
+  document.querySelectorAll('button[data-setting-logo]').forEach((btn) => {
+    btn.setAttribute('aria-pressed', String(btn.dataset.settingLogo === logo_color));
+  });
 
   // Sort select
   const sortEl = document.getElementById('sortSelect');
@@ -396,6 +434,7 @@ async function loadConfig() {
     if (cfg.ui_settings) {
       state.uiSettings = { ...state.uiSettings, ...cfg.ui_settings };
       applyTheme(state.uiSettings.theme);
+      applyLogoColor(state.uiSettings.logo_color);
     }
     syncAiUi();
     syncSettingsModalUi();
@@ -3014,6 +3053,10 @@ async function handleRestoreConfirm() {
 function bindEvents() {
   // Settings Modal
   document.getElementById('openSettingsBtn').addEventListener('click', openSettingsModal);
+  document.getElementById('settingLogoColors').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-setting-logo]');
+    if (btn && btn.dataset.settingLogo !== state.uiSettings.logo_color) saveUiSettings({ logo_color: btn.dataset.settingLogo });
+  });
   document.getElementById('closeSettingsBtn').addEventListener('click', closeSettingsModal);
   document.getElementById('settingsModal').addEventListener('click', (e) => {
     if (e.target.id === 'settingsModal') closeSettingsModal();
@@ -4002,6 +4045,7 @@ function blockPinchZoom() {
 window.addEventListener('DOMContentLoaded', async () => {
   trackVisibleViewport();
   blockPinchZoom();
+  renderBrand();
   loadCachedTheme();
   const binParam = new URLSearchParams(window.location.search).get('bin');
   if (binParam && binParam.trim()) {

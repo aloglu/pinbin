@@ -4,10 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content" />
   <title>Pinbin</title>
+  <link id="faviconLink" rel="icon" type="image/svg+xml" href="/static/brand/favicon.svg" />
+  <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png" />
   <link rel="preload" href="/static/fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin />
   <!-- styles.css first: Tailwind utilities (such as "hidden") must win over component styles. -->
-  <link rel="stylesheet" href="/static/styles.css?v=30" />
-  <link rel="stylesheet" href="/static/tailwind.css?v=30" />
+  <link rel="stylesheet" href="/static/styles.css?v=31" />
+  <link rel="stylesheet" href="/static/tailwind.css?v=31" />
 </head>
 <body class="font-sans antialiased min-h-screen">
 
@@ -17,7 +19,7 @@
   <header class="pb-header sticky top-0 z-30">
     <div class="max-w-[1400px] mx-auto px-4 sm:px-6 h-14 flex items-center gap-4">
       <div class="flex items-center gap-2.5 shrink-0">
-        <span class="pb-brand" aria-label="Pinbin">Pinbin</span>
+        <span id="brandLogo" class="pb-brand" role="img" aria-label="Pinbin"></span>
       </div>
 
       <nav class="pb-nav hidden md:flex h-14 ml-4" aria-label="Primary">
@@ -611,6 +613,14 @@
             </div>
           </div>
 
+          <div class="space-y-2">
+            <div>
+              <p class="font-medium text-ink">Logo color</p>
+              <p class="text-[11px] text-muted">Header logo and browser tab icon. Synced across your devices.</p>
+            </div>
+            <div id="settingLogoColors" class="flex flex-wrap gap-2" role="group" aria-label="Logo color"></div>
+          </div>
+
           <div class="flex items-center justify-between gap-3">
             <div>
               <p class="font-medium text-ink">Default View</p>
@@ -916,7 +926,8 @@
   <div id="toast" class="fixed bottom-24 sm:bottom-5 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded bg-ink text-paper text-xs font-medium opacity-0 pointer-events-none transition-opacity duration-200 shadow-lg">
   </div>
 
-  <script src="/static/workbench.js?v=30"></script>
-  <script src="/static/app.js?v=30"></script>
+  <script src="/static/brand.js?v=31"></script>
+  <script src="/static/workbench.js?v=31"></script>
+  <script src="/static/app.js?v=31"></script>
 </body>
 </html>

@@ -213,18 +213,52 @@ body {
 
 /* Brand mark: the word "Pinbin" printed on label tape */
 .pb-brand {
+  /* Logo tile: the colour comes from Settings (app.js sets --logo-bg and
+     --logo-ink); the perfboard drawing is black or white on it. */
   display: inline-flex;
   align-items: center;
-  height: 26px;
-  padding: 0 9px 0 10px;
-  background: rgb(var(--tape));
-  color: rgb(var(--tape-ink));
-  font-variation-settings: 'wdth' 72;
-  font-weight: 800;
-  font-size: 17px;
-  letter-spacing: 0.01em;
-  border-radius: 2px;
-  box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.12);
+  height: 32px;
+  padding: 0 4px;
+  background: var(--logo-bg, #00e676);
+  color: var(--logo-ink, #111111);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.1);
+}
+.pb-brand:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+.pb-brand svg {
+  display: block;
+}
+
+/* Logo colour swatches (Settings). The tick uses the same black/white as the logo. */
+.pb-logo-swatch {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px rgb(var(--line));
+  cursor: pointer;
+}
+.pb-logo-swatch[aria-pressed='true'] {
+  box-shadow: 0 0 0 2px rgb(var(--paper)), 0 0 0 4px rgb(var(--ink));
+}
+.pb-logo-swatch[aria-pressed='true']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 7px;
+  height: 12px;
+  border: solid var(--swatch-ink);
+  border-width: 0 2.5px 2.5px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.pb-logo-swatch:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 3px;
 }
 
 /* Top-level page navigation */

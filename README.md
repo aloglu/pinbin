@@ -67,6 +67,18 @@ npm run build:css
 
 Write each class name in full in the code (for example `'sm:grid-cols-5'`). The build cannot see a class name that is put together at run time.
 
+## Logo files
+
+The logo is "pinbin" and "pb" drawn on a perfboard. `app/static/brand.js` draws it. The header logo and the browser tab icon are made from this file when the page opens. They follow the **Logo color** setting (Settings > Appearance). The drawing is black or white, whichever reads better on the chosen color.
+
+The files in `app/static/brand/` are made from `brand.js` too. If you change `brand.js`, make them again:
+
+```bash
+node scripts/make_brand_files.js
+```
+
+This writes the SVG files. `apple-touch-icon.png` (the 180 px home-screen icon, in the default green) is a picture of `app-icon.svg`. To make it again, open `app-icon.svg` in a browser at 180 × 180 px and save a screenshot. `pinbin-mark.svg` and `pinbin-wordmark.svg` are one-color masters for use outside the app.
+
 ---
 
 ## Optional AI Smart Autofill

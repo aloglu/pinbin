@@ -126,6 +126,7 @@ class UiSettingsPatch(BaseModel):
     sort_by: str | None = None
     inline_tooltips: bool | None = None
     show_caution_badge: bool | None = None
+    logo_color: str | None = None
 
 
 class GlossaryCreate(BaseModel):

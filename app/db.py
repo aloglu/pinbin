@@ -120,6 +120,14 @@ DEFAULT_UI_SETTINGS: dict[str, Any] = {
     "sort_by": "recent",
     "inline_tooltips": True,
     "show_caution_badge": False,
+    "logo_color": "#00e676",
+}
+
+# Logo tile colours offered in Settings. The logo itself is drawn in black or
+# white, whichever reads better on the chosen colour (see static/brand.js).
+ALLOWED_LOGO_COLORS = {
+    "#00e676", "#ffcc00", "#111111", "#ffffff", "#c0392b",
+    "#6c3cff", "#2962ff", "#ff2d55", "#ff3b30", "#ff69b4",
 }
 
 ALLOWED_SORT_VALUES = {"recent", "name", "location", "qty_asc", "qty_desc", "needs_photo"}
@@ -656,6 +664,8 @@ def update_ui_settings(db_path: Path, updates: dict[str, Any]) -> dict[str, Any]
             clean[k] = v
         elif k in ("inline_tooltips", "show_caution_badge") and isinstance(v, bool):
             clean[k] = v
+        elif k == "logo_color" and isinstance(v, str) and v.lower() in ALLOWED_LOGO_COLORS:
+            clean[k] = v.lower()
 
     if clean:
         with db_lock:
