@@ -1456,15 +1456,17 @@ function renderProjects() {
       const selectedVariantObj = variants.find((v) => v.id === activeTab);
       const variantBanner =
         selectedVariantObj
-          ? `<div class="px-4 py-2 bg-ink/[0.025] border-b border-line flex flex-wrap items-center justify-between gap-2 text-xs">
-               <span class="text-muted truncate min-w-0">${escapeHTML(selectedVariantObj.description || `Showing Core + ${selectedVariantObj.name}`)}</span>
-               <div class="flex items-center gap-2 shrink-0">
-                 ${
-                   selectedVariantObj.is_selected
-                     ? `<span class="text-go font-medium">Selected build</span>`
-                     : `<button type="button" data-select-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" class="btn-secondary h-6 px-2 text-[11px]">Use this option</button>`
-                 }
-                 <div class="inline-flex items-center gap-1.5" data-inline-confirm>
+          ? `<div class="px-4 py-2.5 bg-ink/[0.025] border-b border-line space-y-2 text-xs">
+               <p class="text-muted leading-relaxed">${escapeHTML(selectedVariantObj.description || `Showing Core + ${selectedVariantObj.name}`)}</p>
+               <div class="flex items-center justify-between gap-2">
+                 <div>
+                   ${
+                     selectedVariantObj.is_selected
+                       ? `<span class="inline-flex items-center gap-1.5 text-go font-medium"><span class="w-1.5 h-1.5 rounded-full bg-go"></span>Selected build</span>`
+                       : `<button type="button" data-select-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" class="btn-secondary h-6 px-2 text-[11px]">Use this option</button>`
+                   }
+                 </div>
+                 <div class="inline-flex items-center gap-1.5 shrink-0" data-inline-confirm>
                    <button type="button" data-confirm-init class="btn-danger-outline h-6 px-2 text-[11px] rounded" title="Delete this sub-build">Delete</button>
                    <div class="hidden items-center gap-1.5" data-confirm-group>
                      <button type="button" data-delete-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" data-variant-name="${escapeHTML(selectedVariantObj.name)}" class="btn-danger h-6 px-2 text-[11px] rounded" title="Parts linked only to this sub-build will be unlinked">Confirm</button>
@@ -1475,22 +1477,35 @@ function renderProjects() {
              </div>`
           : '';
 
-      let activeNotesText = '';
+      let activeNotesHtml = '';
       let activeNotesLabel = 'Build notes';
       if (selectedVariantObj) {
-        activeNotesText = (selectedVariantObj.notes || '').trim();
+        const vNotes = (selectedVariantObj.notes || '').trim();
+        if (vNotes) activeNotesHtml = `<div class="pb-md">${renderMarkdown(vNotes)}</div>`;
         activeNotesLabel = `Build notes · ${selectedVariantObj.name}`;
       } else if (activeTab === 'all') {
-        const sections = [];
-        if ((proj.notes || '').trim()) sections.push(proj.notes.trim());
+        const blocks = [];
+        if ((proj.notes || '').trim()) {
+          blocks.push(`<div class="pb-md">${renderMarkdown(proj.notes.trim())}</div>`);
+        }
         for (const v of variants) {
           if ((v.notes || '').trim()) {
-            sections.push(`## ${v.name}\n\n${v.notes.trim()}`);
+            const hasPrev = blocks.length > 0;
+            blocks.push(`
+              <div class="${hasPrev ? 'mt-4 pt-3.5 border-t border-line' : ''}">
+                <div class="pb-section-label !text-[12px] mb-2 flex items-center gap-1.5">
+                  ${v.is_selected ? '<span class="w-1.5 h-1.5 rounded-full bg-go shrink-0"></span>' : ''}
+                  <span>${escapeHTML(v.name)}</span>
+                </div>
+                <div class="pb-md">${renderMarkdown(v.notes.trim())}</div>
+              </div>
+            `);
           }
         }
-        activeNotesText = sections.join('\n\n');
+        activeNotesHtml = blocks.join('');
       } else {
-        activeNotesText = (proj.notes || '').trim();
+        const pNotes = (proj.notes || '').trim();
+        if (pNotes) activeNotesHtml = `<div class="pb-md">${renderMarkdown(pNotes)}</div>`;
         activeNotesLabel = 'Build notes · Core';
       }
 
@@ -1557,14 +1572,14 @@ function renderProjects() {
           </div>
 
           ${
-            activeNotesText
+            activeNotesHtml
               ? `<details class="border-t border-line bg-ink/[0.015] group">
                    <summary class="px-4 py-2 text-xs font-medium text-muted hover:text-ink cursor-pointer flex items-center justify-between list-none">
                      <span>${escapeHTML(activeNotesLabel)}</span>
                      <span class="text-[11px] opacity-70 group-open:hidden">Show</span>
                      <span class="text-[11px] opacity-70 hidden group-open:inline">Hide</span>
                    </summary>
-                   <div class="px-4 pb-3.5 pt-1 pb-md">${renderMarkdown(activeNotesText)}</div>
+                   <div class="px-4 pb-3.5 pt-1">${activeNotesHtml}</div>
                  </details>`
               : ''
           }
