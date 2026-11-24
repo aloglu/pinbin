@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS project_variants (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
     is_selected INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -227,6 +228,13 @@ def init_db(settings: Settings) -> None:
             for col_name, col_def in shop_migrations:
                 if col_name not in shop_cols:
                     conn.execute(f"ALTER TABLE shopping_items ADD COLUMN {col_name} {col_def}")
+
+            var_cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(project_variants)").fetchall()
+            }
+            if "notes" not in var_cols:
+                conn.execute("ALTER TABLE project_variants ADD COLUMN notes TEXT DEFAULT ''")
 
             _migrate_legacy_in_use_projects(conn)
             _migrate_shopping_item_offers(conn)
@@ -1119,14 +1127,15 @@ def create_project_variant(db_path: Path, project_id: str, data: dict[str, Any])
                 )
             conn.execute(
                 """
-                INSERT INTO project_variants (id, project_id, name, description, is_selected, sort_order, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO project_variants (id, project_id, name, description, notes, is_selected, sort_order, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     var_id,
                     project_id,
                     name[:120],
                     str(data.get("description") or "").strip(),
+                    str(data.get("notes") or "").strip(),
                     is_selected,
                     int(data.get("sort_order") if data.get("sort_order") is not None else existing_cnt),
                     now,
@@ -1144,7 +1153,7 @@ def create_project_variant(db_path: Path, project_id: str, data: dict[str, Any])
 def update_project_variant(
     db_path: Path, project_id: str, variant_id: str, updates: dict[str, Any]
 ) -> dict[str, Any] | None:
-    allowed = {"name", "description", "is_selected", "sort_order"}
+    allowed = {"name", "description", "notes", "is_selected", "sort_order"}
     filtered: dict[str, Any] = {}
     for k, v in updates.items():
         if k not in allowed:

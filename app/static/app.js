@@ -115,6 +115,28 @@ function _renderInlineMd(escapedLine) {
   return s;
 }
 
+function _splitMdTableRow(line) {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, '|').trim());
+}
+
+function _parseMdTableAlign(sepLine) {
+  const trimmed = sepLine.trim();
+  if (!trimmed.includes('|') || !trimmed.includes('-')) return null;
+  const cells = _splitMdTableRow(trimmed);
+  if (!cells.length) return null;
+  const aligns = [];
+  for (const cell of cells) {
+    if (!/^:?-{3,}:?$/.test(cell)) return null;
+    if (cell.startsWith(':') && cell.endsWith(':')) aligns.push('center');
+    else if (cell.endsWith(':')) aligns.push('right');
+    else aligns.push('left');
+  }
+  return aligns;
+}
+
 function renderMarkdown(raw) {
   const text = String(raw || '').replace(/\r\n?/g, '\n').trim();
   if (!text) return '<p class="text-muted text-xs italic">Nothing to preview yet.</p>';
@@ -132,7 +154,8 @@ function renderMarkdown(raw) {
     }
   };
 
-  for (const rawLine of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
     if (rawLine.trim().startsWith('```')) {
       closeList();
       if (!inCode) {
@@ -154,6 +177,38 @@ function renderMarkdown(raw) {
     if (!trimmed) {
       closeList();
       continue;
+    }
+
+    // Markdown pipe table: header row + separator row (+ 0 or more body rows)
+    if (trimmed.includes('|') && i + 1 < lines.length) {
+      const aligns = _parseMdTableAlign(lines[i + 1]);
+      if (aligns) {
+        closeList();
+        const headerCells = _splitMdTableRow(trimmed);
+        const colCount = Math.max(headerCells.length, aligns.length);
+        const thHtml = Array.from({ length: colCount }, (_, idx) => {
+          const al = aligns[idx] || 'left';
+          const style = al !== 'left' ? ` style="text-align:${al}"` : '';
+          return `<th${style}>${_renderInlineMd(escapeHTML(headerCells[idx] || ''))}</th>`;
+        }).join('');
+        const bodyRows = [];
+        i += 2;
+        while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+          const rowCells = _splitMdTableRow(lines[i]);
+          const tds = Array.from({ length: colCount }, (_, idx) => {
+            const al = aligns[idx] || 'left';
+            const style = al !== 'left' ? ` style="text-align:${al}"` : '';
+            return `<td${style}>${_renderInlineMd(escapeHTML(rowCells[idx] || ''))}</td>`;
+          }).join('');
+          bodyRows.push(`<tr>${tds}</tr>`);
+          i++;
+        }
+        i--; // compensate for loop increment
+        out.push(
+          `<div class="pb-md-table-wrap"><table><thead><tr>${thHtml}</tr></thead>${bodyRows.length ? `<tbody>${bodyRows.join('')}</tbody>` : ''}</table></div>`
+        );
+        continue;
+      }
     }
 
     if (/^([-*_]){3,}$/.test(trimmed)) {
@@ -1399,6 +1454,25 @@ function renderProjects() {
              </div>`
           : '';
 
+      let activeNotesText = '';
+      let activeNotesLabel = 'Build notes';
+      if (selectedVariantObj) {
+        activeNotesText = (selectedVariantObj.notes || '').trim();
+        activeNotesLabel = `Build notes · ${selectedVariantObj.name}`;
+      } else if (activeTab === 'all') {
+        const sections = [];
+        if ((proj.notes || '').trim()) sections.push(proj.notes.trim());
+        for (const v of variants) {
+          if ((v.notes || '').trim()) {
+            sections.push(`## ${v.name}\n\n${v.notes.trim()}`);
+          }
+        }
+        activeNotesText = sections.join('\n\n');
+      } else {
+        activeNotesText = (proj.notes || '').trim();
+        activeNotesLabel = 'Build notes · Core';
+      }
+
       return `
         <div class="elevated-card rounded-md overflow-hidden flex flex-col">
           <div class="px-4 py-3.5 border-b border-line">
@@ -1458,14 +1532,14 @@ function renderProjects() {
           </div>
 
           ${
-            proj.notes
+            activeNotesText
               ? `<details class="border-t border-line bg-ink/[0.015] group">
                    <summary class="px-4 py-2 text-xs font-medium text-muted hover:text-ink cursor-pointer flex items-center justify-between list-none">
-                     <span>Build notes</span>
+                     <span>${escapeHTML(activeNotesLabel)}</span>
                      <span class="text-[11px] opacity-70 group-open:hidden">Show</span>
                      <span class="text-[11px] opacity-70 hidden group-open:inline">Hide</span>
                    </summary>
-                   <div class="px-4 pb-3.5 pt-1 pb-md">${renderMarkdown(proj.notes)}</div>
+                   <div class="px-4 pb-3.5 pt-1 pb-md">${renderMarkdown(activeNotesText)}</div>
                  </details>`
               : ''
           }
@@ -1475,7 +1549,11 @@ function renderProjects() {
               <button type="button" data-add-proj-item="${escapeHTML(proj.id)}" class="btn-secondary h-7 px-2.5 text-xs">+ Add part</button>
               <button type="button" data-add-proj-variant="${escapeHTML(proj.id)}" class="btn-secondary h-7 px-2.5 text-xs">+ Sub-project</button>
             </div>
-            <button type="button" data-edit-project="${escapeHTML(proj.id)}" class="text-[11px] text-muted hover:text-ink">Edit notes</button>
+            ${
+              selectedVariantObj
+                ? `<button type="button" data-edit-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" class="text-[11px] text-muted hover:text-ink">Edit ${escapeHTML(selectedVariantObj.name)} notes</button>`
+                : `<button type="button" data-edit-project="${escapeHTML(proj.id)}" class="text-[11px] text-muted hover:text-ink">Edit notes</button>`
+            }
           </div>
         </div>
       `;
@@ -1894,25 +1972,39 @@ async function saveProjectModal() {
   }
 }
 
-function openProjectActionModal(mode, projectId) {
+function openProjectActionModal(mode, projectId, variantId = null) {
   const proj = state.projects.find((p) => p.id === projectId);
   if (!proj) return;
-  state.projectAction = { mode, projectId };
+  const existingVar = variantId ? (proj.variants || []).find((v) => v.id === variantId) : null;
+  if (mode === 'edit_variant' && !existingVar) return;
+  state.projectAction = { mode, projectId, variantId };
   const heading = document.getElementById('projectActionModalHeading');
   const body = document.getElementById('projectActionModalBody');
   const saveBtn = document.getElementById('saveProjectActionModalBtn');
 
-  if (mode === 'variant') {
-    heading.textContent = `Add Sub-project · ${proj.name}`;
-    saveBtn.textContent = 'Add option';
+  if (mode === 'variant' || mode === 'edit_variant') {
+    const isEdit = mode === 'edit_variant';
+    heading.textContent = isEdit ? `Edit ${existingVar.name} · ${proj.name}` : `Add Sub-project · ${proj.name}`;
+    saveBtn.textContent = isEdit ? 'Save changes' : 'Add option';
     body.innerHTML = `
       <div>
         <label class="block text-[11px] font-medium text-muted mb-1">Option name</label>
-        <input id="paVarName" type="text" placeholder="e.g., Option A: Color IPS Build" class="w-full h-9 px-3 text-sm rounded bg-canvas-light border border-hairline-light" />
+        <input id="paVarName" type="text" value="${escapeHTML(isEdit ? existingVar.name : '')}" placeholder="e.g., Option A: Color IPS Build" class="w-full h-9 px-3 text-sm rounded bg-canvas-light border border-hairline-light" />
       </div>
       <div>
         <label class="block text-[11px] font-medium text-muted mb-1">Description</label>
-        <textarea id="paVarDesc" rows="2" placeholder="What makes this build option different..." class="w-full p-2.5 text-sm rounded bg-canvas-light border border-hairline-light resize-y"></textarea>
+        <textarea id="paVarDesc" rows="2" placeholder="What makes this build option different..." class="w-full p-2.5 text-sm rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(isEdit ? (existingVar.description || '') : '')}</textarea>
+      </div>
+      <div data-md-editor>
+        <div class="flex items-center justify-between gap-2 mb-1">
+          <label class="block text-[11px] font-medium text-muted">Sub-build notes (Markdown &amp; tables)</label>
+          <div class="pb-segmented inline-flex rounded p-0.5" role="group" aria-label="Sub-build notes mode">
+            <button type="button" data-md-mode="edit" class="h-6 px-2 rounded text-[11px] font-medium pb-seg-active">Edit</button>
+            <button type="button" data-md-mode="preview" class="h-6 px-2 rounded text-[11px] font-medium opacity-65">Preview</button>
+          </div>
+        </div>
+        <textarea id="paVarNotes" data-md-input rows="6" placeholder="Wiring table, pinout notes, build steps for this option..." class="w-full p-2.5 text-sm font-mono rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(isEdit ? (existingVar.notes || '') : '')}</textarea>
+        <div data-md-preview class="hidden pb-well rounded p-3 min-h-[112px] max-h-64 overflow-y-auto pb-md"></div>
       </div>
     `;
   } else {
@@ -1964,16 +2056,29 @@ async function saveProjectActionModal() {
   const act = state.projectAction;
   if (!act) return;
   try {
-    if (act.mode === 'variant') {
+    if (act.mode === 'variant' || act.mode === 'edit_variant') {
       const name = document.getElementById('paVarName').value.trim();
       if (!name) return;
       const desc = document.getElementById('paVarDesc').value.trim();
-      await apiFetch(`/api/projects/${encodeURIComponent(act.projectId)}/variants`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description: desc }),
-      });
-      showToast('Sub-project option added');
+      const notes = (document.getElementById('paVarNotes')?.value || '').trim();
+      if (act.mode === 'edit_variant' && act.variantId) {
+        await apiFetch(
+          `/api/projects/${encodeURIComponent(act.projectId)}/variants/${encodeURIComponent(act.variantId)}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, description: desc, notes }),
+          }
+        );
+        showToast('Sub-project updated');
+      } else {
+        await apiFetch(`/api/projects/${encodeURIComponent(act.projectId)}/variants`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description: desc, notes }),
+        });
+        showToast('Sub-project option added');
+      }
     } else {
       const target = document.getElementById('paTarget').value;
       if (!target) return;
@@ -3742,6 +3847,11 @@ function bindEvents() {
     const editProjBtn = e.target.closest('button[data-edit-project]');
     if (editProjBtn) {
       openProjectModal(editProjBtn.dataset.editProject);
+      return;
+    }
+    const editVarBtn = e.target.closest('button[data-edit-variant]');
+    if (editVarBtn) {
+      openProjectActionModal('edit_variant', editVarBtn.dataset.projId, editVarBtn.dataset.editVariant);
       return;
     }
     const addItemBtn = e.target.closest('button[data-add-proj-item]');

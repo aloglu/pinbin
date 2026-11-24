@@ -177,6 +177,7 @@ class ProjectPatch(BaseModel):
 class ProjectVariantCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     description: str = ""
+    notes: str = ""
     is_selected: bool = False
     sort_order: int | None = None
 
@@ -184,6 +185,7 @@ class ProjectVariantCreate(BaseModel):
 class ProjectVariantPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = None
+    notes: str | None = None
     is_selected: bool | None = None
     sort_order: int | None = None
 
