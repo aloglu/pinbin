@@ -961,6 +961,11 @@ def _hydrate_project(conn: sqlite3.Connection, proj_row: sqlite3.Row) -> dict[st
             item["image_path"] = s.get("image_path") or ""
             item["location"] = ""
             item["owned_quantity"] = 0
+            shop_qty = max(1, int(s.get("quantity") or 1))
+            buy_qty = max(int(item.get("quantity_needed") or 1), shop_qty)
+            item["shopping_quantity"] = shop_qty
+            item["buy_quantity"] = buy_qty
+            item["spares_count"] = max(0, buy_qty - 1)
             item["price"] = s.get("price") or ""
             item["retailer"] = s.get("retailer") or _extract_retailer(s.get("url") or "")
             item["url"] = s.get("url") or ""
@@ -980,12 +985,17 @@ def _hydrate_project(conn: sqlite3.Connection, proj_row: sqlite3.Row) -> dict[st
     owned_count = sum(1 for it in active_items if it["item_type"] == "part" and it["owned_quantity"] > 0)
     to_buy_count = sum(1 for it in active_items if it["item_type"] == "shopping")
     cost_totals: dict[str, float] = {}
+    base_cost_totals: dict[str, float] = {}
+    spares_total = 0
     for it in active_items:
         if it["item_type"] == "shopping":
+            buy_qty = max(1, int(it.get("buy_quantity") or it.get("quantity_needed") or 1))
+            spares_total += max(0, buy_qty - 1)
             val, cur = _parse_price_amount(it.get("price") or "")
             if val is not None:
                 key = cur or "TL"
-                cost_totals[key] = round(cost_totals.get(key, 0.0) + val * max(1, int(it.get("quantity_needed") or 1)), 2)
+                cost_totals[key] = round(cost_totals.get(key, 0.0) + val * buy_qty, 2)
+                base_cost_totals[key] = round(base_cost_totals.get(key, 0.0) + val, 2)
 
     proj["variants"] = variants
     proj["selected_variant_id"] = selected_variant_id
@@ -994,7 +1004,9 @@ def _hydrate_project(conn: sqlite3.Connection, proj_row: sqlite3.Row) -> dict[st
         "owned_count": owned_count,
         "to_buy_count": to_buy_count,
         "total_count": len(active_items),
+        "spares_count": spares_total,
         "remaining_cost": cost_totals,
+        "remaining_cost_base": base_cost_totals,
     }
     return proj
 

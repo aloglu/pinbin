@@ -1381,9 +1381,11 @@ function renderProjects() {
       const ownedItems = visibleItems.filter((it) => it.item_type === 'part');
       const shopItems = visibleItems.filter((it) => it.item_type === 'shopping');
 
-      const readiness = proj.readiness || { owned_count: ownedItems.length, to_buy_count: shopItems.length, total_count: visibleItems.length, remaining_cost: {} };
+      const readiness = proj.readiness || { owned_count: ownedItems.length, to_buy_count: shopItems.length, total_count: visibleItems.length, spares_count: 0, remaining_cost: {}, remaining_cost_base: {} };
       const pct = readiness.total_count > 0 ? Math.round((readiness.owned_count / readiness.total_count) * 100) : 0;
       const costStr = _formatCostMap(readiness.remaining_cost);
+      const baseCostStr = _formatCostMap(readiness.remaining_cost_base);
+      const hasSpares = Number(readiness.spares_count || 0) > 0 && baseCostStr && baseCostStr !== costStr;
 
       const renderProjectRow = (it) => {
         const thumb = it.image_path
@@ -1411,7 +1413,14 @@ function renderProjects() {
             </div>
             ${
               isShop
-                ? `${it.price ? `<span class="text-xs font-mono text-ink-2 shrink-0">${escapeHTML(it.price)}</span>` : ''}`
+                ? (() => {
+                    const buyQty = Math.max(1, Number(it.buy_quantity || it.shopping_quantity || it.quantity_needed || 1));
+                    const spares = Math.max(0, buyQty - 1);
+                    const qtyBadge = spares > 0
+                      ? `<span class="pb-badge pb-badge-neutral !text-[10px] !py-0 !px-1.5 font-mono" title="Buying ${buyQty} (${spares} ${spares === 1 ? 'spare' : 'spares'})">&times;${buyQty} (${spares} ${spares === 1 ? 'spare' : 'spares'})</span>`
+                      : '';
+                    return `<div class="flex items-center gap-1.5 shrink-0">${qtyBadge}${it.price ? `<span class="text-xs font-mono text-ink-2">${escapeHTML(it.price)}</span>` : ''}</div>`;
+                  })()
                 : `<div class="flex items-center gap-2 shrink-0">
                      ${it.location ? `<span class="pb-bin-tag !h-5 !text-[11px]">${escapeHTML(it.location)}</span>` : ''}
                      <span class="text-xs font-mono text-muted" title="Need ${it.quantity_needed}, have ${it.owned_quantity}">${it.quantity_needed}/${it.owned_quantity}</span>
@@ -1499,7 +1508,11 @@ function renderProjects() {
             <div class="mt-2.5 space-y-1">
               <div class="flex flex-wrap items-center justify-between gap-x-3 text-[12px] text-muted">
                 <span><strong class="text-ink">${readiness.owned_count}/${readiness.total_count}</strong> parts on hand${readiness.to_buy_count > 0 ? ` · ${readiness.to_buy_count} to buy` : ''}</span>
-                ${costStr ? `<span class="font-mono text-ink whitespace-nowrap">~${escapeHTML(costStr)} left</span>` : ''}
+                ${
+                  costStr
+                    ? `<span class="font-mono text-ink whitespace-nowrap">~${escapeHTML(costStr)} left${hasSpares ? ` <span class="text-muted font-normal">(~${escapeHTML(baseCostStr)} without spares)</span>` : ''}</span>`
+                    : ''
+                }
               </div>
               <div class="h-1.5 w-full rounded-full bg-ink/10 overflow-hidden">
                 <div class="h-full bg-go rounded-full transition-all" style="width:${pct}%"></div>
@@ -2981,6 +2994,7 @@ async function handleImageFileSelected(file, slot = 'main') {
 }
 
 async function handleRemovePhoto(slot = 'main') {
+  if (!window.confirm(slot === 'pinout' ? 'Remove this pinout image?' : 'Remove this photo?')) return;
   if (state.drawerMode === 'edit' && state.activePartId) {
     try {
       const updated = await apiFetch(
@@ -3660,6 +3674,7 @@ function bindEvents() {
         });
         Object.assign(item, updated);
         renderShopping();
+        loadProjects();
         if (state.consolidateOpen) refreshConsolidatePlan();
       } catch (err) {
         showToast(err.message);
@@ -3686,6 +3701,8 @@ function bindEvents() {
     const delBtn = e.target.closest('button[data-shop-del]');
     if (delBtn) {
       const id = delBtn.dataset.shopDel;
+      const item = state.shoppingItems.find((x) => x.id === id);
+      if (!window.confirm(`Remove "${item ? item.name : 'this item'}" from your shopping list?`)) return;
       try {
         await apiFetch(`/api/shopping/${encodeURIComponent(id)}`, { method: 'DELETE' });
         state.shoppingItems = state.shoppingItems.filter((x) => x.id !== id);
@@ -3957,6 +3974,7 @@ function bindEvents() {
     }
     const delOfferBtn = e.target.closest('button[data-delete-offer]');
     if (delOfferBtn && ctx.type === 'shopping') {
+      if (!window.confirm('Remove this store option?')) return;
       const offerId = delOfferBtn.dataset.deleteOffer;
       try {
         const updated = await apiFetch(
@@ -4053,6 +4071,8 @@ function bindEvents() {
       return;
     }
     if (e.target.closest('#ctxDeleteShopBtn') && ctx.type === 'shopping') {
+      const item = state.shoppingItems.find((x) => x.id === ctx.id);
+      if (!window.confirm(`Remove "${item ? item.name : 'this item'}" from your shopping list?`)) return;
       try {
         await apiFetch(`/api/shopping/${encodeURIComponent(ctx.id)}`, { method: 'DELETE' });
         state.shoppingItems = state.shoppingItems.filter((x) => x.id !== ctx.id);
@@ -4067,6 +4087,7 @@ function bindEvents() {
       return;
     }
     if (e.target.closest('#ctxUnlinkShopBtn') && ctx.projectId && ctx.projectItemId) {
+      if (!window.confirm('Unlink this item from the project? It will stay on your shopping list.')) return;
       try {
         await apiFetch(`/api/projects/${encodeURIComponent(ctx.projectId)}/items/${encodeURIComponent(ctx.projectItemId)}`, {
           method: 'DELETE',
@@ -4102,6 +4123,7 @@ function bindEvents() {
       return;
     }
     if (e.target.closest('#ctxRemoveProjItemBtn') && ctx.type === 'project_part') {
+      if (!window.confirm('Remove this part from the project?')) return;
       try {
         await apiFetch(`/api/projects/${encodeURIComponent(ctx.projectId)}/items/${encodeURIComponent(ctx.projectItemId)}`, {
           method: 'DELETE',
