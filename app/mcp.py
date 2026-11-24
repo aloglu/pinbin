@@ -339,6 +339,7 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                     "tag": {"type": "string", "description": "Optional project/tag name filter."},
                     "mode": {"type": "string", "enum": ["fewest_orders", "lowest_cost"], "default": "fewest_orders"},
                     "include_out_of_stock": {"type": "boolean", "default": False},
+                    "include_inactive_variants": {"type": "boolean", "default": False},
                     **({} if read_only else {"apply": {"type": "boolean", "default": False}}),
                 },
                 "additionalProperties": False,
@@ -955,6 +956,7 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             tag=args.get("tag"),
             mode=str(args.get("mode") or "fewest_orders"),
             include_out_of_stock=bool(args.get("include_out_of_stock", False)),
+            include_inactive_variants=bool(args.get("include_inactive_variants", False)),
             apply=apply_flag,
         )
 

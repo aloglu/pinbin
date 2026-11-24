@@ -21,6 +21,7 @@ const state = {
   consolidateOpen: false,
   consolidateMode: 'fewest_orders', // 'fewest_orders' | 'lowest_cost'
   consolidatePlan: null,
+  shoppingShowOtherBuilds: false,
   shoppingGroupBy: 'project', // 'project' | 'store' | 'flat'
   shoppingTagFilter: 'All',
   projectActiveTab: {}, // projectId -> 'all' | 'core' | variantId
@@ -962,6 +963,7 @@ async function refreshConsolidatePlan() {
       body: JSON.stringify({
         tag: state.shoppingTagFilter !== 'All' ? state.shoppingTagFilter : null,
         mode: state.consolidateMode,
+        include_inactive_variants: state.shoppingShowOtherBuilds,
         apply: false,
       }),
     });
@@ -1066,13 +1068,7 @@ function renderConsolidatePanel() {
         <div class="text-xs font-semibold text-ink">Consolidate stores <span class="font-normal text-muted">· ${escapeHTML(scopeLabel)}</span></div>
         <p class="text-xs text-muted mt-0.5">${summaryText}</p>
       </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <div class="pb-segmented inline-flex items-center rounded p-0.5" role="group" aria-label="Optimization mode">
-          <button type="button" data-cons-mode="fewest_orders" class="h-7 px-2.5 rounded-md text-xs font-medium ${state.consolidateMode === 'fewest_orders' ? 'pb-seg-active' : 'opacity-65'}">Fewest orders</button>
-          <button type="button" data-cons-mode="lowest_cost" class="h-7 px-2.5 rounded-md text-xs font-medium ${state.consolidateMode === 'lowest_cost' ? 'pb-seg-active' : 'opacity-65'}">Lowest total</button>
-        </div>
-        ${plan.changes_count > 0 ? `<button type="button" id="consApplyBtn" class="btn-primary h-7 px-3 text-xs">Apply (${plan.changes_count})</button>` : ''}
-      </div>
+      ${plan.changes_count > 0 ? `<button type="button" id="consApplyBtn" class="btn-primary h-7 px-3 text-xs shrink-0">Apply (${plan.changes_count})</button>` : ''}
     </div>
     ${currencyNote}
     ${cartsHtml ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">${cartsHtml}</div>` : ''}
@@ -1080,8 +1076,17 @@ function renderConsolidatePanel() {
     ${
       storeDomains.length > 0
         ? `<details data-cons-shipping ${shippingWasOpen ? 'open' : ''} class="pt-2 border-t border-line">
-             <summary class="text-xs font-medium text-muted cursor-pointer select-none">Shipping fees (optional)</summary>
-             <div class="mt-2 space-y-2">${shippingRowsHtml}</div>
+             <summary class="text-xs font-medium text-muted cursor-pointer select-none">Price &amp; shipping options</summary>
+             <div class="mt-2.5 space-y-2.5">
+               <div class="flex flex-wrap items-center gap-2 text-xs">
+                 <span class="text-muted">Optimize for:</span>
+                 <div class="pb-segmented inline-flex items-center rounded p-0.5" role="group" aria-label="Optimization mode">
+                   <button type="button" data-cons-mode="fewest_orders" class="h-6 px-2.5 rounded-md text-xs font-medium ${state.consolidateMode === 'fewest_orders' ? 'pb-seg-active' : 'opacity-65'}">Fewest stores</button>
+                   <button type="button" data-cons-mode="lowest_cost" class="h-6 px-2.5 rounded-md text-xs font-medium ${state.consolidateMode === 'lowest_cost' ? 'pb-seg-active' : 'opacity-65'}">Lowest total</button>
+                 </div>
+               </div>
+               <div class="space-y-2">${shippingRowsHtml}</div>
+             </div>
            </details>`
         : ''
     }
@@ -1103,24 +1108,38 @@ function renderShopping() {
     btn.classList.toggle('opacity-65', !isAct);
   });
 
+  // Exclude items that only belong to unselected sub-builds unless user explicitly toggles them on
+  const inactiveCount = state.shoppingItems.filter((it) => it.in_inactive_variant).length;
+  const activePool = state.shoppingShowOtherBuilds
+    ? state.shoppingItems
+    : state.shoppingItems.filter((it) => !it.in_inactive_variant);
+
   // Tag/project filter pills
   const tagCounts = new Map();
-  for (const it of state.shoppingItems) {
+  for (const it of activePool) {
     const topTag = _getShoppingTopTag(it);
     tagCounts.set(topTag, (tagCounts.get(topTag) || 0) + 1);
   }
-  if (tagCounts.size > 1) {
+  if (tagCounts.size > 1 || inactiveCount > 0) {
     tagBar.classList.remove('hidden');
     if (state.shoppingTagFilter !== 'All' && !tagCounts.has(state.shoppingTagFilter)) {
       state.shoppingTagFilter = 'All';
     }
-    const chips = [['All', state.shoppingItems.length], ...[...tagCounts.entries()].sort((a, b) => a[0].localeCompare(b[0]))];
-    tagBar.innerHTML = chips
+    const chips =
+      tagCounts.size > 1
+        ? [['All', activePool.length], ...[...tagCounts.entries()].sort((a, b) => a[0].localeCompare(b[0]))]
+        : [];
+    const tagHtml = chips
       .map(([lbl, cnt]) => {
         const active = state.shoppingTagFilter === lbl;
         return `<button type="button" data-shop-tag="${escapeHTML(lbl)}" aria-pressed="${active}" class="pb-toggle-chip h-7 px-2.5 text-xs font-medium inline-flex items-center gap-1.5">${escapeHTML(lbl)} <span class="pb-chip-count text-muted">${cnt}</span></button>`;
       })
       .join('');
+    const otherBuildsChip =
+      inactiveCount > 0
+        ? `<button type="button" id="toggleOtherBuildsBtn" aria-pressed="${state.shoppingShowOtherBuilds}" class="pb-toggle-chip h-7 px-2.5 text-xs font-medium inline-flex items-center gap-1.5 ${chips.length ? 'ml-auto' : ''}" title="Show items from unselected project sub-builds">Other builds <span class="pb-chip-count text-muted">${inactiveCount}</span></button>`
+        : '';
+    tagBar.innerHTML = tagHtml + otherBuildsChip;
   } else {
     state.shoppingTagFilter = 'All';
     tagBar.classList.add('hidden');
@@ -1132,7 +1151,7 @@ function renderShopping() {
       ? `<img src="${escapeHTML(imageUrl(path))}" alt="" class="w-full h-full object-contain p-0.5 bg-white" />`
       : categoryGlyph(cat, 'w-5 h-5 text-muted opacity-60');
 
-  const wishItems = state.shoppingItems.filter((it) => {
+  const wishItems = activePool.filter((it) => {
     if (state.shoppingTagFilter !== 'All' && _getShoppingTopTag(it) !== state.shoppingTagFilter) {
       return false;
     }
@@ -1369,11 +1388,14 @@ function renderProjects() {
         selectedVariantObj
           ? `<div class="px-4 py-2 bg-ink/[0.025] border-b border-line flex items-center justify-between gap-2 text-xs">
                <span class="text-muted truncate">${escapeHTML(selectedVariantObj.description || `Showing Core + ${selectedVariantObj.name}`)}</span>
-               ${
-                 selectedVariantObj.is_selected
-                   ? `<span class="text-go font-medium shrink-0">Selected build</span>`
-                   : `<button type="button" data-select-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" class="btn-secondary h-6 px-2 text-[11px] shrink-0">Use this option</button>`
-               }
+               <div class="flex items-center gap-2 shrink-0">
+                 ${
+                   selectedVariantObj.is_selected
+                     ? `<span class="text-go font-medium">Selected build</span>`
+                     : `<button type="button" data-select-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" class="btn-secondary h-6 px-2 text-[11px]">Use this option</button>`
+                 }
+                 <button type="button" data-delete-variant="${escapeHTML(selectedVariantObj.id)}" data-proj-id="${escapeHTML(proj.id)}" data-variant-name="${escapeHTML(selectedVariantObj.name)}" class="btn-danger-outline h-6 px-2 text-[11px] rounded" title="Delete this sub-build">Delete</button>
+               </div>
              </div>`
           : '';
 
@@ -3396,6 +3418,12 @@ function bindEvents() {
   });
 
   document.getElementById('shoppingTagFilterBar').addEventListener('click', (e) => {
+    if (e.target.closest('#toggleOtherBuildsBtn')) {
+      state.shoppingShowOtherBuilds = !state.shoppingShowOtherBuilds;
+      renderShopping();
+      if (state.consolidateOpen) refreshConsolidatePlan();
+      return;
+    }
     const btn = e.target.closest('button[data-shop-tag]');
     if (!btn) return;
     state.shoppingTagFilter = btn.dataset.shopTag;
@@ -3436,6 +3464,7 @@ function bindEvents() {
             body: JSON.stringify({
               tag: state.shoppingTagFilter !== 'All' ? state.shoppingTagFilter : null,
               mode: state.consolidateMode,
+              include_inactive_variants: state.shoppingShowOtherBuilds,
               apply: true,
             }),
           });
@@ -3669,8 +3698,27 @@ function bindEvents() {
             body: JSON.stringify({ is_selected: true }),
           }
         );
-        await Promise.all([loadProjects(), loadParts()]);
+        await Promise.all([loadProjects(), loadParts(), loadShopping()]);
         showToast('Active build option updated');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    const delVarBtn = e.target.closest('button[data-delete-variant]');
+    if (delVarBtn) {
+      const vName = delVarBtn.dataset.variantName || 'this sub-build';
+      if (!window.confirm(`Delete "${vName}"? Parts linked only to it will be unlinked from this project.`)) {
+        return;
+      }
+      try {
+        await apiFetch(
+          `/api/projects/${encodeURIComponent(delVarBtn.dataset.projId)}/variants/${encodeURIComponent(delVarBtn.dataset.deleteVariant)}`,
+          { method: 'DELETE' }
+        );
+        delete state.projectActiveTab[delVarBtn.dataset.projId];
+        await Promise.all([loadProjects(), loadParts(), loadShopping()]);
+        showToast(`Deleted "${vName}"`);
       } catch (err) {
         showToast(err.message);
       }

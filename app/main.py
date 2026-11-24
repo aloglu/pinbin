@@ -254,6 +254,7 @@ class ShoppingOptimizeRequest(BaseModel):
     tag: str | None = None
     mode: str = "fewest_orders"
     include_out_of_stock: bool = False
+    include_inactive_variants: bool = False
     apply: bool = False
 
 
@@ -644,6 +645,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             tag=payload.tag,
             mode=payload.mode,
             include_out_of_stock=payload.include_out_of_stock,
+            include_inactive_variants=payload.include_inactive_variants,
             apply=payload.apply,
         )
 

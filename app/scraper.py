@@ -172,43 +172,73 @@ def _extract_price(soup: BeautifulSoup) -> str:
     if amount:
         return f"{amount} {currency}".strip()[:40]
 
-    for script in soup.find_all("script", type="application/ld+json"):
-        raw = script.string or ""
-        if not raw.strip():
-            continue
-        try:
-            ld = json.loads(raw)
-        except Exception:
-            continue
-        items = ld if isinstance(ld, list) else [ld]
-        for obj in items:
-            if not isinstance(obj, dict):
+    def _iter_jsonld_objects() -> list[dict[str, Any]]:
+        objs: list[dict[str, Any]] = []
+        for script in soup.find_all("script", type="application/ld+json"):
+            raw = script.get_text() or ""
+            if not raw.strip():
                 continue
-            offers = obj.get("offers")
-            if isinstance(offers, list) and offers:
-                offers = offers[0]
-            if isinstance(offers, dict):
-                p = offers.get("price") or offers.get("lowPrice")
-                cur = offers.get("priceCurrency") or ""
-                if p is not None and str(p).strip():
-                    return f"{str(p).strip()} {str(cur).strip()}".strip()[:40]
+            try:
+                ld = json.loads(raw)
+            except Exception:
+                continue
+            queue = ld if isinstance(ld, list) else [ld]
+            while queue:
+                obj = queue.pop(0)
+                if not isinstance(obj, dict):
+                    continue
+                objs.append(obj)
+                graph = obj.get("@graph")
+                if isinstance(graph, list):
+                    queue.extend(graph)
+        return objs
+
+    for obj in _iter_jsonld_objects():
+        offers = obj.get("offers")
+        if isinstance(offers, list) and offers:
+            offers = offers[0]
+        if isinstance(offers, dict):
+            p = offers.get("price") or offers.get("lowPrice")
+            cur = offers.get("priceCurrency") or ""
+            if p is not None and str(p).strip():
+                return f"{str(p).strip()} {str(cur).strip()}".strip()[:40]
+
+    # Fallback: schema.org microdata (itemprop="price") & common Turkish/global e-commerce selectors
+    ip_price = soup.find(attrs={"itemprop": "price"})
+    if ip_price:
+        p_val = str(ip_price.get("content") or ip_price.get_text(strip=True) or "").strip()
+        ip_cur = soup.find(attrs={"itemprop": "priceCurrency"})
+        c_val = str(ip_cur.get("content") or ip_cur.get_text(strip=True) or "").strip() if ip_cur else ""
+        if p_val:
+            return f"{p_val} {c_val}".strip()[:40]
+
+    for sel in (".spanFiyat", "#indirimliFiyat", ".product-price-not-discounted", ".product-price", ".current-price", ".urun-fiyat"):
+        el = soup.select_one(sel)
+        if el:
+            txt = el.get_text(" ", strip=True)
+            if txt and any(ch.isdigit() for ch in txt):
+                return txt[:40]
     return ""
 
 
 def _extract_availability(soup: BeautifulSoup) -> str:
-    """Best-effort extraction of stock availability from JSON-LD Offer."""
+    """Best-effort extraction of stock availability from JSON-LD Offer or microdata."""
     for script in soup.find_all("script", type="application/ld+json"):
-        raw = script.string or ""
+        raw = script.get_text() or ""
         if not raw.strip():
             continue
         try:
             ld = json.loads(raw)
         except Exception:
             continue
-        items = ld if isinstance(ld, list) else [ld]
-        for obj in items:
+        queue = ld if isinstance(ld, list) else [ld]
+        while queue:
+            obj = queue.pop(0)
             if not isinstance(obj, dict):
                 continue
+            graph = obj.get("@graph")
+            if isinstance(graph, list):
+                queue.extend(graph)
             offers = obj.get("offers")
             if isinstance(offers, list) and offers:
                 offers = offers[0]
@@ -218,6 +248,13 @@ def _extract_availability(soup: BeautifulSoup) -> str:
                     return "in_stock"
                 if "outofstock" in avail or "soldout" in avail:
                     return "out_of_stock"
+    ip_avail = soup.find(attrs={"itemprop": "availability"})
+    if ip_avail:
+        avail = str(ip_avail.get("href") or ip_avail.get("content") or ip_avail.get_text(strip=True) or "").lower()
+        if "instock" in avail:
+            return "in_stock"
+        if "outofstock" in avail or "soldout" in avail:
+            return "out_of_stock"
     return ""
 
 

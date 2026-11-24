@@ -1422,7 +1422,8 @@ def _hydrate_shopping_item(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[s
     links = conn.execute(
         """
         SELECT pi.id AS project_item_id, pi.project_id, p.name AS project_name,
-               pi.variant_id, pv.name AS variant_name, pi.project_notes
+               pi.variant_id, pv.name AS variant_name, pv.is_selected AS variant_is_selected,
+               pi.project_notes
         FROM project_items pi
         JOIN projects p ON p.id = pi.project_id
         LEFT JOIN project_variants pv ON pv.id = pi.variant_id
@@ -1430,7 +1431,23 @@ def _hydrate_shopping_item(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[s
         """,
         (item["id"],),
     ).fetchall()
-    item["project_links"] = [dict(lk) for lk in links]
+    hydrated_links: list[dict[str, Any]] = []
+    for lk in links:
+        d = dict(lk)
+        if d["variant_id"] is None:
+            d["variant_is_selected"] = True
+        else:
+            sel_row = conn.execute(
+                "SELECT id FROM project_variants WHERE project_id = ? ORDER BY is_selected DESC, sort_order ASC, created_at ASC LIMIT 1",
+                (d["project_id"],),
+            ).fetchone()
+            d["variant_is_selected"] = bool(sel_row and sel_row["id"] == d["variant_id"])
+        hydrated_links.append(d)
+    item["project_links"] = hydrated_links
+    # True when this item ONLY belongs to unselected sub-builds (not Core, not any selected variant)
+    item["in_inactive_variant"] = bool(hydrated_links) and all(
+        lk["variant_id"] is not None and not lk["variant_is_selected"] for lk in hydrated_links
+    )
     offer_rows = conn.execute(
         """
         SELECT id, shopping_item_id, retailer, url, price, in_stock, is_selected, notes, created_at, updated_at
@@ -2188,6 +2205,7 @@ def optimize_shopping_carts(
     tag: str | None = None,
     mode: str = "fewest_orders",
     include_out_of_stock: bool = False,
+    include_inactive_variants: bool = False,
     apply: bool = False,
 ) -> dict[str, Any]:
     """Compute an optimal retailer assignment across shopping items."""
@@ -2198,6 +2216,8 @@ def optimize_shopping_carts(
 
     # Filter items by requested scope
     items = all_items
+    if not include_inactive_variants and not item_ids:
+        items = [it for it in items if not it.get("in_inactive_variant")]
     if item_ids:
         wanted = set(item_ids)
         items = [it for it in items if it["id"] in wanted]
