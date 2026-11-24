@@ -261,6 +261,21 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    @application.get("/manifest.webmanifest")
+    async def manifest() -> FileResponse:
+        return FileResponse(
+            STATIC_DIR / "manifest.webmanifest",
+            media_type="application/manifest+json",
+        )
+
+    @application.get("/apple-touch-icon.png")
+    @application.get("/apple-touch-icon-precomposed.png")
+    async def apple_touch_icon() -> FileResponse:
+        return FileResponse(
+            STATIC_DIR / "brand" / "apple-touch-icon.png",
+            media_type="image/png",
+        )
+
     @application.get("/")
     @application.get("/inventory")
     @application.get("/projects")

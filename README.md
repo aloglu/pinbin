@@ -77,7 +77,7 @@ The files in `app/static/brand/` are made from `brand.js` too. If you change `br
 node scripts/make_brand_files.js
 ```
 
-This writes the SVG files. `apple-touch-icon.png` (the 180 px home-screen icon, in the default green) is a picture of `app-icon.svg`. To make it again, open `app-icon.svg` in a browser at 180 × 180 px and save a screenshot. `pinbin-mark.svg` and `pinbin-wordmark.svg` are one-color masters for use outside the app.
+This writes the SVG files. The PNG home-screen icons (`apple-touch-icon.png` at 180 px, `icon-192.png`, and `icon-512.png`, in the default green) are rendered from `app-icon.svg` (e.g. with `rsvg-convert -w 192 -h 192 app/static/brand/app-icon.svg -o app/static/brand/icon-192.png`). `pinbin-mark.svg` and `pinbin-wordmark.svg` are one-color masters for use outside the app.
 
 ---
 
