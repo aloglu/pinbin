@@ -454,7 +454,7 @@ function updateOhmCalc() {
   else if (resR === null && resI > 0) resR = resV / (resI / 1000);
 
   if (!Number.isFinite(resV) || !Number.isFinite(resI) || !Number.isFinite(resR)) {
-    out.innerHTML = `<p class="text-xs text-amber-500">Values must be greater than zero.</p>`;
+    out.innerHTML = `<p class="text-xs text-stop">Values must be greater than zero.</p>`;
     return;
   }
   const mw = resV * resI;
@@ -836,7 +836,7 @@ function renderBoardPinoutGuide() {
               const act = wbState.activeBoard === k;
               return `<button type="button" data-wb-board="${k}" aria-pressed="${act}" class="pb-toggle-chip h-8 px-3 rounded-full text-xs font-medium inline-flex items-center gap-1.5">
                 <span>${escapeHTML(b.name)}</span>
-                ${owned[k] ? `<span class="w-1.5 h-1.5 rounded-full ${act ? 'bg-white' : 'bg-emerald-500'}" title="In your inventory"></span>` : ''}
+                ${owned[k] ? `<span class="w-1.5 h-1.5 rounded-full ${act ? 'bg-white' : 'bg-go'}" title="In your inventory"></span>` : ''}
               </button>`;
             })
             .join('')}
@@ -1102,7 +1102,7 @@ function renderCompatibilitySection() {
               const checked = wbState.compatSelectedIds.includes(p.id);
               return `
                 <label class="flex items-center gap-2.5 py-2 px-1 cursor-pointer hover:bg-matte-light/60 rounded">
-                  <input type="checkbox" data-compat-part="${escapeHTML(p.id)}" ${checked ? 'checked' : ''} class="h-3.5 w-3.5 rounded accent-orange-500 shrink-0" />
+                  <input type="checkbox" data-compat-part="${escapeHTML(p.id)}" ${checked ? 'checked' : ''} class="h-3.5 w-3.5 rounded accent-accent shrink-0" />
                   <div class="min-w-0 flex-1">
                     <div class="text-xs font-medium text-ink truncate">${escapeHTML(p.name)}</div>
                     <div class="text-[10px] text-muted truncate">${escapeHTML(p.category)}</div>
@@ -1156,18 +1156,16 @@ function renderCompatibilitySection() {
                   ? `<div class="pt-3 border-t border-hairline-light space-y-3">
                        <div class="flex items-center justify-between">
                          <span class="pb-section-label text-accent">AI Wiring Plan (ASD-STE100)</span>
-                         <span class="text-[10px] font-mono uppercase px-2 py-0.5 rounded ${
-                           wbState.compatAiResult.status === 'danger'
-                             ? 'bg-red-500/15 text-red-600 dark:text-red-400'
-                             : wbState.compatAiResult.status === 'ok'
-                             ? 'bg-emerald-500/15 text-go'
-                             : 'bg-amber-500/15 text-stop'
-                         }">${escapeHTML(wbState.compatAiResult.status)}</span>
+                         <span class="pb-badge ${
+                           wbState.compatAiResult.status === 'ok' ? 'pb-badge-emerald' : 'pb-badge-amber'
+                         }">${
+                           wbState.compatAiResult.status === 'ok' ? 'OK' : wbState.compatAiResult.status === 'danger' ? 'Danger' : 'Caution'
+                         }</span>
                        </div>
                        <p class="text-xs leading-relaxed text-ink-2">${escapeHTML(wbState.compatAiResult.summary)}</p>
                        ${
                          wbState.compatAiResult.issues.length > 0
-                           ? `<ul class="space-y-1.5 text-xs text-amber-900 dark:text-amber-300 list-disc pl-4">
+                           ? `<ul class="space-y-1.5 text-xs text-ink list-disc pl-4">
                                 ${wbState.compatAiResult.issues.map((x) => `<li>${escapeHTML(x)}</li>`).join('')}
                               </ul>`
                            : ''

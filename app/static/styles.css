@@ -770,6 +770,20 @@ button.pb-bin-tag:hover {
 .pb-status.is-stop {
   color: rgb(var(--stop));
 }
+.pb-status.is-idle {
+  color: rgb(var(--muted));
+}
+
+/* Folding panel (shopping add form on phones) */
+.pb-fold > summary {
+  list-style: none;
+}
+.pb-fold > summary::-webkit-details-marker {
+  display: none;
+}
+.pb-fold[open] .pb-fold-chevron {
+  transform: rotate(180deg);
+}
 
 /* Latching toggle chips (bench guide picker, glossary filters) */
 .pb-toggle-chip {
@@ -907,6 +921,17 @@ button.pb-bin-tag:hover {
 #contextDrawerBackdrop {
   transition: opacity 180ms ease;
 }
+/* A closed drawer is hidden after its slide-out ends. Hidden content cannot
+   take keyboard focus, and it cannot show below a phone's browser bar. */
+#drawerRoot,
+#contextDrawerRoot {
+  transition: visibility 0s linear 0s;
+}
+#drawerRoot.drawer-closed,
+#contextDrawerRoot.drawer-closed {
+  visibility: hidden;
+  transition: visibility 0s linear 230ms;
+}
 .drawer-open #drawerBackdrop,
 .drawer-open #contextDrawerBackdrop {
   opacity: 1 !important;
@@ -1004,12 +1029,108 @@ button.pb-bin-tag:hover {
   border: 1px solid rgb(var(--line));
   border-radius: 8px;
   box-shadow: 0 24px 64px rgb(0 0 0 / 0.3);
+  /* A tall modal scrolls inside itself, so on a short phone screen
+     (or with the on-screen keyboard open) the top never goes off-screen. */
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
 }
 
 /* Toast */
 #toast {
   background: rgb(var(--ink));
   color: rgb(var(--on-ink));
+}
+
+/* ---------------------------------------------------------------------------
+   Phones and touch screens
+   --------------------------------------------------------------------------- */
+
+/* Phone page switcher: all five pages fit on one line, no sideways scroll */
+.pb-nav-mobile {
+  justify-content: space-between;
+}
+.pb-nav-mobile > button {
+  flex: 1 1 0;
+  justify-content: center;
+  padding: 0 2px;
+  font-variation-settings: 'wdth' 88;
+}
+.pb-nav-mobile > button.pb-tab-active::after {
+  left: 8px;
+  right: 8px;
+}
+@media (max-width: 359px) {
+  .pb-nav-mobile > button {
+    font-size: 13px;
+  }
+}
+
+/* Table view: part names truncate on one line; on phones they get two lines */
+.pb-table-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 639px) {
+  .pb-table-name {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+}
+
+/* Narrow phones: underline tabs use the condensed width so a 4-tab strip fits */
+@media (max-width: 400px) {
+  .pb-tab {
+    padding: 0 7px;
+    font-variation-settings: 'wdth' 86;
+  }
+}
+
+/* Glossary below the lg breakpoint: show the term list, or one term full width */
+@media (max-width: 1023px) {
+  #glossaryLayout.is-detail #glossaryListPane,
+  #glossaryLayout:not(.is-detail) #glossaryDetailPane {
+    display: none;
+  }
+}
+
+/* Touch screens: bigger targets, no keyboard-only hints */
+@media (pointer: coarse) {
+  /* iOS zooms the page when a field with text under 16px gets focus */
+  input[type='text'],
+  input[type='url'],
+  input[type='number'],
+  input[type='search'],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+  .pb-keyboard-only {
+    display: none !important;
+  }
+  .pb-stepper > button {
+    min-width: 36px;
+    min-height: 36px;
+  }
+  .btn-icon {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .pb-segmented > button {
+    min-height: 32px;
+  }
+  .pb-side-item {
+    min-height: 38px;
+  }
+  .pb-tab {
+    height: 44px;
+  }
+  /* The "No photo" hint shows on hover on desktop; touch screens have no hover */
+  .pb-part-photo .pb-needs-photo {
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

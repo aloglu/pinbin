@@ -35,6 +35,7 @@ const state = {
   glossaryCategory: 'All',
   glossaryInInventoryOnly: false,
   selectedGlossaryId: null,
+  glossaryMobileDetail: false, // phones: true while one term is open full width
   activePreviewTab: 'overview', // 'overview' | 'specs' | 'notes'
   editingGlossaryId: null,
   popoverTermId: null,
@@ -207,6 +208,17 @@ function renderMarkdown(raw) {
   }
   closeList();
   return out.join('');
+}
+
+// One-line plain text from Markdown, for short previews in list rows.
+function markdownToPlain(raw) {
+  return String(raw || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+\[[ xX]\]\s+|[-*+]\s+|\d+\.\s+)/gm, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__|\*|_|`|~~)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function setMdEditorMode(editorEl, mode) {
@@ -657,12 +669,13 @@ function renderListRow(p) {
   return `
     <tr data-id="${escapeHTML(p.id)}">
       <td class="w-14 !pr-0"><div class="pb-well w-11 h-11 rounded flex items-center justify-center overflow-hidden">${thumb}</div></td>
-      <td class="min-w-0">
-        <div class="pb-part-name !text-[15px] truncate max-w-[42ch]">${escapeHTML(p.name)}</div>
-        <div class="text-[13px] text-muted truncate max-w-[52ch]">${escapeHTML(p.subtitle || '')}</div>
+      <td class="w-full max-w-0">
+        <div class="pb-part-name pb-table-name !text-[15px]">${escapeHTML(p.name)}</div>
+        <div class="text-[13px] text-muted truncate">${escapeHTML(p.subtitle || '')}</div>
+        ${p.location ? `<div class="sm:hidden mt-1">${binTag(p.location)}</div>` : ''}
       </td>
       <td class="hidden md:table-cell text-[13px] text-ink-2 whitespace-nowrap">${escapeHTML(p.category)}</td>
-      <td>${p.location ? binTag(p.location) : '<span class="text-muted">&ndash;</span>'}</td>
+      <td class="hidden sm:table-cell">${p.location ? binTag(p.location) : '<span class="text-muted">&ndash;</span>'}</td>
       <td class="hidden lg:table-cell max-w-[180px]">${partStatusHtml(p)}</td>
       <td class="text-right" data-stepper>${qtyStepper(p, 'data-step', 'w-6 h-7')}</td>
     </tr>
@@ -687,16 +700,16 @@ function renderGrid() {
   empty.classList.add('hidden');
 
   if (state.uiSettings.view_mode === 'list') {
-    container.className = 'overflow-x-auto';
+    container.className = '';
     container.innerHTML = `
       <table class="pb-table">
         <thead><tr>
           <th class="w-14"><span class="sr-only">Photo</span></th>
           <th>Part</th>
           <th class="hidden md:table-cell">Category</th>
-          <th>Bin</th>
+          <th class="hidden sm:table-cell">Bin</th>
           <th class="hidden lg:table-cell">Status</th>
-          <th class="text-right">Quantity</th>
+          <th class="text-right"><span class="hidden sm:inline">Quantity</span><span class="sm:hidden">Qty</span></th>
         </tr></thead>
         <tbody>${items.map(renderListRow).join('')}</tbody>
       </table>`;
@@ -941,7 +954,8 @@ function renderShopping() {
         : it.in_stock === 'out_of_stock'
         ? `<span class="text-[11px] font-medium text-stop">Out of stock</span>`
         : '';
-    const linkBadges = (it.project_links || [])
+    const links = it.project_links || [];
+    const linkBadges = (state.shoppingGroupBy === 'project' && links.length === 1 ? [] : links)
       .map(
         (lk) =>
           `<span class="pb-badge pb-badge-neutral !text-[11px] !py-0 !px-1.5">${escapeHTML(lk.project_name)}${lk.variant_name ? ` · ${escapeHTML(lk.variant_name)}` : ' · Core'}</span>`
@@ -1048,7 +1062,7 @@ function renderShopping() {
 
 const PROJECT_STATUS_META = {
   active: { label: 'Active on bench', dot: 'is-go' },
-  planning: { label: 'Planning', dot: 'is-warn' },
+  planning: { label: 'Planning', dot: 'is-idle' },
   completed: { label: 'Completed', dot: '' },
   archived: { label: 'Archived', dot: '' },
 };
@@ -1103,23 +1117,24 @@ function renderProjects() {
         const openAttr = isShop
           ? `data-open-shop="${escapeHTML(it.shopping_item_id)}" data-ctx-proj="${escapeHTML(proj.id)}" data-ctx-pitem="${escapeHTML(it.id)}"`
           : `data-open-pitem="${escapeHTML(it.id)}" data-ctx-proj="${escapeHTML(proj.id)}"`;
-        const notePreview = (it.project_notes || it.why_needed || '').trim();
+        const notePreview = markdownToPlain(it.project_notes || it.why_needed || '');
         return `
           <button type="button" ${openAttr} class="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-ink/[0.035] transition-colors">
             <div class="pb-well w-9 h-9 rounded flex items-center justify-center overflow-hidden shrink-0">${thumb}</div>
             <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-1.5 min-w-0">
-                <p class="text-sm font-medium truncate">${escapeHTML(it.name)}</p>
-                ${varObj ? `<span class="pb-badge pb-badge-neutral !text-[10px] !py-0 !px-1.5 shrink-0">${escapeHTML(varObj.name)}</span>` : ''}
-              </div>
-              ${notePreview ? `<p class="text-[12px] text-muted truncate mt-0.5">${escapeHTML(notePreview)}</p>` : ''}
+              <p class="text-sm font-medium truncate">${escapeHTML(it.name)}</p>
+              ${
+                varObj || notePreview
+                  ? `<div class="flex items-center gap-1.5 min-w-0 mt-0.5">
+                       ${varObj ? `<span class="pb-badge pb-badge-neutral !text-[10px] !py-0 !px-1.5 shrink-0">${escapeHTML(varObj.name)}</span>` : ''}
+                       ${notePreview ? `<p class="text-[12px] text-muted truncate">${escapeHTML(notePreview)}</p>` : ''}
+                     </div>`
+                  : ''
+              }
             </div>
             ${
               isShop
-                ? `<div class="text-right shrink-0">
-                     <span class="pb-badge !text-[11px] !py-0 !px-1.5 bg-amber-500/15 text-amber-400 border border-amber-500/30">To buy</span>
-                     ${it.price ? `<div class="text-[11px] font-mono text-muted mt-0.5">${escapeHTML(it.price)}</div>` : ''}
-                   </div>`
+                ? `${it.price ? `<span class="text-xs font-mono text-ink-2 shrink-0">${escapeHTML(it.price)}</span>` : ''}`
                 : `<div class="flex items-center gap-2 shrink-0">
                      ${it.location ? `<span class="pb-bin-tag !h-5 !text-[11px]">${escapeHTML(it.location)}</span>` : ''}
                      <span class="text-xs font-mono text-muted" title="Need ${it.quantity_needed}, have ${it.owned_quantity}">${it.quantity_needed}/${it.owned_quantity}</span>
@@ -1161,27 +1176,16 @@ function renderProjects() {
 
       return `
         <div class="elevated-card rounded-md overflow-hidden flex flex-col">
-          <div class="px-4 py-3.5 flex items-start justify-between gap-3 border-b border-line">
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-2">
-                <h2 class="pb-display text-xl flex items-center gap-2 min-w-0">
+          <div class="px-4 py-3.5 border-b border-line">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h2 class="pb-display text-xl flex items-center gap-2 min-w-0 max-w-full">
                   <span class="pb-status ${st.dot}"></span>
                   <span class="truncate">${escapeHTML(proj.name)}</span>
                 </h2>
                 <span class="pb-badge pb-badge-neutral !text-[11px]">${escapeHTML(st.label)}</span>
               </div>
-              ${proj.description ? `<p class="text-[13px] text-muted mt-1">${escapeHTML(proj.description)}</p>` : ''}
-              <div class="mt-2.5 space-y-1">
-                <div class="flex items-center justify-between text-[12px] text-muted">
-                  <span><strong class="text-ink">${readiness.owned_count}/${readiness.total_count}</strong> parts on hand${readiness.to_buy_count > 0 ? ` · ${readiness.to_buy_count} to buy` : ''}</span>
-                  ${costStr ? `<span class="font-mono text-ink">~${escapeHTML(costStr)} left</span>` : ''}
-                </div>
-                <div class="h-1.5 w-full rounded-full bg-ink/10 overflow-hidden">
-                  <div class="h-full bg-go rounded-full transition-all" style="width:${pct}%"></div>
-                </div>
-              </div>
-            </div>
-            <div class="flex items-center gap-1.5 shrink-0">
+              <div class="flex items-center gap-1.5 shrink-0">
               ${
                 proj.status === 'active'
                   ? `<button type="button" data-proj-status="planning" data-proj-id="${escapeHTML(proj.id)}" class="btn-secondary h-8 px-2.5 text-xs" title="Move back to planning and free parts">Tear down</button>`
@@ -1190,6 +1194,17 @@ function renderProjects() {
               <button type="button" data-edit-project="${escapeHTML(proj.id)}" class="btn-icon h-8 w-8 flex items-center justify-center" title="Edit project" aria-label="Edit project">
                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
               </button>
+              </div>
+            </div>
+            ${proj.description ? `<p class="text-[13px] text-muted mt-1">${escapeHTML(proj.description)}</p>` : ''}
+            <div class="mt-2.5 space-y-1">
+              <div class="flex flex-wrap items-center justify-between gap-x-3 text-[12px] text-muted">
+                <span><strong class="text-ink">${readiness.owned_count}/${readiness.total_count}</strong> parts on hand${readiness.to_buy_count > 0 ? ` · ${readiness.to_buy_count} to buy` : ''}</span>
+                ${costStr ? `<span class="font-mono text-ink whitespace-nowrap">~${escapeHTML(costStr)} left</span>` : ''}
+              </div>
+              <div class="h-1.5 w-full rounded-full bg-ink/10 overflow-hidden">
+                <div class="h-full bg-go rounded-full transition-all" style="width:${pct}%"></div>
+              </div>
             </div>
           </div>
 
@@ -1203,13 +1218,13 @@ function renderProjects() {
                 : `
                   ${
                     ownedItems.length > 0
-                      ? `<div class="px-4 py-1.5 bg-ink/[0.02] text-[11px] font-semibold uppercase tracking-wider text-muted">On hand (${ownedItems.length})</div>
+                      ? `<div class="px-4 py-1.5 bg-ink/[0.02] pb-section-label !text-[12px]">On hand <span class="font-normal text-muted">${ownedItems.length}</span></div>
                          ${ownedItems.map(renderProjectRow).join('')}`
                       : ''
                   }
                   ${
                     shopItems.length > 0
-                      ? `<div class="px-4 py-1.5 bg-ink/[0.02] text-[11px] font-semibold uppercase tracking-wider text-muted">To buy (${shopItems.length})</div>
+                      ? `<div class="px-4 py-1.5 bg-ink/[0.02] pb-section-label !text-[12px]">To buy <span class="font-normal text-muted">${shopItems.length}</span></div>
                          ${shopItems.map(renderProjectRow).join('')}`
                       : ''
                   }
@@ -1245,13 +1260,16 @@ function renderProjects() {
 
 // =============================================================================
 // CONTEXT SLIDE-OVER DRAWER (Shopping Item & Project-Scoped Part Details)
+// Opens in Preview (read) mode, like the inventory drawer. The footer has the
+// same Preview / Edit switch.
 // =============================================================================
 function openContextDrawer(ctx) {
-  state.contextDrawer = ctx;
+  state.contextDrawer = { mode: 'view', ...ctx };
   const root = document.getElementById('contextDrawerRoot');
   root.classList.remove('drawer-closed', 'pointer-events-none');
   root.classList.add('drawer-open');
   root.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
   renderContextDrawer();
 }
 
@@ -1261,6 +1279,64 @@ function closeContextDrawer() {
   root.classList.add('drawer-closed', 'pointer-events-none');
   root.classList.remove('drawer-open');
   root.setAttribute('aria-hidden', 'true');
+  if (!state.drawerMode) document.body.style.overflow = '';
+}
+
+function setContextDrawerMode(mode) {
+  if (!state.contextDrawer || state.contextDrawer.mode === mode) return;
+  state.contextDrawer.mode = mode;
+  renderContextDrawer();
+  document.getElementById('contextDrawerBody').scrollTop = 0;
+}
+
+// Footer: Preview/Edit switch on the left (plus the remove action in edit mode),
+// one action on the right. Same layout as the inventory drawer footer.
+function contextFooterHtml(mode, dangerHtml, saveId) {
+  const seg = (m, label) =>
+    `<button type="button" data-ctx-mode="${m}" class="h-7 px-3 rounded-md text-xs font-medium transition-colors ${mode === m ? 'pb-seg-active' : 'opacity-70'}">${label}</button>`;
+  return `
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div class="pb-segmented inline-flex items-center rounded p-0.5 shrink-0" role="group" aria-label="Drawer mode">
+        ${seg('view', 'Preview')}${seg('edit', 'Edit')}
+      </div>
+      ${mode === 'edit' ? dangerHtml : ''}
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      ${
+        mode === 'edit'
+          ? `<button type="button" id="${saveId}" class="btn-primary h-9 px-4 rounded text-xs font-medium">Save</button>`
+          : `<button type="button" id="ctxCloseFooterBtn" class="btn-secondary h-9 px-3.5 rounded text-xs font-medium">Close</button>`
+      }
+    </div>
+  `;
+}
+
+function contextPhotoHtml(imagePath, alt, category) {
+  if (imagePath) {
+    const src = escapeHTML(imageUrl(imagePath));
+    return `<button type="button" data-lightbox-src="${src}" class="block w-full h-48 sm:h-56 rounded-md overflow-hidden bg-white border border-line cursor-zoom-in" title="Show full size">
+              <img src="${src}" alt="${escapeHTML(alt)}" class="w-full h-full object-contain p-3" />
+            </button>`;
+  }
+  return `<div class="w-full h-24 rounded-md border border-dashed border-line flex items-center justify-center gap-4 text-muted">
+            ${categoryGlyph(category || 'Sensors', 'w-9 h-9 opacity-60')}
+            <span class="text-sm">No photo</span>
+          </div>`;
+}
+
+function contextNotesHtml(label, text, emptyText, emptyAction) {
+  return `
+    <section>
+      <h4 class="pb-section-label mb-1.5">${label}</h4>
+      ${
+        text && text.trim()
+          ? `<div class="pb-md">${renderMarkdown(text)}</div>`
+          : `<div class="py-6 text-center space-y-3 border border-dashed border-line rounded-md">
+               <p class="text-sm text-muted">${emptyText}</p>
+               <button type="button" data-ctx-mode="edit" class="btn-secondary h-8 px-3.5 text-[13px]">${emptyAction}</button>
+             </div>`
+      }
+    </section>`;
 }
 
 function renderContextDrawer() {
@@ -1270,6 +1346,7 @@ function renderContextDrawer() {
   const heading = document.getElementById('contextDrawerHeading');
   const body = document.getElementById('contextDrawerBody');
   const footer = document.getElementById('contextDrawerFooter');
+  const ext = `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 17 17 7M8 7h9v9"/></svg>`;
 
   if (ctx.type === 'shopping') {
     const it = state.shoppingItems.find((x) => x.id === ctx.id);
@@ -1277,70 +1354,88 @@ function renderContextDrawer() {
       closeContextDrawer();
       return;
     }
-    badge.textContent = 'To buy';
-    badge.className = 'pb-badge !text-[11px] bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0';
-    heading.textContent = it.name;
-
-    const imgHtml = it.image_path
-      ? `<img src="${escapeHTML(imageUrl(it.image_path))}" alt="" class="w-full h-full object-contain p-2 bg-white" />`
-      : `<div class="text-xs text-muted flex flex-col items-center gap-1.5">${categoryGlyph(it.category || 'Sensors', 'w-8 h-8 opacity-40')}<span>No product photo yet</span></div>`;
+    heading.textContent = 'To buy';
+    const linkNames = (it.project_links || []).map((lk) => lk.project_name);
+    const badgeText = linkNames.length === 1 ? linkNames[0] : linkNames.length > 1 ? `${linkNames.length} projects` : '';
+    badge.innerHTML = `<span class="truncate min-w-0">${escapeHTML(badgeText)}</span>`;
+    badge.classList.toggle('hidden', linkNames.length === 0);
 
     const linksHtml = (it.project_links || [])
       .map(
         (lk) =>
-          `<span class="pb-badge pb-badge-neutral !text-[11px]">${escapeHTML(lk.project_name)}${lk.variant_name ? ` · ${escapeHTML(lk.variant_name)}` : ' · Core'}</span>`
+          `<span class="pb-badge pb-badge-neutral">${escapeHTML(lk.project_name)}${lk.variant_name ? ` · ${escapeHTML(lk.variant_name)}` : ' · Core'}</span>`
       )
       .join('');
+    const hasStoreUrl = it.url && /^https?:\/\//i.test(it.url);
+    const dangerHtml =
+      ctx.projectId && ctx.projectItemId
+        ? `<button type="button" id="ctxUnlinkShopBtn" class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium" title="Remove from this project. The item stays on the shopping list.">Unlink</button>`
+        : `<button type="button" id="ctxDeleteShopBtn" class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium">Delete</button>`;
 
-    const specsEntries = Object.entries(it.specs || {});
-    const specsHtml =
-      specsEntries.length > 0
-        ? `<div class="space-y-1.5">
-             <div class="pb-section-label">Specs</div>
-             <div class="grid grid-cols-2 gap-1.5">
-               ${specsEntries
-                 .map(
-                   ([k, v]) =>
-                     `<div class="pb-well rounded px-2.5 py-1.5"><div class="text-[10px] text-muted">${escapeHTML(k)}</div><div class="text-xs font-medium text-ink">${escapeHTML(v)}</div></div>`
-                 )
-                 .join('')}
-             </div>
-           </div>`
-        : '';
+    if (ctx.mode !== 'edit') {
+      const specsEntries = Object.entries(it.specs || {});
+      body.innerHTML = `
+        ${contextPhotoHtml(it.image_path, it.name, it.category)}
+
+        <div>
+          <h3 class="pb-display text-[1.75rem]">${escapeHTML(it.name)}</h3>
+          ${it.retailer ? `<p class="text-[15px] text-ink-2 mt-1">${escapeHTML(it.retailer)}</p>` : ''}
+        </div>
+
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          ${it.price ? `<span class="text-lg font-semibold font-mono text-ink">${escapeHTML(it.price)}</span>` : ''}
+          <span class="text-[15px]"><strong class="font-semibold">${escapeHTML(it.quantity || 1)}</strong> <span class="text-muted">to buy</span></span>
+          ${it.in_stock === 'in_stock' ? `<span class="pb-status is-go">In stock at store</span>` : it.in_stock === 'out_of_stock' ? `<span class="pb-status is-stop">Out of stock at store</span>` : ''}
+        </div>
+
+        ${linksHtml ? `<div class="flex flex-wrap gap-1.5">${linksHtml}</div>` : ''}
+
+        <div class="flex flex-wrap gap-2">
+          <button type="button" id="ctxShopBoughtBtn" class="btn-primary h-9 px-3.5 text-[13px]">Bought &rarr; Inventory</button>
+          ${hasStoreUrl ? `<a href="${escapeHTML(it.url)}" target="_blank" rel="noopener noreferrer" class="btn-secondary h-9 px-3 text-[13px] inline-flex items-center gap-1.5">Store page ${ext}</a>` : ''}
+          ${it.url ? `<button type="button" id="ctxFetchShopMetaBtn" class="btn-secondary h-9 px-3 text-[13px]">Fetch photo &amp; info</button>` : ''}
+        </div>
+
+        ${contextNotesHtml('Why it is on the list', it.why_needed || it.notes || '', 'No reason written yet.', 'Write a reason')}
+
+        ${
+          specsEntries.length > 0
+            ? `<section>
+                 <h4 class="pb-section-label mb-1">Specs</h4>
+                 <table class="w-full text-sm"><tbody>
+                   ${specsEntries
+                     .map(
+                       ([k, v]) => `<tr class="border-b border-line last:border-0">
+                         <th scope="row" class="py-2 pr-4 text-left font-normal text-muted align-top w-[42%]">${escapeHTML(k)}</th>
+                         <td class="py-2 font-mono text-[13px] text-ink">${escapeHTML(v)}</td>
+                       </tr>`
+                     )
+                     .join('')}
+                 </tbody></table>
+               </section>`
+            : ''
+        }
+      `;
+      footer.innerHTML = contextFooterHtml('view', dangerHtml, 'ctxSaveShopBtn');
+      return;
+    }
 
     body.innerHTML = `
-      <div class="pb-well w-full h-44 rounded-md overflow-hidden flex items-center justify-center relative">
-        ${imgHtml}
-      </div>
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="flex flex-wrap items-center gap-1.5">
-          ${it.price ? `<span class="text-base font-semibold font-mono text-ink">${escapeHTML(it.price)}</span>` : ''}
-          ${it.in_stock === 'in_stock' ? `<span class="pb-badge !text-[11px] bg-go/15 text-go">In stock</span>` : it.in_stock === 'out_of_stock' ? `<span class="pb-badge !text-[11px] bg-stop/15 text-stop">Out of stock</span>` : ''}
-          ${linksHtml}
-        </div>
-        <div class="flex items-center gap-1.5">
-          ${it.url ? `<button type="button" id="ctxFetchShopMetaBtn" class="btn-secondary h-7 px-2.5 text-xs">Fetch photo &amp; info</button>` : ''}
-          ${it.url && /^https?:\/\//i.test(it.url) ? `<a href="${escapeHTML(it.url)}" target="_blank" rel="noopener noreferrer" class="btn-secondary h-7 px-2.5 text-xs inline-flex items-center gap-1">Open store</a>` : ''}
-        </div>
-      </div>
-
-      ${specsHtml}
-
-      <form id="ctxShopForm" class="space-y-3 text-xs pt-2 border-t border-line">
+      <form id="ctxShopForm" class="space-y-3.5 text-xs">
         <div>
           <label class="block text-[11px] font-medium text-muted mb-1">Name</label>
           <input id="ctxShopName" type="text" value="${escapeHTML(it.name)}" class="w-full h-9 px-3 text-sm rounded bg-canvas-light border border-hairline-light" />
         </div>
-        <div class="grid grid-cols-3 gap-2.5">
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
           <div>
             <label class="block text-[11px] font-medium text-muted mb-1">Price</label>
             <input id="ctxShopPrice" type="text" value="${escapeHTML(it.price || '')}" class="w-full h-9 px-2.5 text-sm rounded bg-canvas-light border border-hairline-light" />
           </div>
           <div>
             <label class="block text-[11px] font-medium text-muted mb-1">Quantity</label>
-            <input id="ctxShopQty" type="number" min="1" value="${it.quantity || 1}" class="w-full h-9 px-2.5 font-mono text-sm rounded bg-canvas-light border border-hairline-light" />
+            <input id="ctxShopQty" type="number" min="1" inputmode="numeric" value="${it.quantity || 1}" class="w-full h-9 px-2.5 font-mono text-sm rounded bg-canvas-light border border-hairline-light" />
           </div>
-          <div>
+          <div class="col-span-2 sm:col-span-1">
             <label class="block text-[11px] font-medium text-muted mb-1">Tag / Group</label>
             <input id="ctxShopTag" type="text" value="${escapeHTML(it.tag || '')}" placeholder="e.g., Smartwatch" class="w-full h-9 px-2.5 text-sm rounded bg-canvas-light border border-hairline-light" />
           </div>
@@ -1374,26 +1469,12 @@ function renderContextDrawer() {
               <button type="button" data-md-mode="preview" class="h-6 px-2 rounded text-[11px] font-medium opacity-65">Preview</button>
             </div>
           </div>
-          <textarea id="ctxShopWhy" data-md-input rows="3" placeholder="Explain why this part is needed or which build option it belongs to (supports Markdown)..." class="w-full p-2.5 text-sm rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(it.why_needed || it.notes || '')}</textarea>
+          <textarea id="ctxShopWhy" data-md-input rows="4" placeholder="Explain why this part is needed or which build option it belongs to (supports Markdown)..." class="w-full p-2.5 text-sm rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(it.why_needed || it.notes || '')}</textarea>
           <div data-md-preview class="hidden pb-well rounded p-3 min-h-[84px] max-h-56 overflow-y-auto pb-md"></div>
         </div>
       </form>
     `;
-
-    footer.innerHTML = `
-      <div class="flex items-center gap-2">
-        <button type="button" id="ctxShopBoughtBtn" class="btn-secondary h-9 px-3 rounded text-xs font-medium">Bought &rarr; Inventory</button>
-        ${
-          ctx.projectId && ctx.projectItemId
-            ? `<button type="button" id="ctxUnlinkShopBtn" class="btn-danger-outline h-9 px-2.5 rounded text-xs font-medium">Unlink</button>`
-            : `<button type="button" id="ctxDeleteShopBtn" class="btn-danger-outline h-9 px-2.5 rounded text-xs font-medium">Delete</button>`
-        }
-      </div>
-      <div class="flex items-center gap-2">
-        <button type="button" id="ctxCloseFooterBtn" class="btn-secondary h-9 px-3 rounded text-xs font-medium">Close</button>
-        <button type="button" id="ctxSaveShopBtn" class="btn-primary h-9 px-4 rounded text-xs font-medium">Save</button>
-      </div>
-    `;
+    footer.innerHTML = contextFooterHtml('edit', dangerHtml, 'ctxSaveShopBtn');
     return;
   }
 
@@ -1404,33 +1485,50 @@ function renderContextDrawer() {
       closeContextDrawer();
       return;
     }
-    badge.textContent = `Project · ${proj.name}`;
-    badge.className = 'pb-badge !text-[11px] bg-go/15 text-go shrink-0';
-    heading.textContent = pItem.name;
-
-    const imgHtml = pItem.image_path
-      ? `<img src="${escapeHTML(imageUrl(pItem.image_path))}" alt="" class="w-full h-full object-contain p-1.5 bg-white" />`
-      : categoryGlyph(pItem.category || 'Sensors', 'w-7 h-7 text-muted opacity-50');
+    heading.textContent = 'Project part';
+    badge.innerHTML = `<span class="truncate min-w-0">${escapeHTML(proj.name)}</span>`;
+    badge.classList.remove('hidden');
 
     const variants = proj.variants || [];
-    body.innerHTML = `
-      <div class="flex items-center gap-3 pb-4 border-b border-line">
-        <div class="pb-well w-16 h-16 rounded flex items-center justify-center overflow-hidden shrink-0">${imgHtml}</div>
-        <div class="min-w-0 flex-1">
-          <div class="text-sm font-semibold text-ink truncate">${escapeHTML(pItem.name)}</div>
-          <div class="text-xs text-muted flex flex-wrap items-center gap-2 mt-1">
-            ${pItem.location ? `<span class="pb-bin-tag !h-5 !text-[11px]">${escapeHTML(pItem.location)}</span>` : ''}
-            <span>Owned: <strong class="text-ink">${pItem.owned_quantity}</strong></span>
-          </div>
-        </div>
-        <button type="button" id="ctxOpenInventorySheetBtn" class="btn-secondary h-8 px-3 text-xs shrink-0">Inventory sheet &rarr;</button>
-      </div>
+    const varObj = pItem.variant_id ? variants.find((v) => v.id === pItem.variant_id) : null;
+    const dangerHtml = `<button type="button" id="ctxRemoveProjItemBtn" class="btn-danger-outline h-8 px-2.5 rounded text-xs font-medium" title="Remove from this project. The part stays in inventory.">Remove</button>`;
+    const short = Number(pItem.owned_quantity) < Number(pItem.quantity_needed || 1);
 
+    if (ctx.mode !== 'edit') {
+      body.innerHTML = `
+        ${contextPhotoHtml(pItem.image_path, pItem.name, pItem.category)}
+
+        <div>
+          <h3 class="pb-display text-[1.75rem]">${escapeHTML(pItem.name)}</h3>
+          <p class="text-[15px] text-ink-2 mt-1">In <strong class="font-semibold text-ink">${escapeHTML(proj.name)}</strong> · ${varObj ? escapeHTML(varObj.name) : 'Core (all options)'}</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          ${
+            pItem.location
+              ? `<span class="pb-bin-tag !h-7 !text-[15px] !px-2.5">${escapeHTML(pItem.location)}</span>`
+              : `<span class="pb-bin-tag is-empty !h-7">No bin</span>`
+          }
+          <span class="text-[15px]"><span class="text-muted">Need</span> <strong class="font-semibold">${escapeHTML(pItem.quantity_needed || 1)}</strong></span>
+          <span class="text-[15px] ${short ? 'text-stop' : ''}"><span class="${short ? '' : 'text-muted'}">Have</span> <strong class="font-semibold">${escapeHTML(pItem.owned_quantity)}</strong></span>
+        </div>
+
+        <div>
+          <button type="button" id="ctxOpenInventorySheetBtn" class="btn-secondary h-9 px-3.5 text-[13px]">Open inventory sheet &rarr;</button>
+        </div>
+
+        ${contextNotesHtml('Project notes', pItem.project_notes || '', 'No notes for this project yet.', 'Write a note')}
+      `;
+      footer.innerHTML = contextFooterHtml('view', dangerHtml, 'ctxSaveProjItemBtn');
+      return;
+    }
+
+    body.innerHTML = `
       <div class="space-y-3.5 text-xs">
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label class="block text-[11px] font-medium text-muted mb-1">Quantity needed for this project</label>
-            <input id="ctxProjQty" type="number" min="1" value="${pItem.quantity_needed || 1}" class="w-full h-9 px-3 font-mono text-sm rounded bg-canvas-light border border-hairline-light" />
+            <input id="ctxProjQty" type="number" min="1" inputmode="numeric" value="${pItem.quantity_needed || 1}" class="w-full h-9 px-3 font-mono text-sm rounded bg-canvas-light border border-hairline-light" />
           </div>
           <div>
             <label class="block text-[11px] font-medium text-muted mb-1">Sub-project / Option</label>
@@ -1443,26 +1541,19 @@ function renderContextDrawer() {
 
         <div data-md-editor>
           <div class="flex items-center justify-between gap-2 mb-1">
-            <label class="block text-[11px] font-medium text-muted">Project-specific notes (Markdown)</label>
+            <label class="block text-[11px] font-medium text-muted">Project notes (Markdown)</label>
             <div class="pb-segmented inline-flex rounded p-0.5" role="group" aria-label="Project item notes mode">
               <button type="button" data-md-mode="edit" class="h-6 px-2 rounded text-[11px] font-medium pb-seg-active">Edit</button>
               <button type="button" data-md-mode="preview" class="h-6 px-2 rounded text-[11px] font-medium opacity-65">Preview</button>
             </div>
           </div>
-          <p class="text-[11px] text-muted mb-1.5">Saved only for <strong class="text-ink">${escapeHTML(proj.name)}</strong>. Does not change this part's general inventory notes.</p>
-          <textarea id="ctxProjNotes" data-md-input rows="5" placeholder="e.g., Wire tilt switch to GPIO4 with INPUT_PULLUP (supports Markdown)..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(pItem.project_notes || '')}</textarea>
+          <p class="text-[12px] text-muted mb-1.5">Saved only for <strong class="text-ink">${escapeHTML(proj.name)}</strong>. Does not change this part's general inventory notes.</p>
+          <textarea id="ctxProjNotes" data-md-input rows="6" placeholder="e.g., Wire tilt switch to GPIO4 with INPUT_PULLUP (supports Markdown)..." class="w-full p-2.5 text-sm leading-relaxed rounded bg-canvas-light border border-hairline-light resize-y">${escapeHTML(pItem.project_notes || '')}</textarea>
           <div data-md-preview class="hidden pb-well rounded p-3 min-h-[120px] max-h-64 overflow-y-auto pb-md"></div>
         </div>
       </div>
     `;
-
-    footer.innerHTML = `
-      <button type="button" id="ctxRemoveProjItemBtn" class="btn-danger-outline h-9 px-3 rounded text-xs font-medium">Remove from project</button>
-      <div class="flex items-center gap-2">
-        <button type="button" id="ctxCloseFooterBtn" class="btn-secondary h-9 px-3 rounded text-xs font-medium">Close</button>
-        <button type="button" id="ctxSaveProjItemBtn" class="btn-primary h-9 px-4 rounded text-xs font-medium">Save</button>
-      </div>
-    `;
+    footer.innerHTML = contextFooterHtml('edit', dangerHtml, 'ctxSaveProjItemBtn');
   }
 }
 
@@ -1753,7 +1844,12 @@ function renderGlossary() {
          </div>`
       : `<p class="pt-6 mt-6 border-t border-line text-[13px] text-muted">None of your parts use this term yet. When you add a part that uses it, the part shows here.</p>`;
 
+  layout.classList.toggle('is-detail', Boolean(state.glossaryMobileDetail));
   detailEl.innerHTML = `
+    <button type="button" data-glossary-back class="lg:hidden -ml-1 mb-4 h-8 pl-1 pr-2.5 inline-flex items-center gap-1 text-[13px] font-medium text-ink-2 hover:text-ink">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      All terms
+    </button>
     <div class="flex items-start justify-between gap-4">
       <div class="min-w-0">
         <p class="text-[13px] text-muted mb-1">${escapeHTML(selected.category)}</p>
@@ -1942,7 +2038,7 @@ function addSpecEditorRow(key = '', val = '') {
   row.innerHTML = `
     <input type="text" data-spec-key value="${escapeHTML(key)}" placeholder="Label (e.g. Voltage)" class="w-2/5 h-8 px-2.5 text-xs rounded-md bg-surface-light border border-hairline-light focus:outline-none focus:border-accent" />
     <input type="text" data-spec-val value="${escapeHTML(val)}" placeholder="Value (e.g. 3.3V)" class="flex-1 h-8 px-2.5 font-mono text-xs rounded-md bg-surface-light border border-hairline-light focus:outline-none focus:border-accent" />
-    <button type="button" data-remove-spec class="h-8 w-7 rounded-md text-muted hover:text-red-500 flex items-center justify-center shrink-0" aria-label="Remove spec">&times;</button>
+    <button type="button" data-remove-spec class="h-8 w-7 rounded-md text-muted hover:text-stop flex items-center justify-center shrink-0" aria-label="Remove spec">&times;</button>
   `;
   container.appendChild(row);
 }
@@ -3166,6 +3262,7 @@ function bindEvents() {
 
   searchInput.addEventListener('input', (e) => {
     state.search = e.target.value;
+    state.glossaryMobileDetail = false;
     syncSearchUi();
     renderCurrentPage();
   });
@@ -3269,6 +3366,16 @@ function bindEvents() {
   document.getElementById('contextDrawerPanel').addEventListener('click', async (e) => {
     const ctx = state.contextDrawer;
     if (!ctx) return;
+    const lightboxTarget = e.target.closest('[data-lightbox-src]');
+    if (lightboxTarget) {
+      openLightbox(lightboxTarget.dataset.lightboxSrc);
+      return;
+    }
+    const modeBtn = e.target.closest('button[data-ctx-mode]');
+    if (modeBtn) {
+      setContextDrawerMode(modeBtn.dataset.ctxMode);
+      return;
+    }
     if (e.target.closest('#ctxCloseFooterBtn')) {
       closeContextDrawer();
       return;
@@ -3323,7 +3430,8 @@ function bindEvents() {
         if (idx >= 0) state.shoppingItems[idx] = updated;
         await loadProjects();
         renderCurrentPage();
-        closeContextDrawer();
+        state.contextDrawer.mode = 'view';
+        renderContextDrawer();
         showToast('Shopping item saved');
       } catch (err) {
         showToast(err.message);
@@ -3381,9 +3489,12 @@ function bindEvents() {
             project_notes: document.getElementById('ctxProjNotes').value.trim(),
           }),
         });
-        closeContextDrawer();
         await Promise.all([loadProjects(), loadParts()]);
-        showToast('Project item notes saved');
+        if (state.contextDrawer) {
+          state.contextDrawer.mode = 'view';
+          renderContextDrawer();
+        }
+        showToast('Project part saved');
       } catch (err) {
         showToast(err.message);
       }
@@ -3460,19 +3571,32 @@ function bindEvents() {
     const btn = e.target.closest('button[data-gcat]');
     if (!btn) return;
     state.glossaryCategory = btn.dataset.gcat;
+    state.glossaryMobileDetail = false;
     renderGlossary();
   });
   document.getElementById('glossaryInInventoryBtn').addEventListener('click', () => {
     state.glossaryInInventoryOnly = !state.glossaryInInventoryOnly;
+    state.glossaryMobileDetail = false;
     renderGlossary();
   });
   document.getElementById('glossaryList').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-select-glossary]');
     if (!btn) return;
     state.selectedGlossaryId = btn.dataset.selectGlossary;
+    state.glossaryMobileDetail = true;
     renderGlossary();
+    if (window.matchMedia('(max-width: 1023px)').matches) {
+      document.getElementById('glossaryLayout').scrollIntoView({ block: 'start' });
+    }
   });
   document.getElementById('glossaryDetailPane').addEventListener('click', (e) => {
+    if (e.target.closest('button[data-glossary-back]')) {
+      state.glossaryMobileDetail = false;
+      renderGlossary();
+      const active = document.querySelector('#glossaryList .is-active');
+      if (active) active.scrollIntoView({ block: 'center' });
+      return;
+    }
     const editBtn = e.target.closest('button[data-edit-glossary]');
     if (editBtn) {
       openGlossaryModal(editBtn.dataset.editGlossary);
@@ -3528,6 +3652,8 @@ function bindEvents() {
     if (g) {
       state.search = g.term;
       searchInput.value = g.term;
+      state.selectedGlossaryId = g.id;
+      state.glossaryMobileDetail = true;
       syncSearchUi();
       renderGlossary();
     }
@@ -3778,6 +3904,11 @@ function bindEvents() {
       openDrawer('edit', state.activePartId, 'basics');
       return;
     }
+    if ((e.key === 'e' || e.key === 'E') && !isTyping && state.contextDrawer && state.contextDrawer.mode === 'view') {
+      e.preventDefault();
+      setContextDrawerMode('edit');
+      return;
+    }
 
     if (e.key === 'Escape') {
       if (!document.getElementById('glossaryPopover').classList.contains('hidden')) {
@@ -3834,6 +3965,13 @@ window.addEventListener('DOMContentLoaded', async () => {
     state.locationFilter = binParam.trim();
   }
   bindEvents();
+  const shopAddPanel = document.getElementById('shopAddPanel');
+  const phoneQuery = window.matchMedia('(max-width: 639px)');
+  const syncShopAddPanel = () => {
+    shopAddPanel.open = !phoneQuery.matches;
+  };
+  syncShopAddPanel();
+  phoneQuery.addEventListener('change', syncShopAddPanel);
   const initialRoute = parseRouteFromLocation();
   switchPage(initialRoute.page, { pushState: false, benchSub: initialRoute.benchSub });
   await Promise.all([loadConfig(), loadParts(), loadProjects(), loadGlossary(), loadShopping()]);
