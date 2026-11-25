@@ -1,0 +1,109 @@
+/* Glossary screen: categorized master-detail index, diagrams, project links, and phone drill-down. */
+
+.gl3 {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.gl-idx {
+  display: grid;
+  align-content: start;
+  position: sticky;
+  top: calc(58px + env(safe-area-inset-top, 0px));
+  max-height: calc(100vh - 76px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.gl-idx .sh { margin: 18px 0 8px; }
+.gl-idx .sh:first-child { margin-top: 0; }
+.gt.li { padding: 10px 12px; }
+.gl-idx .gm { font-size: 12px; color: var(--ink-3); }
+
+.gl-doc { max-width: 680px; }
+.kick { font-size: 12.5px; font-weight: var(--w-mid); color: var(--ink-3); display: block; }
+.gtitle { font-size: 24px; line-height: 1.25; margin: 2px 0 10px; }
+.gl-doc .lead { font-size: 16.5px; line-height: 1.55; margin-bottom: 16px; }
+.gl-doc h3 {
+  font-size: 14px;
+  margin: 22px 0 8px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.gl-doc h3 .cnt { font: 500 12px var(--mono); color: var(--ink-3); }
+.gl-doc figure {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.fig { display: block; width: 100%; max-width: 360px; height: auto; }
+.fig .fv { font: 600 18px var(--sans); fill: var(--ink); }
+.fig .fl { font: 500 11px var(--mono); fill: var(--ink-2); }
+
+.hitrow {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-top: 1px solid var(--hair);
+  background: none;
+  padding: 9px 0;
+  cursor: pointer;
+}
+.hitrow:first-of-type { border-top: 0; }
+.hitrow b { display: block; font-weight: var(--w-mid); }
+.hitrow:hover b { text-decoration: underline; text-underline-offset: 3px; }
+
+.minis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.gl-doc .mini {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--raised);
+  padding: 6px;
+  cursor: pointer;
+}
+.gl-doc .mini:hover { border-color: var(--ink-3); }
+.gl-doc .mini.sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.gl-doc .mini .ph { width: 40px; height: 40px; }
+.gl-doc .mini b { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gl-doc .mini .faint { font-size: 12px; }
+
+.gl-doc .lgroup { margin-top: 4px; }
+
+.tryit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-2);
+}
+
+.gl-one .ehead { display: block; margin-bottom: 10px; }
+.gl-one .eback { padding: 0 10px; height: 32px; display: inline-flex; }
+
+@media (min-width: 861px) {
+  .gl-idx .chev { display: none; }
+}
+@media (max-width: 860px) {
+  .gl3 { grid-template-columns: minmax(0, 1fr); }
+  .gl-idx { position: static; max-height: none; }
+}

@@ -17,7 +17,11 @@ from fastapi.responses import JSONResponse, Response
 
 from app.config import CATEGORIES, Settings
 from app.db import (
+    CHECK_SEVERITIES,
+    NET_KINDS,
+    PROJECT_ITEM_ROLES,
     PROJECT_STATUSES,
+    SHOPPING_STATUSES,
     add_project_item,
     add_shopping_offer,
     create_glossary_term,
@@ -32,6 +36,7 @@ from app.db import (
     delete_project_variant,
     delete_shopping_item,
     delete_shopping_offer,
+    get_mcp_runtime_settings,
     get_part,
     get_project,
     get_shopping_item,
@@ -42,10 +47,14 @@ from app.db import (
     list_shopping_items,
     move_shopping_item_to_inventory,
     optimize_shopping_carts,
+    record_mcp_request,
+    set_project_checks,
+    set_project_nets,
     teardown_project,
     update_glossary_term,
     update_part,
     update_project,
+    update_project_check,
     update_project_item,
     update_project_variant,
     update_shopping_item,
@@ -53,7 +62,7 @@ from app.db import (
     upsert_retailer,
 )
 from app.glossary_seed import GLOSSARY_CATEGORIES
-from app.images import safe_delete_image
+from app.images import ImageError, safe_delete_image
 from app.scraper import ScrapeError, scrape_url
 
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -67,15 +76,17 @@ SERVER_INSTRUCTIONS = (
     "Use inventory_summary or list_parts to inspect available components, bins, and projects before suggesting builds. "
     "Keep inventory strictly for parts the user actually owns; never create quantity=0 inventory parts for unbought items. "
     "Instead, add unbought items to the shopping list (create_shopping_item, with fetch_metadata=true to grab product photos) "
-    "and link both owned parts and shopping items into first-class projects (create_project, create_project_variant, add_project_item) "
+    "and link both owned parts and shopping items into projects (create_project, add_project_item with role/ref/label) "
     "with project-scoped notes in project_notes. "
+    "Fill in structured electrical_facts (logic, interfaces, vin, io, i2c, out, vout, strap, wake, power) and care_notes "
+    "([{severity: 'danger'|'check'|'info', text}]) on parts and shopping items so Pinbin's built-in compatibility checks run automatically. "
+    "You can attach part photos via image_url, pinout photos via pinout_image_url, and scalable board pinout diagrams via pinout_svg. "
+    "For projects, write wiring connections using set_project_wiring and beginner safety checks using set_project_checks. "
     "Each shopping item supports multiple retailer offers (pass offers=[...] on create_shopping_item or call add_shopping_offer). "
     "When planning a project shopping list, try to find parts on the same retailer(s) to minimize separate orders, attach alternative "
     "store offers when found, and call optimize_shopping_carts to check for consolidation opportunities or single-item straggler stores. "
-    "All notes fields (notes, project_notes, why_needed) render as Markdown—write them in clean Markdown "
-    "(short headings, bullet lists, inline code for pins/values, and checklists where helpful). "
-    "When writing descriptions, warnings, notes, or glossary terms, prefer short, plain ASD-STE100 "
-    "sentences (active voice, imperative mood for warnings/rules of thumb). "
+    "All notes fields (notes, project_notes, why_needed) render as Markdown—write them in clean Markdown. "
+    "When writing descriptions, warnings, notes, or glossary terms, prefer short, plain sentences. "
     f"Valid part categories: {', '.join(CATEGORIES)}. "
     f"Valid glossary categories: {', '.join(GLOSSARY_CATEGORIES)}."
 )
@@ -92,6 +103,8 @@ COMPACT_PART_KEYS = (
     "what_it_does",
     "warning",
     "specs",
+    "electrical_facts",
+    "care_notes",
 )
 
 PART_WRITABLE_FIELDS = {
@@ -108,7 +121,10 @@ PART_WRITABLE_FIELDS = {
     "notes",
     "source_url",
     "pinout_url",
+    "pinout_svg",
     "specs",
+    "electrical_facts",
+    "care_notes",
 }
 
 SHOPPING_WRITABLE_FIELDS = {
@@ -121,10 +137,13 @@ SHOPPING_WRITABLE_FIELDS = {
     "tag",
     "category",
     "specs",
+    "electrical_facts",
+    "care_notes",
+    "status",
     "in_stock",
     "why_needed",
 }
-GLOSSARY_WRITABLE_FIELDS = {"term", "category", "summary", "rule_of_thumb", "keywords"}
+GLOSSARY_WRITABLE_FIELDS = {"term", "category", "summary", "rule_of_thumb", "keywords", "related_ids", "bench_tool", "figure_key"}
 
 
 class McpToolError(Exception):
@@ -136,15 +155,13 @@ class UnknownToolError(Exception):
 
 
 def verify_mcp_access(request: Request, settings: Settings) -> JSONResponse | None:
-    """Enforce MCP_ENABLED and optional MCP_API_TOKEN Bearer auth.
-
-    CloudflareAccessMiddleware has already validated Cloudflare Access JWTs
-    (including Service Tokens) when LOCAL_DEV_MODE=false.
-    """
+    """Enforce MCP_ENABLED and optional Bearer token auth (SQLite-rotated or env MCP_API_TOKEN)."""
     if not settings.mcp_enabled:
         return JSONResponse(status_code=404, content={"detail": "MCP endpoint is disabled"})
 
-    if settings.mcp_api_token:
+    runtime = get_mcp_runtime_settings(settings)
+    expected_token = str(runtime.get("token") or settings.mcp_api_token or "").strip()
+    if expected_token:
         auth_header = request.headers.get("Authorization", "").strip()
         prefix = "Bearer "
         if not auth_header.startswith(prefix):
@@ -154,7 +171,7 @@ def verify_mcp_access(request: Request, settings: Settings) -> JSONResponse | No
                 headers={"WWW-Authenticate": "Bearer"},
             )
         provided = auth_header[len(prefix) :].strip()
-        if not hmac.compare_digest(provided.encode("utf-8"), settings.mcp_api_token.encode("utf-8")):
+        if not hmac.compare_digest(provided.encode("utf-8"), expected_token.encode("utf-8")):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid MCP API token"},
@@ -162,6 +179,33 @@ def verify_mcp_access(request: Request, settings: Settings) -> JSONResponse | No
             )
 
     return None
+
+
+def _electrical_facts_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "description": (
+            "Structured electrical facts used by built-in safety checks: "
+            "{logic: 'v33'|'v5'|'vboth'|'none', interfaces: ['I2C','SPI',...], vin: [minV, maxV], "
+            "io: maxPinV, i2c: '0x3C', out: {'ECHO': 5}, vout: 4.2, strap: ['GPIO0'], wake: ['GPIO0'], "
+            "power: {'VIN': [4.5, 12]}, pairs: ['part-id'], glyph: 'mcu'}."
+        ),
+    }
+
+
+def _care_notes_schema() -> dict[str, Any]:
+    return {
+        "type": "array",
+        "description": "Typed beginner care notes shown on the part and in projects.",
+        "items": {
+            "type": "object",
+            "properties": {
+                "severity": {"type": "string", "enum": ["danger", "check", "info"]},
+                "text": {"type": "string"},
+            },
+            "required": ["severity", "text"],
+        },
+    }
 
 
 def _part_properties_schema() -> dict[str, Any]:
@@ -175,22 +219,27 @@ def _part_properties_schema() -> dict[str, Any]:
             "minimum": 0,
             "description": "Alert threshold for low stock, or null to disable.",
         },
-        "location": {"type": "string", "description": "Storage bin or drawer label (e.g. 'Bin A2')."},
+        "location": {"type": "string", "description": "Storage bin or drawer label (e.g. 'A1')."},
         "in_use_project": {
             "type": "string",
             "description": "Project name if currently deployed on the bench, or empty string.",
         },
         "what_it_does": {"type": "string", "description": "Beginner-friendly 1-2 sentence summary."},
         "visual_tell": {"type": "string", "description": "Concise physical clue to spot the part in a bin."},
-        "warning": {"type": "string", "description": "Voltage, polarity, or lookalike caution."},
-        "notes": {"type": "string", "description": "Pin-order, I2C/SPI address, or wiring notes."},
+        "warning": {"type": "string", "description": "Short primary caution (auto-synced with care_notes)."},
+        "notes": {"type": "string", "description": "Pin-order, I2C/SPI address, or wiring notes (Markdown)."},
         "source_url": {"type": "string", "description": "Store or product reference URL."},
         "pinout_url": {"type": "string", "description": "Official documentation or pinout URL."},
+        "image_url": {"type": "string", "description": "Direct image or product page URL to download and attach as the part photo."},
+        "pinout_image_url": {"type": "string", "description": "Direct image or page URL to download and attach as the pinout photo."},
+        "pinout_svg": {"type": "string", "description": "Scalable <svg> board pinout diagram (sanitized server-side)."},
         "specs": {
             "type": "object",
             "additionalProperties": {"type": "string"},
-            "description": "Flat key-value technical specs (e.g. {'Voltage': '3.3V', 'Interface': 'I2C'}).",
+            "description": "Flat key-value technical specs (e.g. {'Range': '2–400 cm'}).",
         },
+        "electrical_facts": _electrical_facts_schema(),
+        "care_notes": _care_notes_schema(),
     }
 
 
@@ -439,12 +488,14 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
         },
         {
             "name": "create_project",
-            "description": "Create a new first-class project (planning, active, completed, or archived).",
+            "description": "Create a new project (planning, active, completed, or archived) with optional build option label and tags.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
                     "description": {"type": "string"},
+                    "option": {"type": "string", "description": "Short build option label (e.g. 'Color IPS screen')."},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Lowercase tags (e.g. ['wearable', 'battery'])."},
                     "status": {"type": "string", "enum": list(PROJECT_STATUSES), "default": "planning"},
                     "notes": {"type": "string"},
                 },
@@ -455,13 +506,15 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
         },
         {
             "name": "update_project",
-            "description": "Update a project's name, description, status, or notes by project_id.",
+            "description": "Update a project's name, description, option, tags, status, or notes by project_id.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
                     "name": {"type": "string"},
                     "description": {"type": "string"},
+                    "option": {"type": "string"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
                     "status": {"type": "string", "enum": list(PROJECT_STATUSES)},
                     "notes": {"type": "string"},
                 },
@@ -532,7 +585,7 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
         },
         {
             "name": "add_project_item",
-            "description": "Link an owned inventory part (part_id) OR a shopping list item (shopping_item_id) to a project (and optional variant_id) with project-specific notes.",
+            "description": "Link an owned inventory part (part_id) OR a shopping list item (shopping_item_id) to a project with optional role, ref, label, and project-specific notes.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -540,6 +593,9 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                     "variant_id": {"type": ["string", "null"], "description": "Omit or null for Core/shared items."},
                     "part_id": {"type": "string"},
                     "shopping_item_id": {"type": "string"},
+                    "ref": {"type": "string", "description": "Short node ref used in wiring nets (e.g. 'mcu', 'rtc', 'bat')."},
+                    "role": {"type": "string", "enum": list(PROJECT_ITEM_ROLES), "description": "power | mcu | periph | material"},
+                    "label": {"type": "string", "description": "Short display label inside this project."},
                     "quantity_needed": {"type": "integer", "minimum": 1, "default": 1},
                     "project_notes": {"type": "string", "description": "Notes shown only inside this project."},
                 },
@@ -550,17 +606,100 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
         },
         {
             "name": "update_project_item",
-            "description": "Update project_notes, quantity_needed, or variant_id for a linked project item without modifying the part's inventory notes.",
+            "description": "Update project_notes, quantity_needed, role, ref, label, or variant_id for a linked project item.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
                     "item_id": {"type": "string"},
                     "variant_id": {"type": ["string", "null"]},
+                    "ref": {"type": "string"},
+                    "role": {"type": "string", "enum": list(PROJECT_ITEM_ROLES)},
+                    "label": {"type": "string"},
                     "quantity_needed": {"type": "integer", "minimum": 1},
                     "project_notes": {"type": "string"},
                 },
                 "required": ["project_id", "item_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "set_project_wiring",
+            "description": "Set the complete list of wiring nets for a project (feeds Map, One part, Lines, and built-in safety checks).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "nets": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "name": {"type": "string"},
+                                "kind": {"type": "string", "enum": list(NET_KINDS)},
+                                "rail": {"type": ["number", "null"]},
+                                "chain": {"type": "boolean"},
+                                "wake": {"type": "boolean"},
+                                "conns": {
+                                    "type": "array",
+                                    "items": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2},
+                                },
+                            },
+                            "required": ["name", "kind", "conns"],
+                        },
+                    },
+                },
+                "required": ["project_id", "nets"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "set_project_checks",
+            "description": "Set the assistant safety checks/warnings attached to nodes or nets in a project.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "checks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "severity": {"type": "string", "enum": list(CHECK_SEVERITIES)},
+                                "title": {"type": "string"},
+                                "body": {"type": "string"},
+                                "node_refs": {"type": "array", "items": {"type": "string"}},
+                                "net_ids": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["severity", "title"],
+                        },
+                    },
+                },
+                "required": ["project_id", "checks"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "update_project_check",
+            "description": "Update a project safety check (e.g. mark is_done or refine wording).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "check_id": {"type": "string"},
+                    "severity": {"type": "string", "enum": list(CHECK_SEVERITIES)},
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "node_refs": {"type": "array", "items": {"type": "string"}},
+                    "net_ids": {"type": "array", "items": {"type": "string"}},
+                    "is_done": {"type": "boolean"},
+                },
+                "required": ["project_id", "check_id"],
                 "additionalProperties": False,
             },
             "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -608,10 +747,14 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                     "retailer": {"type": "string"},
                     "tag": {"type": "string", "description": "Group/project tag (e.g. 'Smartwatch')."},
                     "category": {"type": "string", "enum": ["", *CATEGORIES]},
+                    "status": {"type": "string", "enum": list(SHOPPING_STATUSES), "default": "order"},
                     "in_stock": {"type": "string", "enum": ["", "in_stock", "out_of_stock"]},
                     "why_needed": {"type": "string", "description": "Short reason why this item is on the list."},
                     "notes": {"type": "string"},
                     "specs": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "electrical_facts": _electrical_facts_schema(),
+                    "care_notes": _care_notes_schema(),
+                    "image_url": {"type": "string", "description": "Optional direct image URL to attach as product photo."},
                     "project_id": {"type": "string", "description": "Optional project_id to link this shopping item to immediately."},
                     "variant_id": {"type": ["string", "null"], "description": "Optional variant_id inside project_id (null for Core)."},
                     "fetch_metadata": {"type": "boolean", "default": True},
@@ -655,10 +798,14 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                     "retailer": {"type": "string"},
                     "tag": {"type": "string"},
                     "category": {"type": "string", "enum": ["", *CATEGORIES]},
+                    "status": {"type": "string", "enum": list(SHOPPING_STATUSES)},
                     "in_stock": {"type": "string", "enum": ["", "in_stock", "out_of_stock"]},
                     "why_needed": {"type": "string"},
                     "notes": {"type": "string"},
                     "specs": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "electrical_facts": _electrical_facts_schema(),
+                    "care_notes": _care_notes_schema(),
+                    "image_url": {"type": "string"},
                     "fetch_metadata": {"type": "boolean", "default": False},
                 },
                 "required": ["item_id"],
@@ -896,6 +1043,7 @@ def _strip_internal_image_paths(part: dict[str, Any]) -> dict[str, Any]:
     out = dict(part)
     out["has_photo"] = bool((out.pop("image_path", "") or "").strip())
     out["has_pinout_photo"] = bool((out.pop("pinout_image_path", "") or "").strip())
+    out["has_pinout_svg"] = bool((out.get("pinout_svg") or "").strip())
     return out
 
 
@@ -910,36 +1058,72 @@ def _strip_project_image_paths(proj: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+async def _fetch_optional_image(settings: Settings, url: str) -> str:
+    clean = str(url or "").strip()
+    if not clean:
+        return ""
+    try:
+        scraped = await scrape_url(clean, settings.images_dir, settings.max_upload_bytes)
+        return str(scraped.get("image_path") or "")
+    except ScrapeError as exc:
+        raise McpToolError(f"Could not download image from URL: {exc}") from exc
+
+
+_PART_WRITE_TOOLS = {"create_part", "update_part", "batch_update_parts"}
+_PROJECT_WRITE_TOOLS = {
+    "create_project",
+    "update_project",
+    "create_project_variant",
+    "update_project_variant",
+    "add_project_item",
+    "update_project_item",
+    "set_project_wiring",
+    "set_project_checks",
+    "update_project_check",
+    "teardown_project",
+}
+_SHOPPING_WRITE_TOOLS = {
+    "create_shopping_item",
+    "update_shopping_item",
+    "add_shopping_offer",
+    "select_shopping_offer",
+    "remove_shopping_offer",
+    "upsert_retailer",
+    "move_shopping_to_inventory",
+}
+_DELETE_TOOLS = {
+    "delete_part",
+    "delete_project",
+    "delete_project_variant",
+    "remove_project_item",
+    "delete_shopping_item",
+    "delete_glossary_term",
+}
+_GLOSSARY_WRITE_TOOLS = {"create_glossary_term", "update_glossary_term"}
+
+
 async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> Any:
-    write_tool_names = {
-        "create_part",
-        "update_part",
-        "batch_update_parts",
-        "delete_part",
-        "create_project",
-        "update_project",
-        "delete_project",
-        "create_project_variant",
-        "update_project_variant",
-        "delete_project_variant",
-        "add_project_item",
-        "update_project_item",
-        "remove_project_item",
-        "teardown_project",
-        "create_shopping_item",
-        "update_shopping_item",
-        "delete_shopping_item",
-        "add_shopping_offer",
-        "select_shopping_offer",
-        "remove_shopping_offer",
-        "upsert_retailer",
-        "move_shopping_to_inventory",
-        "create_glossary_term",
-        "update_glossary_term",
-        "delete_glossary_term",
-    }
-    if settings.mcp_read_only and name in write_tool_names:
-        raise McpToolError("MCP server is in read-only mode (MCP_READ_ONLY=true).")
+    runtime = get_mcp_runtime_settings(settings)
+    is_read_only = runtime.get("access") == "ro"
+    write_tool_names = (
+        _PART_WRITE_TOOLS
+        | _PROJECT_WRITE_TOOLS
+        | _SHOPPING_WRITE_TOOLS
+        | _DELETE_TOOLS
+        | _GLOSSARY_WRITE_TOOLS
+    )
+    if is_read_only and name in write_tool_names:
+        raise McpToolError("Assistant is in read-only mode (Settings → Assistant).")
+    if name in _PART_WRITE_TOOLS and not runtime.get("can_parts", True):
+        raise McpToolError("Editing parts is turned off in Settings → Assistant.")
+    if name in _PROJECT_WRITE_TOOLS and not runtime.get("can_projects", True):
+        raise McpToolError("Editing projects is turned off in Settings → Assistant.")
+    if name in _SHOPPING_WRITE_TOOLS and not runtime.get("can_shopping", True):
+        raise McpToolError("Managing shopping is turned off in Settings → Assistant.")
+    if name in _DELETE_TOOLS and not runtime.get("can_delete", False):
+        raise McpToolError("Deleting items is turned off in Settings → Assistant.")
+
+    record_mcp_request(settings.db_path)
 
     # --- Read tools ---
     if name == "inventory_summary":
@@ -950,9 +1134,9 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
 
     if name == "optimize_shopping_carts":
         apply_flag = bool(args.get("apply", False))
-        if apply_flag and settings.mcp_read_only:
-            raise McpToolError("Cannot apply optimization in read-only mode (MCP_READ_ONLY=true).")
-        return optimize_shopping_carts(
+        if apply_flag and (is_read_only or not runtime.get("can_shopping", True)):
+            raise McpToolError("Cannot apply optimization without shopping write permission.")
+        res = optimize_shopping_carts(
             settings.db_path,
             project_id=args.get("project_id"),
             tag=args.get("tag"),
@@ -961,6 +1145,11 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             include_inactive_variants=bool(args.get("include_inactive_variants", False)),
             apply=apply_flag,
         )
+        if apply_flag and res.get("changes_count"):
+            record_mcp_request(
+                settings.db_path, name, "Shopping", f"Consolidated {res['changes_count']} shopping items across stores"
+            )
+        return res
 
     if name == "list_parts":
         parts = list_parts(
@@ -1047,20 +1236,52 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             raise McpToolError("name is required")
         data = {k: v for k, v in args.items() if k in PART_WRITABLE_FIELDS}
         data["name"] = part_name
-        created = create_part(settings.db_path, data)
+        new_main_img = await _fetch_optional_image(settings, args.get("image_url", ""))
+        new_pin_img = await _fetch_optional_image(settings, args.get("pinout_image_url", ""))
+        if new_main_img:
+            data["image_path"] = new_main_img
+        if new_pin_img:
+            data["pinout_image_path"] = new_pin_img
+        try:
+            created = create_part(settings.db_path, data)
+        except (ValueError, ImageError) as exc:
+            if new_main_img:
+                safe_delete_image(new_main_img, settings.images_dir)
+            if new_pin_img:
+                safe_delete_image(new_pin_img, settings.images_dir)
+            raise McpToolError(str(exc)) from exc
+        record_mcp_request(settings.db_path, name, "Inventory", f"Added part {created['name']}")
         return _strip_internal_image_paths(created)
 
     if name == "update_part":
         part_id = str(args.get("part_id") or "").strip()
         if not part_id:
             raise McpToolError("part_id is required")
+        existing = get_part(settings.db_path, part_id)
+        if existing is None:
+            raise McpToolError(f"Part not found: {part_id}")
         updates = {k: v for k, v in args.items() if k in PART_WRITABLE_FIELDS}
+        new_main_img = await _fetch_optional_image(settings, args.get("image_url", ""))
+        new_pin_img = await _fetch_optional_image(settings, args.get("pinout_image_url", ""))
+        if new_main_img:
+            updates["image_path"] = new_main_img
+        if new_pin_img:
+            updates["pinout_image_path"] = new_pin_img
         try:
             updated = update_part(settings.db_path, part_id, updates)
-        except ValueError as exc:
+        except (ValueError, ImageError) as exc:
+            if new_main_img:
+                safe_delete_image(new_main_img, settings.images_dir)
+            if new_pin_img:
+                safe_delete_image(new_pin_img, settings.images_dir)
             raise McpToolError(str(exc)) from exc
         if updated is None:
             raise McpToolError(f"Part not found: {part_id}")
+        if new_main_img and existing.get("image_path") and existing["image_path"] != new_main_img:
+            safe_delete_image(existing["image_path"], settings.images_dir)
+        if new_pin_img and existing.get("pinout_image_path") and existing["pinout_image_path"] != new_pin_img:
+            safe_delete_image(existing["pinout_image_path"], settings.images_dir)
+        record_mcp_request(settings.db_path, name, "Inventory", f"Updated {updated['name']}")
         return _strip_internal_image_paths(updated)
 
     if name == "batch_update_parts":
@@ -1082,7 +1303,7 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             patch = {k: v for k, v in entry.items() if k in PART_WRITABLE_FIELDS}
             try:
                 updated = update_part(settings.db_path, pid, patch)
-            except ValueError as exc:
+            except (ValueError, ImageError) as exc:
                 results.append({"part_id": pid, "status": "error", "detail": str(exc)})
                 continue
             if updated is None:
@@ -1090,6 +1311,8 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             else:
                 updated_count += 1
                 results.append({"part_id": pid, "status": "updated", "name": updated["name"]})
+        if updated_count:
+            record_mcp_request(settings.db_path, name, "Inventory", f"Updated {updated_count} parts")
         return {"updated_count": updated_count, "results": results}
 
     if name == "delete_part":
@@ -1101,6 +1324,7 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             raise McpToolError(f"Part not found: {part_id}")
         safe_delete_image(deleted.get("image_path", ""), settings.images_dir)
         safe_delete_image(deleted.get("pinout_image_path", ""), settings.images_dir)
+        record_mcp_request(settings.db_path, name, "Inventory", f"Removed {deleted.get('name', 'part')}")
         return {"status": "deleted", "id": part_id, "name": deleted.get("name", "")}
 
     if name == "create_project":
@@ -1108,6 +1332,7 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             created = create_project(settings.db_path, args)
         except ValueError as exc:
             raise McpToolError(str(exc)) from exc
+        record_mcp_request(settings.db_path, name, created["name"], f"Created project {created['name']}")
         return _strip_project_image_paths(created)
 
     if name == "update_project":
@@ -1120,6 +1345,7 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             raise McpToolError(str(exc)) from exc
         if updated is None:
             raise McpToolError(f"Project not found: {project_id}")
+        record_mcp_request(settings.db_path, name, updated["name"], f"Updated project {updated['name']}")
         return _strip_project_image_paths(updated)
 
     if name == "delete_project":
@@ -1129,6 +1355,7 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         deleted = delete_project(settings.db_path, project_id)
         if deleted is None:
             raise McpToolError(f"Project not found: {project_id}")
+        record_mcp_request(settings.db_path, name, "Projects", f"Deleted project {deleted.get('name', '')}")
         return {"status": "deleted", "id": project_id, "name": deleted.get("name", "")}
 
     if name == "create_project_variant":
@@ -1199,6 +1426,45 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             raise McpToolError(f"Project item not found: {item_id}")
         return {"status": "deleted", "id": item_id}
 
+    if name == "set_project_wiring":
+        project_id = str(args.get("project_id") or "").strip()
+        nets = args.get("nets")
+        if not project_id or not isinstance(nets, list):
+            raise McpToolError("project_id and nets list are required")
+        updated = set_project_nets(settings.db_path, project_id, nets)
+        if updated is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        record_mcp_request(
+            settings.db_path, name, updated["name"], f"Wrote {len(updated['nets'])} wiring connections"
+        )
+        return _strip_project_image_paths(updated)
+
+    if name == "set_project_checks":
+        project_id = str(args.get("project_id") or "").strip()
+        checks = args.get("checks")
+        if not project_id or not isinstance(checks, list):
+            raise McpToolError("project_id and checks list are required")
+        updated = set_project_checks(settings.db_path, project_id, checks)
+        if updated is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        record_mcp_request(
+            settings.db_path, name, updated["name"], f"Wrote {len(updated['checks'])} safety checks"
+        )
+        return _strip_project_image_paths(updated)
+
+    if name == "update_project_check":
+        project_id = str(args.get("project_id") or "").strip()
+        check_id = str(args.get("check_id") or "").strip()
+        if not project_id or not check_id:
+            raise McpToolError("project_id and check_id are required")
+        try:
+            updated = update_project_check(settings.db_path, project_id, check_id, args)
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
+        if updated is None:
+            raise McpToolError(f"Check not found: {check_id}")
+        return _strip_project_image_paths(updated)
+
     if name == "teardown_project":
         project = str(args.get("project") or "").strip()
         if not project:
@@ -1214,11 +1480,15 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         data["name"] = item_name
         if isinstance(args.get("offers"), list):
             data["offers"] = args["offers"]
+        if args.get("image_url"):
+            explicit_img = await _fetch_optional_image(settings, args["image_url"])
+            if explicit_img:
+                data["image_path"] = explicit_img
         fetch_meta = bool(args.get("fetch_metadata", True))
         if fetch_meta and data.get("url"):
             try:
                 scraped = await scrape_url(str(data["url"]), settings.images_dir, settings.max_upload_bytes)
-                if scraped.get("image_path"):
+                if not data.get("image_path") and scraped.get("image_path"):
                     data["image_path"] = scraped["image_path"]
                 if not data.get("price") and scraped.get("price"):
                     data["price"] = scraped["price"]
@@ -1229,6 +1499,7 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             except ScrapeError:
                 pass
         created = create_shopping_item(settings.db_path, data)
+        record_mcp_request(settings.db_path, name, "Shopping", f"Added {created['name']} to shopping list")
         project_id = str(args.get("project_id") or "").strip()
         if project_id:
             try:
@@ -1262,10 +1533,14 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         target_url = str(updates.get("url") or existing.get("url") or "").strip()
         old_img = existing.get("image_path") or ""
         new_img = ""
+        if args.get("image_url"):
+            new_img = await _fetch_optional_image(settings, args["image_url"])
+            if new_img:
+                updates["image_path"] = new_img
         if fetch_meta and target_url:
             try:
                 scraped = await scrape_url(target_url, settings.images_dir, settings.max_upload_bytes)
-                if scraped.get("image_path"):
+                if not new_img and scraped.get("image_path"):
                     new_img = scraped["image_path"]
                     updates["image_path"] = new_img
                 if not updates.get("price") and not existing.get("price") and scraped.get("price"):
@@ -1512,7 +1787,8 @@ async def _handle_single_rpc(settings: Settings, msg: Any) -> dict[str, Any] | N
         return _jsonrpc_result(req_id, {})
 
     if method == "tools/list":
-        return _jsonrpc_result(req_id, {"tools": _build_tool_definitions(settings.mcp_read_only)})
+        runtime = get_mcp_runtime_settings(settings)
+        return _jsonrpc_result(req_id, {"tools": _build_tool_definitions(runtime.get("access") == "ro")})
 
     if method == "tools/call":
         tool_name = str(params.get("name") or "").strip()

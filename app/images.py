@@ -3,13 +3,39 @@ from __future__ import annotations
 import io
 import re
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 MAX_EDGE_PX = 1000
 WEBP_QUALITY = 82
+MAX_SVG_BYTES = 512 * 1024
 FILENAME_RE = re.compile(r"^[a-f0-9-]{8,64}\.webp$")
+
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+_FORBIDDEN_SVG_TAGS = {
+    "script",
+    "foreignobject",
+    "iframe",
+    "object",
+    "embed",
+    "audio",
+    "video",
+    "meta",
+    "link",
+    "base",
+    "form",
+    "input",
+    "button",
+    "textarea",
+    "animate",
+    "animatemotion",
+    "animatetransform",
+    "set",
+}
+_DANGEROUS_CSS_RE = re.compile(r"(url\s*\(|javascript:|expression\s*\(|@import)", re.IGNORECASE)
 
 
 class ImageError(Exception):
@@ -74,3 +100,76 @@ def safe_delete_image(filename: str, images_dir: Path) -> None:
             path.unlink()
         except OSError:
             pass
+
+
+def compute_images_stats(images_dir: Path) -> tuple[int, int]:
+    """Return (image_count, total_bytes) for stored .webp images."""
+    if not images_dir.is_dir():
+        return 0, 0
+    count = 0
+    total_bytes = 0
+    for entry in images_dir.iterdir():
+        if entry.is_file() and not entry.is_symlink() and is_valid_image_filename(entry.name):
+            try:
+                total_bytes += entry.stat().st_size
+                count += 1
+            except OSError:
+                pass
+    return count, total_bytes
+
+
+def _local_tag(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1].lower()
+    return tag.lower()
+
+
+def _sanitize_svg_element(el: ET.Element) -> None:
+    # Remove forbidden child elements
+    for child in list(el):
+        if _local_tag(child.tag) in _FORBIDDEN_SVG_TAGS:
+            el.remove(child)
+        else:
+            _sanitize_svg_element(child)
+
+    # Clean attributes
+    for attr_name in list(el.attrib.keys()):
+        local = _local_tag(attr_name)
+        val = el.attrib.get(attr_name, "")
+        if local.startswith("on"):
+            del el.attrib[attr_name]
+            continue
+        if local in ("href", "src", "action", "formaction"):
+            if not val.strip().startswith("#"):
+                del el.attrib[attr_name]
+                continue
+        if local == "style" and _DANGEROUS_CSS_RE.search(val):
+            del el.attrib[attr_name]
+            continue
+        if "javascript:" in val.lower() or "data:text/html" in val.lower():
+            del el.attrib[attr_name]
+            continue
+
+
+def sanitize_pinout_svg(raw_svg: str) -> str:
+    """Validate and sanitize an SVG string for safe inline rendering."""
+    cleaned = str(raw_svg or "").strip()
+    if not cleaned:
+        return ""
+    raw_bytes = cleaned.encode("utf-8")
+    if len(raw_bytes) > MAX_SVG_BYTES:
+        raise ImageError("Pinout SVG exceeds maximum allowed size (512 KB)", status_code=413)
+    # Strip DOCTYPE/ENTITY declarations to prevent XXE/billion-laughs
+    if "<!doctype" in cleaned.lower() or "<!entity" in cleaned.lower():
+        raise ImageError("SVG must not contain DOCTYPE or ENTITY declarations", status_code=400)
+    try:
+        ET.register_namespace("", _SVG_NS)
+        root = ET.fromstring(cleaned)
+    except ET.ParseError as exc:
+        raise ImageError("Invalid SVG markup", status_code=400) from exc
+
+    if _local_tag(root.tag) != "svg":
+        raise ImageError("Root element must be <svg>", status_code=400)
+
+    _sanitize_svg_element(root)
+    return ET.tostring(root, encoding="unicode")

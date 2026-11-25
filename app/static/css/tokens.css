@@ -1,0 +1,107 @@
+/* Design tokens: light + graphite dark, IBM Plex default + Instrument Sans option.
+   Wire colours represent electrical nets; severity colours are reserved for warnings. */
+:root {
+  --bg: #ECEDEA;
+  --surface: #F7F7F5;
+  --raised: #FFFFFF;
+  --line: #D3D4CF;
+  --hair: #E2E3DF;
+  --ink: #141517;
+  --ink-2: #44464A;
+  --ink-3: #686A6E;
+  --dot: rgba(0, 0, 0, .10);
+
+  --bat: #7C4DDB;
+  --v33: #E3701B;
+  --v5: #C8302C;
+  --i2c: #0F9A8A;
+  --spi: #2F5BD3;
+  --sig: #7D7F83;
+
+  --danger: #D93A36;
+  --check: #C99400;
+  --ok: #2E9A61;
+  --sel: #17181A;
+  --danger-bg: #FBE6E4;
+  --check-bg: #FBF1D3;
+  --ok-bg: #E1F2E7;
+
+  --sans: 'IBM Plex Sans', 'Segoe UI', Arial, system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  --w-body: 400;
+  --w-mid: 500;
+  --w-strong: 600;
+
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --barh: 44px;
+  --ctl-h: 36px;
+  --hover: color-mix(in srgb, var(--ink) 7%, transparent);
+  --selbg: color-mix(in srgb, var(--ink) 5%, transparent);
+  --sep: var(--line);
+}
+
+:root[data-font="instrument"] {
+  --sans: 'Instrument Sans', 'Segoe UI', Arial, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  --w-body: 460;
+  --w-mid: 560;
+  --w-strong: 650;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1E1D1B;
+    --surface: #262522;
+    --raised: #2F2E2A;
+    --line: #403E39;
+    --hair: #33322E;
+    --ink: #EDEAE4;
+    --ink-2: #BDB8AE;
+    --ink-3: #8F8A81;
+    --dot: rgba(255, 240, 220, .06);
+
+    --bat: #A98BF0;
+    --v33: #F09653;
+    --v5: #F2766B;
+    --i2c: #4CC2AF;
+    --spi: #8AA6F0;
+    --sig: #A09B92;
+
+    --danger: #F2766B;
+    --check: #E8B94A;
+    --ok: #6FC08F;
+    --sel: #EDEAE4;
+    --danger-bg: #3B2421;
+    --check-bg: #3A3020;
+    --ok-bg: #20322A;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1E1D1B;
+  --surface: #262522;
+  --raised: #2F2E2A;
+  --line: #403E39;
+  --hair: #33322E;
+  --ink: #EDEAE4;
+  --ink-2: #BDB8AE;
+  --ink-3: #8F8A81;
+  --dot: rgba(255, 240, 220, .06);
+
+  --bat: #A98BF0;
+  --v33: #F09653;
+  --v5: #F2766B;
+  --i2c: #4CC2AF;
+  --spi: #8AA6F0;
+  --sig: #A09B92;
+
+  --danger: #F2766B;
+  --check: #E8B94A;
+  --ok: #6FC08F;
+  --sel: #EDEAE4;
+  --danger-bg: #3B2421;
+  --check-bg: #3A3020;
+  --ok-bg: #20322A;
+  color-scheme: dark;
+}

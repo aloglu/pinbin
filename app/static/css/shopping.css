@@ -1,0 +1,116 @@
+/* Shopping screen (per-store orders, Store consolidation helper) and Edit Shopping Item additions. */
+
+.pstat { display: grid; justify-items: end; gap: 0; }
+.pstat .k { font-size: 12px; }
+.pstat b { font-size: 16px; }
+.shop-head-acts { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+  .pstat { justify-items: start; }
+}
+
+/* Per-store sections: quiet rows on the page with --line dividers (v24) */
+.store { padding: 4px 0 8px; margin-top: 14px; }
+.storeh {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.storeh > div { display: flex; gap: 8px 12px; align-items: baseline; flex-wrap: wrap; }
+.storeh h2 { font-size: 15px; }
+.storeh .ship-hint { font-size: 12.5px; color: var(--ink-3); }
+
+.store .lrow {
+  grid-template-columns: 32px minmax(0, 1fr) 128px 108px 84px;
+  padding: 9px 6px;
+}
+.store .lrow .move-btn { height: 28px; padding: 0 10px; font-size: 12.5px; }
+
+@media (max-width: 760px) {
+  .store .lrow { grid-template-columns: 32px minmax(0, 1fr) auto; }
+  .store .lrow .c3, .store .lrow .c4 { display: none; }
+}
+
+/* Store consolidation helper panel */
+.optpanel {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  display: grid;
+  gap: 12px;
+  animation: in .2s var(--ease);
+}
+.optpanel-h {
+  display: flex;
+  align-items: center;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.optpanel-h h2 { font-size: 14.5px; }
+.opt-summary {
+  display: flex;
+  gap: 12px 24px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 13.5px;
+}
+.opt-changes { display: grid; gap: 6px; }
+.opt-change {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-top: 1px solid var(--hair);
+  font-size: 13.5px;
+}
+.opt-change:first-child { border-top: 0; padding-top: 0; }
+.opt-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Edit Shopping Item: Stores / offers rows */
+.radio {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+  background: var(--raised);
+  cursor: pointer;
+  flex: none;
+  padding: 0;
+  justify-self: center;
+}
+.radio:hover { border-color: var(--ink); }
+.radio.on { border: 6px solid var(--ink); }
+
+.offrow {
+  display: grid !important;
+  grid-template-columns: 36px 176px 132px minmax(0, 1fr) 36px;
+  gap: 8px;
+  align-items: center !important;
+}
+.ostm { display: flex; min-width: 0; }
+.ostm > .mn, .ostm > input.ei { flex: 1; min-width: 0; }
+.edit .ostm .mn { width: 100%; }
+.edit .ostm .mnb { width: 100%; }
+
+@media (max-width: 560px) {
+  .offrow { grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1.4fr) 36px; }
+  .offrow .radio { grid-row: 1; justify-self: start; }
+  .offrow .ostm { grid-column: 2 / 4; grid-row: 1; }
+  .offrow .xbtn { grid-column: 4; grid-row: 1; }
+  .offrow .inu { grid-column: 2; grid-row: 2; }
+  .offrow > input.ei { grid-column: 3 / 5; grid-row: 2; }
+  .rows > .offrow + .offrow { padding-top: 12px; border-top: 1px solid var(--hair); margin-top: 4px; }
+  .rows:has(> .offrow) > .addrow { margin-top: 4px; }
+}

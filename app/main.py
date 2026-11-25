@@ -19,7 +19,9 @@ from app.config import CATEGORIES, Settings, load_settings
 from app.db import (
     PROJECT_STATUSES,
     add_project_item,
+    add_project_net,
     add_shopping_offer,
+    bulk_update_shopping_status_by_store,
     create_glossary_term,
     create_part,
     create_project,
@@ -28,30 +30,42 @@ from app.db import (
     delete_glossary_term,
     delete_part,
     delete_project,
+    delete_project_check,
     delete_project_item,
+    delete_project_net,
     delete_project_variant,
     delete_retailer,
     delete_shopping_item,
     delete_shopping_offer,
     get_ai_usage_today,
+    get_mcp_runtime_settings,
     get_part,
     get_project,
     get_shopping_item,
+    get_storage_stats,
     get_ui_settings,
     import_parts_from_rows,
     init_db,
     list_glossary,
+    list_mcp_activity,
     list_parts,
     list_projects,
     list_retailers,
     list_shopping_items,
     move_shopping_item_to_inventory,
     optimize_shopping_carts,
+    record_backup_timestamp,
+    rename_bin,
+    rotate_mcp_token,
     seed_if_empty,
+    set_project_checks,
+    set_project_nets,
     teardown_project,
     update_glossary_term,
+    update_mcp_runtime_settings,
     update_part,
     update_project,
+    update_project_check,
     update_project_item,
     update_project_variant,
     update_shopping_item,
@@ -60,6 +74,7 @@ from app.db import (
     upsert_retailer,
     upsert_suggested_glossary_terms,
     utc_today_str,
+    wipe_all_data,
 )
 from app.enricher import EnrichError, check_parts_compatibility_ai, enrich_part, explain_glossary_term
 from app.glossary_seed import GLOSSARY_CATEGORIES
@@ -91,7 +106,10 @@ class PartCreate(BaseModel):
     image_path: str = ""
     pinout_image_path: str = ""
     pinout_url: str = ""
+    pinout_svg: str = ""
     specs: dict[str, str] = Field(default_factory=dict)
+    electrical_facts: dict[str, Any] = Field(default_factory=dict)
+    care_notes: list[dict[str, str]] = Field(default_factory=list)
 
 
 class PartPatch(BaseModel):
@@ -110,7 +128,15 @@ class PartPatch(BaseModel):
     image_path: str | None = None
     pinout_image_path: str | None = None
     pinout_url: str | None = None
+    pinout_svg: str | None = None
     specs: dict[str, str] | None = None
+    electrical_facts: dict[str, Any] | None = None
+    care_notes: list[dict[str, str]] | None = None
+
+
+class BinRenameRequest(BaseModel):
+    old_bin: str = Field(..., min_length=1, max_length=64)
+    new_bin: str = Field(..., min_length=1, max_length=64)
 
 
 class ScrapeRequest(BaseModel):
@@ -129,11 +155,28 @@ class EnrichRequest(BaseModel):
 
 class UiSettingsPatch(BaseModel):
     theme: str | None = None
+    font: str | None = None
+    motion: str | None = None
     view_mode: str | None = None
     sort_by: str | None = None
     inline_tooltips: bool | None = None
     show_caution_badge: bool | None = None
+    show_ok_checks: bool | None = None
+    strap_pin_checks: bool | None = None
+    currency: str | None = None
     logo_color: str | None = None
+
+
+class McpSettingsPatch(BaseModel):
+    access: str | None = None
+    can_parts: bool | None = None
+    can_projects: bool | None = None
+    can_shopping: bool | None = None
+    can_delete: bool | None = None
+
+
+class WipeRequest(BaseModel):
+    confirm: str = Field(..., min_length=1, max_length=32)
 
 
 class GlossaryCreate(BaseModel):
@@ -142,6 +185,9 @@ class GlossaryCreate(BaseModel):
     summary: str = ""
     rule_of_thumb: str = ""
     keywords: str = ""
+    related_ids: list[str] = Field(default_factory=list)
+    bench_tool: str = ""
+    figure_key: str = ""
 
 
 class GlossaryPatch(BaseModel):
@@ -150,6 +196,9 @@ class GlossaryPatch(BaseModel):
     summary: str | None = None
     rule_of_thumb: str | None = None
     keywords: str | None = None
+    related_ids: list[str] | None = None
+    bench_tool: str | None = None
+    figure_key: str | None = None
 
 
 class GlossaryExplainRequest(BaseModel):
@@ -163,6 +212,8 @@ class ProjectTeardownRequest(BaseModel):
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=160)
     description: str = ""
+    option: str = ""
+    tags: list[str] = Field(default_factory=list)
     status: str = "planning"
     notes: str = ""
 
@@ -170,6 +221,8 @@ class ProjectCreate(BaseModel):
 class ProjectPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = None
+    option: str | None = None
+    tags: list[str] | None = None
     status: str | None = None
     notes: str | None = None
 
@@ -194,14 +247,46 @@ class ProjectItemCreate(BaseModel):
     variant_id: str | None = None
     part_id: str | None = None
     shopping_item_id: str | None = None
+    ref: str = ""
+    role: str = ""
+    label: str = ""
     quantity_needed: int = Field(default=1, ge=1)
     project_notes: str = ""
 
 
 class ProjectItemPatch(BaseModel):
     variant_id: str | None = None
+    ref: str | None = None
+    role: str | None = None
+    label: str | None = None
     quantity_needed: int | None = Field(default=None, ge=1)
     project_notes: str | None = None
+
+
+class ProjectNetsReplace(BaseModel):
+    nets: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ProjectNetCreate(BaseModel):
+    name: str = ""
+    kind: str = "sig"
+    rail: float | None = None
+    chain: bool = False
+    wake: bool = False
+    conns: list[Any] = Field(default_factory=list)
+
+
+class ProjectChecksReplace(BaseModel):
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ProjectCheckPatch(BaseModel):
+    severity: str | None = None
+    title: str | None = None
+    body: str | None = None
+    node_refs: list[str] | None = None
+    net_ids: list[str] | None = None
+    is_done: bool | None = None
 
 
 class ShoppingItemCreate(BaseModel):
@@ -215,12 +300,21 @@ class ShoppingItemCreate(BaseModel):
     tag: str = ""
     category: str = ""
     specs: dict[str, str] = Field(default_factory=dict)
+    electrical_facts: dict[str, Any] = Field(default_factory=dict)
+    care_notes: list[dict[str, str]] = Field(default_factory=list)
+    status: str = "order"
     in_stock: str = ""
     why_needed: str = ""
     project_id: str | None = None
     variant_id: str | None = None
     fetch_metadata: bool = False
     offers: list[dict[str, Any]] | None = None
+
+
+class ShoppingStoreStatusRequest(BaseModel):
+    retailer: str = ""
+    status: str = Field(..., min_length=1, max_length=20)
+    item_ids: list[str] | None = None
 
 
 class ShoppingOfferCreate(BaseModel):
@@ -271,6 +365,9 @@ class ShoppingItemPatch(BaseModel):
     tag: str | None = None
     category: str | None = None
     specs: dict[str, str] | None = None
+    electrical_facts: dict[str, Any] | None = None
+    care_notes: list[dict[str, str]] | None = None
+    status: str | None = None
     in_stock: str | None = None
     why_needed: str | None = None
 
@@ -326,11 +423,13 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
     @application.get("/")
     @application.get("/inventory")
     @application.get("/projects")
+    @application.get("/projects/{project_id}")
     @application.get("/shopping")
     @application.get("/glossary")
     @application.get("/bench")
     @application.get("/bench/{subtab}")
-    async def index(subtab: str | None = None) -> FileResponse:
+    @application.get("/settings")
+    async def index(project_id: str | None = None, subtab: str | None = None) -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
     @application.get("/images/{filename}")
@@ -477,6 +576,56 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         if not delete_project_item(settings.db_path, project_id, item_id):
             raise HTTPException(status_code=404, detail="Project item not found")
         return {"status": "deleted", "id": item_id}
+
+    @application.put("/api/projects/{project_id}/nets")
+    async def api_replace_project_nets(project_id: str, payload: ProjectNetsReplace) -> dict[str, Any]:
+        updated = set_project_nets(settings.db_path, project_id, payload.nets)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return updated
+
+    @application.post("/api/projects/{project_id}/nets", status_code=201)
+    async def api_add_project_net(project_id: str, payload: ProjectNetCreate) -> dict[str, Any]:
+        try:
+            updated = add_project_net(settings.db_path, project_id, payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return updated
+
+    @application.delete("/api/projects/{project_id}/nets/{net_id}")
+    async def api_delete_project_net(project_id: str, net_id: str) -> dict[str, str]:
+        if not delete_project_net(settings.db_path, project_id, net_id):
+            raise HTTPException(status_code=404, detail="Net not found")
+        return {"status": "deleted", "id": net_id}
+
+    @application.put("/api/projects/{project_id}/checks")
+    async def api_replace_project_checks(project_id: str, payload: ProjectChecksReplace) -> dict[str, Any]:
+        updated = set_project_checks(settings.db_path, project_id, payload.checks)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return updated
+
+    @application.patch("/api/projects/{project_id}/checks/{check_id}")
+    async def api_patch_project_check(
+        project_id: str, check_id: str, payload: ProjectCheckPatch
+    ) -> dict[str, Any]:
+        try:
+            updated = update_project_check(
+                settings.db_path, project_id, check_id, payload.model_dump(exclude_unset=True)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Check not found")
+        return updated
+
+    @application.delete("/api/projects/{project_id}/checks/{check_id}")
+    async def api_delete_project_check(project_id: str, check_id: str) -> dict[str, str]:
+        if not delete_project_check(settings.db_path, project_id, check_id):
+            raise HTTPException(status_code=404, detail="Check not found")
+        return {"status": "deleted", "id": check_id}
 
     @application.post("/api/projects/teardown")
     async def api_teardown_project(payload: ProjectTeardownRequest) -> dict[str, Any]:
@@ -638,6 +787,16 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Offer not found")
         return updated
 
+    @application.post("/api/shopping/store-status")
+    async def api_shopping_store_status(payload: ShoppingStoreStatusRequest) -> dict[str, Any]:
+        try:
+            updated = bulk_update_shopping_status_by_store(
+                settings.db_path, payload.retailer, payload.status, item_ids=payload.item_ids
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"updated_count": len(updated), "items": updated}
+
     @application.post("/api/shopping/optimize")
     async def api_optimize_shopping(payload: ShoppingOptimizeRequest) -> dict[str, Any]:
         return optimize_shopping_carts(
@@ -745,6 +904,51 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         updates = payload.model_dump(exclude_unset=True)
         return update_ui_settings(settings.db_path, updates)
 
+    @application.get("/api/mcp-settings")
+    async def api_get_mcp_settings() -> dict[str, Any]:
+        rt = get_mcp_runtime_settings(settings)
+        return {
+            "enabled": settings.mcp_enabled,
+            **rt,
+            "activity": list_mcp_activity(settings.db_path, limit=25),
+        }
+
+    @application.patch("/api/mcp-settings")
+    async def api_patch_mcp_settings(payload: McpSettingsPatch) -> dict[str, Any]:
+        rt = update_mcp_runtime_settings(settings, payload.model_dump(exclude_unset=True))
+        return {
+            "enabled": settings.mcp_enabled,
+            **rt,
+            "activity": list_mcp_activity(settings.db_path, limit=25),
+        }
+
+    @application.post("/api/mcp-settings/rotate-token")
+    async def api_rotate_mcp_token() -> dict[str, Any]:
+        rt = rotate_mcp_token(settings)
+        return {
+            "enabled": settings.mcp_enabled,
+            **rt,
+            "activity": list_mcp_activity(settings.db_path, limit=25),
+        }
+
+    @application.post("/api/bins/rename")
+    async def api_rename_bin(payload: BinRenameRequest) -> dict[str, Any]:
+        try:
+            moved = rename_bin(settings.db_path, payload.old_bin, payload.new_bin)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"status": "ok", "old_bin": payload.old_bin.strip(), "new_bin": payload.new_bin.strip(), "moved": moved}
+
+    @application.get("/api/stats")
+    async def api_storage_stats() -> dict[str, Any]:
+        return get_storage_stats(settings)
+
+    @application.post("/api/wipe")
+    async def api_wipe_all(payload: WipeRequest) -> dict[str, Any]:
+        if payload.confirm.strip().lower() != "delete":
+            raise HTTPException(status_code=400, detail="Type 'delete' to confirm")
+        return wipe_all_data(settings)
+
     @application.get("/api/parts")
     async def api_list_parts(
         q: str | None = Query(default=None),
@@ -766,15 +970,20 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/parts", status_code=201)
     async def api_create_part(payload: PartCreate) -> dict[str, Any]:
-        return create_part(settings.db_path, payload.model_dump())
+        try:
+            return create_part(settings.db_path, payload.model_dump())
+        except (ValueError, ImageError) as exc:
+            status = exc.status_code if isinstance(exc, ImageError) else 400
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
 
     @application.patch("/api/parts/{part_id}")
     async def api_patch_part(part_id: str, payload: PartPatch) -> dict[str, Any]:
         updates = payload.model_dump(exclude_unset=True)
         try:
             updated = update_part(settings.db_path, part_id, updates)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (ValueError, ImageError) as exc:
+            status = exc.status_code if isinstance(exc, ImageError) else 400
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
         if updated is None:
             raise HTTPException(status_code=404, detail="Part not found")
         return updated
@@ -890,6 +1099,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
     @application.get("/api/backup")
     async def api_backup() -> Response:
         zip_bytes = create_backup_zip_bytes(settings)
+        record_backup_timestamp(settings.db_path)
         filename = f"pinbin-backup-{utc_today_str()}.zip"
         return Response(
             content=zip_bytes,
@@ -903,6 +1113,12 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         raw_bytes = await file.read(250 * 1024 * 1024 + 1)
         if len(raw_bytes) > 250 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="Backup archive is too large")
+        try:
+            if settings.db_path.exists():
+                snapshot = create_backup_zip_bytes(settings)
+                (settings.data_dir / "pre-restore-backup.zip").write_bytes(snapshot)
+        except Exception:
+            pass
         try:
             return restore_backup_zip_bytes(raw_bytes, settings)
         except BackupError as exc:

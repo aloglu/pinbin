@@ -1,0 +1,1216 @@
+// Projects list, Project detail (Map / One part / Lines / Parts / Notes), and Project Inspector.
+import { api } from '../api.js';
+import {
+  state,
+  G,
+  esc,
+  sv,
+  ph,
+  phPart,
+  glyphFor,
+  stepHtml,
+  sevGlyph,
+  projectById,
+  storeDisplayName,
+  toast,
+} from '../state.js';
+import {
+  resolveProjectItem,
+  warningsOfProject,
+  openChecksOfProject,
+  nextStepOfProject,
+} from '../rules.js';
+
+const STATUS_META = {
+  danger: ['var(--danger)', 'Wiring problem'],
+  buy: ['var(--spi)', 'Parts to buy'],
+  check: ['var(--check)', 'Checks open'],
+  ok: ['var(--ok)', 'Ready to build'],
+  arch: ['var(--ink-3)', 'Archived'],
+};
+
+const isPhone = () => window.matchMedia('(max-width: 820px)').matches;
+
+export function mdLite(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return '<p class="faint">No notes yet.</p>';
+  const inline = (s) =>
+    esc(s)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+
+  return raw
+    .split(/\n\n+/)
+    .map((block) => {
+      const lines = block.split('\n');
+      if (lines.length === 1 && lines[0].startsWith('### ')) {
+        return `<h3>${inline(lines[0].slice(4))}</h3>`;
+      }
+      if (lines[0].startsWith('### ')) {
+        const head = `<h3>${inline(lines[0].slice(4))}</h3>`;
+        const rest = lines.slice(1);
+        if (rest.every((l) => l.trim().startsWith('- '))) {
+          return (
+            head +
+            `<ul>${rest
+              .map((l) => {
+                const body = l.trim().slice(2);
+                if (body.startsWith('[ ] ')) return `<li class="chk"><span>☐</span><span>${inline(body.slice(4))}</span></li>`;
+                if (body.startsWith('[x] ') || body.startsWith('[X] '))
+                  return `<li class="chk"><span>☑</span><span>${inline(body.slice(4))}</span></li>`;
+                return `<li>${inline(body)}</li>`;
+              })
+              .join('')}</ul>`
+          );
+        }
+        return head + `<p>${inline(rest.join(' '))}</p>`;
+      }
+      if (lines.every((l) => l.trim().startsWith('- '))) {
+        return `<ul>${lines
+          .map((l) => {
+            const body = l.trim().slice(2);
+            if (body.startsWith('[ ] ')) return `<li class="chk"><span>☐</span><span>${inline(body.slice(4))}</span></li>`;
+            if (body.startsWith('[x] ') || body.startsWith('[X] '))
+              return `<li class="chk"><span>☑</span><span>${inline(body.slice(4))}</span></li>`;
+            return `<li>${inline(body)}</li>`;
+          })
+          .join('')}</ul>`;
+      }
+      return `<p>${inline(block).replace(/\n/g, '<br>')}</p>`;
+    })
+    .join('');
+}
+
+function projectState(proj) {
+  if (proj.archived) return 'arch';
+  const ws = warningsOfProject(proj);
+  if (ws.some((w) => w.src === 'rule' && w.sev === 'danger')) return 'danger';
+  if ((proj.items || []).some((x) => x.item_type === 'shopping' && (x.shopping_status || 'order') === 'order')) {
+    return 'buy';
+  }
+  if (openChecksOfProject(proj).length) return 'check';
+  return 'ok';
+}
+
+function statusBadge(st) {
+  const [col, label] = STATUS_META[st] || STATUS_META.ok;
+  return `<span class="status"><i style="background:${col}"></i>${esc(label)}</span>`;
+}
+
+function tagsReadonlyHtml(proj) {
+  const tags = proj.tags || [];
+  if (!tags.length) return '';
+  return tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('');
+}
+
+function glyphOfItem(rec) {
+  if (!rec) return 'proto';
+  if (rec.src) return glyphFor(rec.src);
+  return glyphFor(rec);
+}
+
+function findMcuRef(proj) {
+  const items = proj.items || [];
+  const explicit = items.find((x) => x.role === 'mcu');
+  if (explicit) return explicit.ref;
+  const board = items.find((x) => x.category === 'Microcontrollers');
+  if (board) return board.ref;
+  return items[0] ? items[0].ref : null;
+}
+
+/* =========================================================== Projects list */
+export function renderProjectsListView() {
+  const tab = state.ptab || 'active';
+  const all = state.projects || [];
+  const tagsAll = [...new Set(all.flatMap((p) => p.tags || []))].sort();
+  const list = all
+    .filter((p) => (tab === 'archived') === Boolean(p.archived))
+    .filter((p) => !state.tagf || (p.tags || []).includes(state.tagf));
+  const nActive = all.filter((p) => !p.archived).length;
+  const nArchived = all.length - nActive;
+
+  return `<div class="screen full"><div class="work">
+    <div class="pagehead">
+      <h1>Projects</h1>
+      <span class="sub">${nActive} active · ${nArchived} archived</span>
+      <span style="flex:1"></span>
+      <a class="btn ink" href="#new-proj">+ New project</a>
+    </div>
+
+    <div class="cattabs" role="group" aria-label="Show">
+      <button type="button" data-ptab="active" aria-pressed="${tab === 'active'}">Active<span class="fc">${nActive}</span></button>
+      <button type="button" data-ptab="archived" aria-pressed="${tab === 'archived'}">Archived<span class="fc">${nArchived}</span></button>
+    </div>
+
+    ${
+      tagsAll.length
+        ? `<div class="toolbar"><div class="chips"><span class="k">Tags</span>${tagsAll
+            .map(
+              (t) =>
+                `<button type="button" class="tag f" data-tagf="${esc(t)}" aria-pressed="${state.tagf === t}">${esc(t)}</button>`
+            )
+            .join('')}</div></div>`
+        : ''
+    }
+
+    <div class="plist">
+      ${
+        list.length
+          ? list
+              .map((p) => {
+                const next = nextStepOfProject(p);
+                const open = openChecksOfProject(p);
+                const st = projectState(p);
+                return `<div class="prow st-${st} ${p.archived ? 'arch' : ''}">
+                  <div class="body">
+                    <div class="ttl">
+                      <h2><a href="#p-${esc(p.id)}">${esc(p.name)}</a></h2>
+                      ${p.option ? `<span class="tag opt">${esc(p.option)}</span>` : ''}
+                      ${statusBadge(st)}
+                    </div>
+                    ${p.description ? `<p class="dim">${esc(p.description)}</p>` : ''}
+                    ${(p.tags || []).length ? `<div class="chips">${tagsReadonlyHtml(p)}</div>` : ''}
+                  </div>
+                  <div class="side">
+                    ${
+                      p.archived
+                        ? '<span class="faint">archived</span>'
+                        : `<span class="k">next</span><b>${esc(next.t)}</b><span class="faint">${open.length} open check${
+                            open.length === 1 ? '' : 's'
+                          }</span>`
+                    }
+                    <div class="pacts2">
+                      <button class="btn quiet" type="button" data-archive="${esc(p.id)}">${
+                  p.archived ? 'Restore' : 'Archive'
+                }</button>
+                      <a class="btn" href="#p-${esc(p.id)}">Open →</a>
+                    </div>
+                  </div>
+                </div>`;
+              })
+              .join('')
+          : `<p class="faint">${
+              tab === 'archived'
+                ? 'Nothing archived. Archive a finished or paused project to hide it from Inventory.'
+                : state.tagf
+                ? 'No active projects match that tag.'
+                : 'No active projects yet.'
+            }</p>`
+      }
+    </div>
+
+    <p class="faint pnote">Start one yourself with <b>New project</b>, or ask your assistant to plan it: it can pick parts, check your inventory, find stores and write the wiring list. You can change anything it writes.</p>
+  </div></div>`;
+}
+
+/* =========================================================== Automatic block diagram layout */
+function layoutProject(proj) {
+  const items = proj.items || [];
+  const allNets = proj.nets || [];
+  const mcuRef = findMcuRef(proj);
+  if (!mcuRef) return null;
+
+  const power = items.filter((x) => x.role === 'power' && x.ref !== mcuRef).map((x) => x.ref);
+  const periph = items
+    .filter((x) => x.role !== 'power' && x.role !== 'material' && x.ref !== mcuRef)
+    .map((x) => x.ref);
+
+  const N = {};
+  const nets = {};
+  const W = 180;
+  const GAP = 22;
+  const TOP = 70;
+  const PW = 250;
+
+  // Power column
+  power.forEach((r, i) => {
+    N[r] = { x: 40, y: TOP + i * 116, w: W, h: 62, pins: [] };
+  });
+
+  const mcuX = power.length ? 340 : 80;
+  const mcuW = 210;
+
+  // Collect pins per peripheral (rails first, then signals touching MCU)
+  const pinsOf = {};
+  periph.forEach((r) => {
+    pinsOf[r] = [];
+  });
+
+  const validNets = allNets.filter((n) => Array.isArray(n.conns) && n.conns.length > 1);
+  const railNets = validNets.filter((n) => n.rail && n.conns.some(([r]) => r === mcuRef));
+  const sigNets = validNets.filter((n) => !n.rail && n.kind !== 'bat' && n.conns.some(([r]) => r === mcuRef));
+  const sideNets = validNets.filter((n) => !n.rail && n.kind !== 'bat' && !n.conns.some(([r]) => r === mcuRef));
+  const batNets = validNets.filter((n) => n.kind === 'bat');
+
+  railNets.forEach((n) =>
+    n.conns.forEach(([r, pin]) => {
+      if (pinsOf[r]) pinsOf[r].push([pin || '', n.id]);
+    })
+  );
+  sigNets.forEach((n) =>
+    n.conns.forEach(([r, pin]) => {
+      if (pinsOf[r]) pinsOf[r].push([pin || '', n.id]);
+    })
+  );
+
+  const laneStart = mcuX + mcuW + 34;
+  const laneGap = 16;
+  const periphX = Math.max(laneStart + (sigNets.length + railNets.length) * laneGap + 30, 700);
+
+  let y = TOP;
+  periph.forEach((r) => {
+    const k = pinsOf[r].length;
+    const h = Math.max(62, 46 + k * 20);
+    N[r] = { x: periphX, y, w: PW, h, pins: [] };
+    pinsOf[r].forEach(([pin, nid], i) => {
+      N[r].pins.push({ pin, net: nid, x: periphX, y: y + 46 + i * 20 - 6, side: 'l' });
+    });
+    y += h + GAP;
+  });
+
+  // MCU right pins aligned with first peripheral pin of each signal net
+  const mpins = [];
+  sigNets.forEach((n) => {
+    const first = n.conns.find(([r]) => r !== mcuRef && N[r]);
+    const pp = first ? N[first[0]].pins.find((q) => q.net === n.id) : null;
+    const mEntry = n.conns.find(([r]) => r === mcuRef);
+    if (pp && mEntry) {
+      mpins.push({ pin: mEntry[1] || '', net: n.id, y: pp.y });
+    }
+  });
+  mpins.sort((a, b) => a.y - b.y);
+  // Nudge colliding MCU pin y positions slightly so labels never overlap
+  for (let i = 1; i < mpins.length; i++) {
+    if (mpins[i].y - mpins[i - 1].y < 18) mpins[i].y = mpins[i - 1].y + 18;
+  }
+
+  const minY = Math.min(TOP + 10, ...(mpins.length ? mpins.map((m) => m.y - 40) : [TOP + 10]));
+  const maxY = Math.max(
+    TOP + 260,
+    ...(mpins.length ? mpins.map((m) => m.y + 40) : [TOP + 260]),
+    power.length ? N[power[power.length - 1]].y + 40 : 0
+  );
+  N[mcuRef] = { x: mcuX, y: minY, w: mcuW, h: maxY - minY, pins: [] };
+  mpins.forEach((m) => {
+    N[mcuRef].pins.push({ pin: m.pin, net: m.net, x: mcuX + mcuW, y: m.y, side: 'r' });
+  });
+
+  // Signal net paths
+  sigNets.forEach((n, i) => {
+    const m = mpins.find((q) => q.net === n.id);
+    if (!m) return;
+    const targets = n.conns
+      .filter(([r]) => r !== mcuRef && N[r])
+      .map(([r]) => N[r].pins.find((q) => q.net === n.id))
+      .filter(Boolean);
+    if (!targets.length) return;
+    const lx = laneStart + i * laneGap;
+    const paths = [];
+    const straight = targets.length === 1 && Math.abs(targets[0].y - m.y) < 1;
+    if (straight) {
+      paths.push(`M${mcuX + mcuW} ${m.y} H${periphX}`);
+    } else {
+      paths.push(`M${mcuX + mcuW} ${m.y} H${lx}`);
+      targets.forEach((t) => paths.push(`M${lx} ${m.y} V${t.y} H${periphX}`));
+    }
+    const ys = [m.y, ...targets.map((t) => t.y)];
+    nets[n.id] = {
+      paths,
+      anchor: straight ? [(mcuX + mcuW + periphX) / 2, m.y] : [lx, (Math.min(...ys) + Math.max(...ys)) / 2],
+      label: [mcuX + mcuW + 8, m.y - 6],
+    };
+  });
+
+  // Power rails from MCU top
+  railNets.forEach((n, i) => {
+    const px = mcuX + mcuW - 26 - i * 34;
+    const mp = n.conns.find(([r]) => r === mcuRef);
+    if (!mp) return;
+    N[mcuRef].pins.push({ pin: mp[1] || '', net: n.id, x: px, y: N[mcuRef].y, side: 't' });
+    const ry = N[mcuRef].y - 22 - i * 14;
+    const rx = laneStart + (sigNets.length + i) * laneGap;
+    const targets = n.conns
+      .filter(([r]) => r !== mcuRef && N[r])
+      .map(([r]) => N[r].pins.find((q) => q.net === n.id))
+      .filter(Boolean);
+    if (!targets.length) return;
+    const maxT = Math.max(...targets.map((t) => t.y));
+    const paths = [`M${px} ${N[mcuRef].y} V${ry} H${rx} V${maxT}`];
+    targets.forEach((t) => paths.push(`M${rx} ${t.y} H${periphX}`));
+    nets[n.id] = {
+      paths,
+      anchor: [rx, (ry + maxT) / 2 + 10],
+      label: [px + 6, ry - 5],
+    };
+  });
+
+  // Battery chain
+  batNets.forEach((n) => {
+    const paths = [];
+    let last = null;
+    n.conns.forEach(([r, pin], i) => {
+      const node = N[r];
+      if (!node) return;
+      if (r === mcuRef) {
+        const my = N[mcuRef].y + 62;
+        N[mcuRef].pins.push({ pin: pin || '', net: n.id, x: mcuX, y: my, side: 'l' });
+        if (last) {
+          const lx = mcuX - 50;
+          paths.push(`M${last.x} ${last.y} H${lx} V${my} H${mcuX}`);
+          nets[n.id] = { anchor: [lx, (last.y + my) / 2] };
+        }
+        return;
+      }
+      const first = !last || last.r !== r;
+      const isTop = first && i > 0;
+      const nextIsMcu = n.conns[i + 1] && n.conns[i + 1][0] === mcuRef;
+      const pt = isTop
+        ? { x: node.x + node.w / 2, y: node.y, side: 't' }
+        : nextIsMcu
+        ? { x: node.x + node.w, y: node.y + node.h / 2, side: 'r' }
+        : { x: node.x + node.w / 2, y: node.y + node.h, side: 'b' };
+      node.pins.push({ pin: pin || '', net: n.id, ...pt });
+      if (last && last.r !== r) paths.push(`M${last.x} ${last.y} V${pt.y}`);
+      last = { r, ...pt };
+    });
+    const firstPower = power[0] ? N[power[0]] : N[mcuRef];
+    nets[n.id] = {
+      ...(nets[n.id] || { anchor: [140, TOP + 100] }),
+      paths,
+      label: [firstPower.x + firstPower.w / 2 + 6, firstPower.y + firstPower.h + 16],
+    };
+  });
+
+  // Side nets (periph ↔ periph, e.g. coin cell to RTC)
+  sideNets.forEach((n, i) => {
+    const valid = n.conns.filter(([r]) => N[r]);
+    if (valid.length < 2) return;
+    const pts = valid.map(([r]) => N[r]);
+    const hx = periphX + PW + 18 + i * 10;
+    const ys = pts.map((b) => b.y + b.h / 2);
+    pts.forEach((b, j) => {
+      b.pins.push({ pin: valid[j][1] || '', net: n.id, x: b.x + b.w, y: ys[j], side: 'r' });
+    });
+    const x0 = pts[0].x + pts[0].w;
+    const x1 = pts[pts.length - 1].x + pts[pts.length - 1].w;
+    nets[n.id] = {
+      paths: [`M${x0} ${ys[0]} H${hx} V${ys[ys.length - 1]} H${x1}`],
+      anchor: [hx, (ys[0] + ys[ys.length - 1]) / 2],
+    };
+  });
+
+  const boxes = Object.values(N);
+  const H = Math.max(320, ...boxes.map((b) => b.y + b.h)) + 70;
+  const Wd = Math.max(periphX + PW + 60, ...boxes.map((b) => b.x + b.w + 60));
+  N[mcuRef].usb = [mcuX + mcuW / 2, N[mcuRef].y + N[mcuRef].h];
+  return { N, nets, W: Wd, H, mcuRef };
+}
+
+function renderMapSvg(proj) {
+  const L = layoutProject(proj);
+  if (!L) return '';
+  const ws = warningsOfProject(proj);
+
+  const netEls = (proj.nets || [])
+    .map((n) => {
+      const g = L.nets[n.id];
+      if (!g || !g.paths.length) return '';
+      const col = `var(--${n.kind || 'sig'})`;
+      const bus = n.kind === 'i2c' || n.kind === 'spi';
+      const draw = g.paths
+        .map((d) =>
+          bus
+            ? `<path class="bus" d="${d}" stroke="${col}"/><path class="bus-in" d="${d}"/>`
+            : `<path class="w" d="${d}" stroke="${col}"/>`
+        )
+        .join('');
+      const lab =
+        g.label && n.kind !== 'sig'
+          ? `<text class="lab" x="${g.label[0]}" y="${g.label[1]}" style="fill:${col}">${
+              n.rail ? `${n.rail} V` : n.kind === 'bat' ? '3.0–4.2 V' : String(n.kind || '').toUpperCase()
+            }</text>`
+          : '';
+      return `<g class="net" data-sel="net:${esc(n.id)}">${draw}${g.paths
+        .map((d) => `<path class="flow" d="${d}"/>`)
+        .join('')}${g.paths.map((d) => `<path class="hit" d="${d}"/>`).join('')}${lab}</g>`;
+    })
+    .join('');
+
+  const nodeEls = Object.entries(L.N)
+    .map(([r, b]) => {
+      const x = resolveProjectItem(proj, r);
+      if (!x) return '';
+      const st = x.owned
+        ? `owned${x.src && x.src.location ? ` · bin ${x.src.location}` : ''}`
+        : (x.shopping_status || 'order') === 'order'
+        ? `to buy · ${x.buy_quantity || x.quantity_needed || 1}×`
+        : x.shopping_status === 'ordered'
+        ? 'on the way'
+        : 'arrived';
+
+      const pins = b.pins
+        .map((q) => {
+          let tx,
+            ty,
+            a = 'start';
+          if (q.side === 'l') {
+            tx = q.x + 6;
+            ty = q.y + 3;
+          } else if (q.side === 'r') {
+            tx = q.x - 6;
+            ty = q.y + 3;
+            a = 'end';
+          } else if (q.side === 't') {
+            tx = q.x + 5;
+            ty = q.y - 5;
+          } else {
+            tx = q.x + 5;
+            ty = q.y + 12;
+          }
+          return `<circle cx="${q.x}" cy="${q.y}" r="2.6" fill="var(--ink-3)"/>${
+            q.pin ? `<text class="pin" x="${tx}" y="${ty}" text-anchor="${a}">${esc(q.pin)}</text>` : ''
+          }`;
+        })
+        .join('');
+
+      const hasL = b.pins.some((q) => q.side === 'l' && r !== L.mcuRef);
+      const ox = hasL ? 62 : 0;
+      const gKey = glyphOfItem(x);
+      const maxChars = Math.max(12, Math.floor((b.w - 50 - ox) / 7.2));
+      const shortNm = x.displayName.length > maxChars ? `${x.displayName.slice(0, maxChars - 1)}…` : x.displayName;
+      const usb =
+        r === L.mcuRef && b.usb
+          ? `<path d="M${b.usb[0]} ${b.usb[1]} v26" stroke="var(--sig)" stroke-width="2" stroke-dasharray="4 4"/><text class="pin" x="${
+              b.usb[0] + 8
+            }" y="${b.usb[1] + 22}">USB</text>`
+          : '';
+
+      return `<g class="node ${x.owned ? 'own' : 'buy'} ${r === L.mcuRef ? 'mcu' : ''}" data-sel="node:${esc(
+        r
+      )}" tabindex="0" role="button" aria-label="${esc(x.displayName)}">
+        <rect class="box" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="5"/>
+        <rect class="phb" x="${b.x + 8 + ox}" y="${b.y + 8}" width="28" height="28" rx="3"/>
+        <g transform="translate(${b.x + 10 + ox} ${b.y + 10})"><g class="gl">${G[gKey] || G.proto}</g></g>
+        <text class="nm" x="${b.x + 44 + ox}" y="${b.y + 20}">${esc(shortNm)}</text>
+        <text class="st" x="${b.x + 44 + ox}" y="${b.y + 33}">${esc(st)}</text>
+        ${pins}${usb}
+      </g>`;
+    })
+    .join('');
+
+  const usedAnchors = {};
+  const marks = ws
+    .map((w) => {
+      let a;
+      if ((w.on.nets || []).length && L.nets[w.on.nets[0]]) {
+        a = [...L.nets[w.on.nets[0]].anchor];
+      } else {
+        const b = L.N[(w.on.nodes || [])[0]];
+        if (!b) return '';
+        a = [b.x + b.w - 10, b.y + 10];
+      }
+      const key = a.join(',');
+      usedAnchors[key] = (usedAnchors[key] || 0) + 1;
+      if (usedAnchors[key] > 1) a[1] += (usedAnchors[key] - 1) * 22;
+      const done = w.src === 'assistant' && w.is_done;
+      const plainLabel = String(w.t || '').replace(/<[^>]+>/g, '');
+      return `<g class="mk ${esc(w.sev)} ${done ? 'done' : ''}" data-sel="warn:${esc(
+        w.id
+      )}" tabindex="0" role="button" aria-label="${esc(plainLabel)}">
+        <circle class="ring" cx="${a[0]}" cy="${a[1]}" r="9"/>
+        <circle class="b" cx="${a[0]}" cy="${a[1]}" r="10"/>
+        <text x="${a[0]}" y="${a[1] + 0.5}">${sevGlyph(w.sev, done)}</text>
+        <circle class="mhit" cx="${a[0]}" cy="${a[1]}" r="13"/>
+      </g>`;
+    })
+    .join('');
+
+  const scale = state.zoom || 1;
+  const style = scale === 1 ? `width:100%;min-width:${isPhone() ? 0 : 760}px` : `width:${L.W * scale}px`;
+  return `<svg class="map" id="map" viewBox="0 0 ${L.W} ${L.H}" style="${style}" role="img" aria-label="${esc(
+    proj.name
+  )} wiring map">${netEls}${nodeEls}${marks}</svg>`;
+}
+
+function relatedToSelection(proj, sel) {
+  if (!sel || !proj) return null;
+  const ws = warningsOfProject(proj);
+  const idx = sel.indexOf(':');
+  if (idx < 0) return null;
+  const type = sel.slice(0, idx);
+  const id = sel.slice(idx + 1);
+  const on = { nodes: new Set(), nets: new Set(), warns: new Set() };
+  if (type === 'node') {
+    on.nodes.add(id);
+    (proj.nets || []).forEach((n) => {
+      if ((n.conns || []).some(([r]) => r === id)) {
+        on.nets.add(n.id);
+        n.conns.forEach(([r]) => on.nodes.add(r));
+      }
+    });
+    ws.forEach((w) => {
+      if ((w.on.nodes || []).includes(id) || (w.on.nets || []).some((x) => on.nets.has(x))) {
+        on.warns.add(w.id);
+      }
+    });
+  } else if (type === 'net') {
+    on.nets.add(id);
+    const n = (proj.nets || []).find((q) => q.id === id);
+    if (n) (n.conns || []).forEach(([r]) => on.nodes.add(r));
+    ws.forEach((w) => {
+      if ((w.on.nets || []).includes(id)) on.warns.add(w.id);
+    });
+  } else if (type === 'warn') {
+    const w = ws.find((x) => x.id === id);
+    if (!w) return null;
+    on.warns.add(id);
+    (w.on.nodes || []).forEach((x) => on.nodes.add(x));
+    (w.on.nets || []).forEach((x) => on.nets.add(x));
+  } else {
+    return null;
+  }
+  return on;
+}
+
+export function applyMapFocus(pid) {
+  const el = document.getElementById('map');
+  if (!el || !pid) return;
+  const proj = projectById(pid);
+  if (!proj) return;
+  const on = relatedToSelection(proj, state.sel || state.hot);
+  el.parentElement.classList.toggle('focus', Boolean(on));
+  el.querySelectorAll('[data-sel]').forEach((g) => {
+    const raw = g.dataset.sel;
+    const idx = raw.indexOf(':');
+    const t = raw.slice(0, idx);
+    const id = raw.slice(idx + 1);
+    const isOn =
+      on &&
+      ((t === 'node' && on.nodes.has(id)) ||
+        (t === 'net' && on.nets.has(id)) ||
+        (t === 'warn' && on.warns.has(id)));
+    g.classList.toggle('on', Boolean(isOn));
+    g.classList.toggle('sel', state.sel === raw);
+    if (t === 'net') g.classList.toggle('hot', Boolean(isOn));
+  });
+}
+
+/* =========================================================== One part (focus) view */
+function renderFocusView(proj) {
+  const mcuRef = findMcuRef(proj);
+  if (!mcuRef) {
+    return `<div class="map-empty"><p>Add parts to this project to explore connections one part at a time.</p><a class="btn" href="#edit-proj-${esc(
+      proj.id
+    )}">Edit project</a></div>`;
+  }
+  const c = state.focusRef[proj.id] || mcuRef;
+  const x = resolveProjectItem(proj, c) || resolveProjectItem(proj, mcuRef);
+  if (!x) return '';
+  const ws = warningsOfProject(proj);
+  const trail = state.trail[proj.id] || [];
+  const mine = (proj.nets || []).filter((n) => (n.conns || []).some(([r]) => r === x.ref));
+  const nodeWarn = ws.filter((w) => (w.on.nodes || []).includes(x.ref));
+  const wRow = (w) => {
+    const done = w.src === 'assistant' && w.is_done;
+    return `<div class="fwarn" data-sel="warn:${esc(w.id)}"><span class="sev ${done ? 'done' : esc(w.sev)}">${sevGlyph(
+      w.sev,
+      done
+    )}</span><b>${w.t}</b></div>`;
+  };
+
+  return `<div class="fview">
+    ${
+      trail.length
+        ? `<div class="crumbs">${trail
+            .map((r) => {
+              const tr = resolveProjectItem(proj, r);
+              return tr ? `<button type="button" data-focus="${esc(r)}">${esc(tr.displayName)}</button><span>→</span>` : '';
+            })
+            .join('')}<span>${esc(x.displayName)}</span></div>`
+        : `<div class="crumbs">${
+            mine.length
+              ? 'Tap a connected part to move along the circuit.'
+              : 'No wiring connections drawn for this part yet.'
+          }</div>`
+    }
+
+    <div class="fcenter ${x.owned ? '' : 'buy'}" data-sel="node:${esc(x.ref)}">
+      ${x.src ? phPart(x.src) : ph(glyphOfItem(x))}
+      <div>
+        <b>${esc(x.displayName)}</b>
+        <div class="faint">${x.owned ? 'owned' : 'to buy'}${x.project_notes ? ` · ${esc(x.project_notes)}` : ''}</div>
+        ${nodeWarn.map(wRow).join('')}
+      </div>
+    </div>
+
+    ${
+      mine.length
+        ? mine
+            .map((n, i) => {
+              const myEntry = (n.conns || []).find(([r]) => r === x.ref);
+              const myPin = myEntry ? myEntry[1] : '';
+              const others = (n.conns || []).filter(([r]) => r !== x.ref);
+              const uniq = [];
+              others.forEach(([r, pin]) => {
+                const u = uniq.find((q) => q[0] === r);
+                if (u) u[1] += pin ? `, ${pin}` : '';
+                else uniq.push([r, pin || '']);
+              });
+              const nw = ws.filter((w) => (w.on.nets || []).includes(n.id));
+              return `<div class="fnet" style="animation-delay:${i * 40}ms">
+                <div class="rail" style="background:var(--${esc(n.kind || 'sig')})"></div>
+                <div>
+                  <div class="hd"><b>${esc(n.name)}</b><span class="via">${esc(myPin)}</span></div>
+                  <div class="nbrs">${uniq
+                    .map(([r, pin]) => {
+                      const y = resolveProjectItem(proj, r);
+                      if (!y) return '';
+                      return `<button type="button" class="nbr ${y.owned ? '' : 'buy'}" data-focus="${esc(r)}">${
+                        y.src ? phPart(y.src) : ph(glyphOfItem(y))
+                      }<span>${esc(y.displayName)}${pin ? `<small>${esc(pin)}</small>` : ''}</span></button>`;
+                    })
+                    .join('')}</div>
+                  ${nw.map(wRow).join('')}
+                </div>
+              </div>`;
+            })
+            .join('')
+        : `<p class="faint">No wires linked to ${esc(x.displayName)} yet. <a href="#edit-proj-${esc(
+            proj.id
+          )}">Add wiring</a> or switch to the <b>Parts</b> tab to see every part in this project.</p>`
+    }
+  </div>`;
+}
+
+/* =========================================================== Metro (Lines) view */
+function renderMetroView(proj) {
+  const nets = proj.nets || [];
+  if (!nets.length) {
+    return `<div class="map-empty">
+      <p>No wiring lines yet. Add connections in <b>Edit project</b>, or ask your assistant to write the wiring list.</p>
+      <a class="btn" href="#edit-proj-${esc(proj.id)}">Edit wiring</a>
+    </div>`;
+  }
+  const ws = warningsOfProject(proj);
+  const mcuRef = findMcuRef(proj);
+
+  return `<div class="metro">${nets
+    .map((n, i) => {
+      const stops = [];
+      (n.conns || []).forEach(([r, pin]) => {
+        const last = stops[stops.length - 1];
+        if (last && last.r === r) last.pins.push(pin || '');
+        else stops.push({ r, pins: pin ? [pin] : [] });
+      });
+      if (n.kind !== 'bat' && mcuRef) {
+        stops.sort((a, b) => (a.r === mcuRef ? -1 : b.r === mcuRef ? 1 : 0));
+      }
+      const nw = ws.filter((w) => (w.on.nets || []).includes(n.id));
+      const kindLabel = n.rail
+        ? `${n.rail} V`
+        : n.kind === 'bat'
+        ? '3.0–4.2 V'
+        : n.kind === 'sig'
+        ? ''
+        : String(n.kind || '').toUpperCase();
+
+      return `<div class="line" style="--c:var(--${esc(n.kind || 'sig')});animation-delay:${i * 40}ms">
+        <div class="hd">
+          <b><i style="background:var(--${esc(n.kind || 'sig')})"></i>${esc(n.name)}</b>
+          <span class="faint mono">${esc(kindLabel)}</span>
+        </div>
+        <div class="stops">${stops
+          .map((s, j) => {
+            const x = resolveProjectItem(proj, s.r);
+            if (!x) return '';
+            const sw = ws.filter((w) => (w.on.nodes || []).includes(s.r) && !(w.on.nets || []).length);
+            return `<div class="stop ${j === 0 || j === stops.length - 1 ? 'term' : ''} ${
+              x.owned ? '' : 'buy'
+            }" data-sel="node:${esc(s.r)}"><b>${esc(x.displayName)}</b>${
+              s.pins.length ? `<span class="pinl">${esc(s.pins.join(' → '))}</span>` : ''
+            }${
+              sw.length
+                ? `<span class="sevs">${sw
+                    .map((w) => {
+                      const d = w.src === 'assistant' && w.is_done;
+                      return `<span class="sev ${d ? 'done' : esc(w.sev)}">${sevGlyph(w.sev, d)}</span>`;
+                    })
+                    .join('')}</span>`
+                : ''
+            }</div>`;
+          })
+          .join('')}</div>
+        ${nw
+          .map((w) => {
+            const d = w.src === 'assistant' && w.is_done;
+            return `<div class="fwarn" data-sel="warn:${esc(w.id)}"><span class="sev ${
+              d ? 'done' : esc(w.sev)
+            }">${sevGlyph(w.sev, d)}</span><b>${w.t}</b></div>`;
+          })
+          .join('')}
+      </div>`;
+    })
+    .join('')}</div>`;
+}
+
+/* =========================================================== Parts list view */
+function renderPartsListView(proj) {
+  const items = proj.items || [];
+  if (!items.length) {
+    return `<div class="map-empty"><p>No parts in this project yet.</p><a class="btn" href="#edit-proj-${esc(
+      proj.id
+    )}">Add parts</a></div>`;
+  }
+  const ws = warningsOfProject(proj);
+  const roleGroups = [
+    ['power', 'Power'],
+    ['mcu', 'Brain'],
+    ['periph', 'Sensors, screens, inputs'],
+    ['material', 'Build materials'],
+  ];
+
+  return `<div class="lst">${roleGroups
+    .map(([role, heading]) => {
+      const xs = items.filter((q) => (q.role || 'periph') === role);
+      if (!xs.length) return '';
+      return `<div class="grp"><span class="k">${esc(heading)}</span></div>${xs
+        .map((q) => {
+          const x = resolveProjectItem(proj, q.ref);
+          if (!x) return '';
+          const w = ws.filter((y) => (y.on.nodes || []).includes(q.ref) && y.sev !== 'ok');
+          const loc = x.owned
+            ? x.src && x.src.location
+              ? `bin <span class="bin">${esc(x.src.location)}</span>`
+              : 'owned'
+            : esc(storeDisplayName(q.retailer || (x.src && x.src.retailer) || 'to buy'));
+          const qtyCtl = x.owned
+            ? stepHtml('data-qty', q.part_id, x.src ? x.src.quantity : q.owned_quantity || 0, 'You own')
+            : stepHtml('data-buy', q.shopping_item_id, x.src ? x.src.quantity : q.buy_quantity || 1, 'To buy');
+
+          return `<div class="lrow ${state.sel === `node:${q.ref}` ? 'sel' : ''}" data-sel="node:${esc(q.ref)}">
+            ${x.src ? phPart(x.src) : ph(glyphOfItem(x))}
+            <div class="n">${esc(x.displayName)}<small>${esc(q.project_notes || '')}</small></div>
+            <span class="c3 dim">${loc}</span>
+            <span class="c4 r">${qtyCtl}</span>
+            <span class="w">${w
+              .map((y) => {
+                const d = y.src === 'assistant' && y.is_done;
+                return `<span class="sev ${d ? 'done' : esc(y.sev)}">${sevGlyph(y.sev, d)}</span>`;
+              })
+              .join('')}</span>
+          </div>`;
+        })
+        .join('')}`;
+    })
+    .join('')}</div>`;
+}
+
+/* =========================================================== Project Inspector */
+const inspHead = (title, sub) =>
+  `<div class="insp-h"><div><h2>${title}</h2>${
+    sub ? `<div class="faint" style="margin-top:2px">${sub}</div>` : ''
+  }</div><button class="btn quiet close" type="button" data-act="clear" aria-label="Close">${sv(
+    '<path d="M18 6 6 18M6 6l12 12"/>'
+  )}</button></div>`;
+
+function warnBlock(proj, w) {
+  const done = w.src === 'assistant' && w.is_done;
+  return `<div class="warn ${done ? 'done' : ''}">
+    <span class="sev ${done ? 'done' : esc(w.sev)}">${sevGlyph(w.sev, done)}</span>
+    <div>
+      <b>${w.t}</b> <span class="src">${w.src === 'rule' ? 'built-in check' : 'assistant'}</span>
+      ${w.b ? `<p>${w.b}</p>` : ''}
+      ${
+        w.sev !== 'ok'
+          ? `<div class="acts">${
+              w.src === 'assistant'
+                ? `<label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input class="tick" type="checkbox" data-done="${esc(
+                    proj.id
+                  )}|${esc(w.id)}" ${done ? 'checked' : ''}><span>${done ? 'Checked' : 'Mark as checked'}</span></label>`
+                : '<span class="faint">Goes away when the wiring changes.</span>'
+            }</div>`
+          : ''
+      }
+    </div>
+  </div>`;
+}
+
+function renderProjectInspector(proj) {
+  const ws = warningsOfProject(proj);
+  const sel = state.sel;
+
+  if (!sel || (!sel.startsWith('node:') && !sel.startsWith('net:') && !sel.startsWith('warn:'))) {
+    const next = nextStepOfProject(proj);
+    const checks = ws.filter((w) => w.sev !== 'ok');
+    const okChecks = ws.filter((w) => w.sev === 'ok');
+    return `<div class="insp-in">
+      ${inspHead(esc(proj.name), esc(proj.description || ''))}
+      <div class="sec">
+        <span class="k">next</span>
+        <div class="next">
+          <div><b>${esc(next.t)}</b><span class="faint">${esc(next.s)}</span></div>
+          ${
+            next.href
+              ? `<a class="btn ink" href="${esc(next.href)}">Open →</a>`
+              : next.act
+              ? `<button class="btn ink" type="button" data-sel="${esc(next.act)}">Show →</button>`
+              : ''
+          }
+        </div>
+      </div>
+
+      <div class="sec">
+        <span class="k">before you power it</span>
+        ${
+          checks.length
+            ? checks
+                .map((w) => {
+                  const done = w.src === 'assistant' && w.is_done;
+                  return `<div class="check-row ${done ? 'done' : ''}" data-sel="warn:${esc(w.id)}">
+                    ${
+                      w.src === 'assistant'
+                        ? `<input class="tick" type="checkbox" data-done="${esc(proj.id)}|${esc(w.id)}" ${
+                            done ? 'checked' : ''
+                          } aria-label="Checked">`
+                        : `<span class="sev ${esc(w.sev)}">${sevGlyph(w.sev)}</span>`
+                    }
+                    <b>${w.t}</b>
+                    ${
+                      w.src === 'assistant'
+                        ? `<span class="sev ${esc(w.sev)}">${sevGlyph(w.sev)}</span>`
+                        : '<span class="src">check</span>'
+                    }
+                  </div>`;
+                })
+                .join('')
+            : '<p class="faint" style="margin-top:4px">No warnings or open checks yet.</p>'
+        }
+      </div>
+
+      ${
+        okChecks.length
+          ? `<div class="sec">
+              <span class="k">works together · built-in checks</span>
+              ${okChecks
+                .map(
+                  (w) =>
+                    `<div class="check-row" data-sel="warn:${esc(w.id)}"><span class="sev ok">✓</span><b>${w.t}</b><span></span></div>`
+                )
+                .join('')}
+            </div>`
+          : ''
+      }
+
+      <div class="sec faint">The built-in checks run every time the wiring changes. The assistant’s notes need you to tick them.</div>
+    </div>`;
+  }
+
+  const idx = sel.indexOf(':');
+  const type = sel.slice(0, idx);
+  const id = sel.slice(idx + 1);
+
+  if (type === 'node') {
+    const x = resolveProjectItem(proj, id);
+    if (!x) {
+      state.sel = null;
+      return renderProjectInspector(proj);
+    }
+    const nw = ws.filter((w) => (w.on.nodes || []).includes(id));
+    const nets = (proj.nets || []).filter((n) => (n.conns || []).some(([r]) => r === id));
+    const sub = x.owned
+      ? `owned${x.src && x.src.location ? ` · bin ${x.src.location}` : ''}`
+      : `to buy · ${x.src ? x.src.quantity : x.buy_quantity || 1}× from ${storeDisplayName(
+          x.retailer || (x.src && x.src.retailer) || 'store'
+        )}`;
+
+    return `<div class="insp-in">
+      ${inspHead(esc(x.fullName), esc(sub))}
+      <div class="sec">${x.src ? phPart(x.src, 'photo', Boolean(x.src.image_path)) : ph(glyphOfItem(x), 'photo')}</div>
+      ${x.project_notes ? `<div class="sec"><span class="k">in this project</span><p>${esc(x.project_notes)}</p></div>` : ''}
+      ${!x.owned && (x.why_needed || (x.src && x.src.why_needed)) ? `<div class="sec"><span class="k">why buy it</span><p>${esc(x.why_needed || x.src.why_needed)}</p></div>` : ''}
+      ${
+        nets.length
+          ? `<div class="sec"><span class="k">connects to</span><div class="conn">${nets
+              .map(
+                (n) =>
+                  `<i style="background:var(--${esc(n.kind || 'sig')})"></i><button class="term" type="button" data-sel="net:${esc(
+                    n.id
+                  )}" style="cursor:pointer;text-decoration:none;text-align:left">${esc(n.name)}</button><span class="dim">${(
+                    n.conns || []
+                  )
+                    .filter(([r]) => r !== id)
+                    .map(([r, pin]) => {
+                      const other = resolveProjectItem(proj, r);
+                      return `${esc(other ? other.displayName : r)} <span class="mono">${esc(pin || '')}</span>`;
+                    })
+                    .join(', ')}</span>`
+              )
+              .join('')}</div></div>`
+          : ''
+      }
+      ${nw.length ? `<div class="sec"><span class="k">warnings and checks</span>${nw.map((w) => warnBlock(proj, w)).join('')}</div>` : ''}
+      <div class="sec" style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn" type="button" data-act="clear">← Whole project</button>
+        ${nets.length ? `<button class="btn" type="button" data-focus="${esc(id)}" data-view-to="focus">Show its connections</button>` : ''}
+        ${
+          x.part_id
+            ? `<a class="btn quiet" href="#edit-part-${esc(x.part_id)}">Edit part</a>`
+            : x.shopping_item_id
+            ? `<a class="btn quiet" href="#shopping">Shopping →</a>`
+            : ''
+        }
+      </div>
+    </div>`;
+  }
+
+  if (type === 'net') {
+    const n = (proj.nets || []).find((q) => q.id === id);
+    if (!n) {
+      state.sel = null;
+      return renderProjectInspector(proj);
+    }
+    const nw = ws.filter((w) => (w.on.nets || []).includes(id));
+    return `<div class="insp-in">
+      ${inspHead(
+        esc(n.name),
+        `<span style="color:var(--${esc(n.kind || 'sig')})">●</span> ${esc(n.rail ? `${n.rail} V` : n.kind || 'signal')}`
+      )}
+      <div class="sec">
+        <span class="k">stops</span>
+        ${(n.conns || [])
+          .map(([r, pin]) => {
+            const other = resolveProjectItem(proj, r);
+            return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0"><span>${esc(
+              other ? other.displayName : r
+            )}</span><span class="mono dim">${esc(pin || '')}</span></div>`;
+          })
+          .join('')}
+      </div>
+      ${nw.length ? `<div class="sec"><span class="k">on this wire</span>${nw.map((w) => warnBlock(proj, w)).join('')}</div>` : ''}
+      <div class="sec"><button class="btn" type="button" data-act="clear">← Whole project</button></div>
+    </div>`;
+  }
+
+  if (type === 'warn') {
+    const w = ws.find((q) => q.id === id);
+    if (!w) {
+      state.sel = null;
+      return renderProjectInspector(proj);
+    }
+    const where = [
+      ...(w.on.nodes || []).map((r) => {
+        const x = resolveProjectItem(proj, r);
+        return x ? x.displayName : r;
+      }),
+      ...(w.on.nets || []).map((nid) => {
+        const n = (proj.nets || []).find((q) => q.id === nid);
+        return n ? n.name : nid;
+      }),
+    ];
+    const headTitle = w.sev === 'danger' ? 'Can damage parts' : w.sev === 'check' ? 'Check first' : 'Works together';
+    return `<div class="insp-in">
+      ${inspHead(headTitle, esc(where.join(' · ')))}
+      <div class="sec">${warnBlock(proj, w)}</div>
+      <div class="sec"><button class="btn" type="button" data-act="clear">← Whole project</button></div>
+    </div>`;
+  }
+
+  return '';
+}
+
+/* =========================================================== Project Detail screen */
+export function renderProjectDetailView(pid) {
+  const proj = projectById(pid);
+  if (!proj) {
+    return `<div class="screen full"><div class="work">
+      <a class="eback pback" href="#projects">← Projects</a>
+      <h1>Project not found</h1>
+      <p class="dim" style="margin-top:8px">That project may have been deleted.</p>
+    </div></div>`;
+  }
+
+  const hasNets = (proj.nets || []).length > 0;
+  const def = hasNets ? (isPhone() ? 'focus' : 'map') : 'list';
+  const v = state.projView[pid] || def;
+  const ws = warningsOfProject(proj);
+  const checks = ws.filter((w) => w.sev !== 'ok');
+  const doneN = checks.filter((w) => w.src === 'assistant' && w.is_done).length;
+  const items = proj.items || [];
+  const ownedCount = items.filter((x) => x.part_id).length;
+
+  const tabs = [
+    ['map', 'Map'],
+    ['focus', 'One part'],
+    ['metro', 'Lines'],
+    ['list', 'Parts'],
+    ['notes', 'Notes'],
+  ];
+
+  let body = '';
+  if (v === 'map') {
+    if (hasNets) {
+      body = `<div class="mapwrap" id="mapwrap">
+          <div class="zoom">
+            <button class="btn" type="button" data-zoom="out" aria-label="Zoom out">−</button>
+            <button class="btn" type="button" data-zoom="fit">Fit</button>
+            <button class="btn" type="button" data-zoom="in" aria-label="Zoom in">+</button>
+          </div>
+          ${renderMapSvg(proj)}
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--bat)"></i>battery</span>
+          <span><i style="background:var(--v5)"></i>5 V</span>
+          <span><i style="background:var(--v33)"></i>3.3 V</span>
+          <span><i style="background:var(--i2c)"></i>I2C</span>
+          <span><i style="background:var(--spi)"></i>SPI</span>
+          <span><i style="background:var(--sig)"></i>signal</span>
+          <span><span class="sev danger">!</span>can damage parts</span>
+          <span><span class="sev check">?</span>check first</span>
+          <span><span class="sev ok">✓</span>works together</span>
+          <span class="faint">solid: owned · dashed: to buy · GND not drawn</span>
+        </div>`;
+    } else {
+      body = `<div class="map-empty">
+        <p>No wiring connections yet. Add them in <b>Edit project</b>, or ask your assistant to write the wiring list — the diagram draws itself automatically.</p>
+        <div class="chips">
+          <a class="btn ink" href="#edit-proj-${esc(pid)}">Add wiring</a>
+          <button class="btn" type="button" data-view="list">View parts (${items.length})</button>
+        </div>
+      </div>`;
+    }
+  } else if (v === 'focus') {
+    body = renderFocusView(proj);
+  } else if (v === 'metro') {
+    body = renderMetroView(proj);
+  } else if (v === 'list') {
+    body = renderPartsListView(proj);
+  } else if (v === 'notes') {
+    body = `<div class="notes">${mdLite(
+      proj.notes
+    )}<p class="faint" style="margin-top:16px">Safety notes live on the map, attached to the wire or part they are about.</p></div>`;
+  }
+
+  const mats = items.filter((x) => x.role === 'material');
+  if ((v === 'map' || v === 'focus') && mats.length) {
+    body += `<div class="tray">
+      <span class="k">also on the bench</span>
+      ${mats
+        .map((q) => {
+          const x = resolveProjectItem(proj, q.ref);
+          if (!x) return '';
+          return `<button type="button" class="item ${x.owned ? 'own' : ''}" data-sel="node:${esc(q.ref)}">${
+            x.src ? phPart(x.src) : ph(glyphOfItem(x))
+          }${esc(x.displayName)}<span class="faint">${x.owned ? 'owned' : 'to buy'}</span></button>`;
+        })
+        .join('')}
+    </div>`;
+  }
+
+  const hasSel = Boolean(
+    state.sel && (state.sel.startsWith('node:') || state.sel.startsWith('net:') || state.sel.startsWith('warn:'))
+  );
+
+  return `<div class="screen">
+    <div class="work">
+      <div class="projhead">
+        <a class="eback pback" href="#projects">← Projects</a>
+        <div class="row1">
+          <h1>${esc(proj.name)}</h1>
+          ${proj.option ? `<span class="tag opt">${esc(proj.option)}</span>` : ''}
+          <span style="flex:1"></span>
+          <div class="pacts">
+            ${
+              proj.archived
+                ? ''
+                : `<a class="btn" href="#edit-proj-${esc(pid)}">Edit project</a>
+                   <button class="btn" type="button" data-lens-go="${esc(pid)}">Show in inventory</button>`
+            }
+            <button class="btn quiet" type="button" data-archive="${esc(pid)}">${
+    proj.archived ? 'Restore' : 'Archive'
+  }</button>
+          </div>
+        </div>
+        ${proj.description ? `<p class="desc">${esc(proj.description)}</p>` : ''}
+        <div class="row2">
+          <div class="chips">${tagsReadonlyHtml(proj)}</div>
+          <span style="flex:1"></span>
+          <div class="stat">
+            <div><span class="k">owned</span><b class="num">${ownedCount}/${items.length}</b></div>
+            <div><span class="k">checks</span><b class="num">${doneN}/${checks.length}</b><span class="meter"><i style="width:${
+    checks.length ? (doneN / checks.length) * 100 : 100
+  }%"></i></span></div>
+          </div>
+        </div>
+        ${
+          proj.archived
+            ? `<div class="archived-note"><span>Archived. It is hidden from Inventory and Shopping.</span><button class="btn" type="button" data-archive="${esc(
+                pid
+              )}">Restore</button></div>`
+            : ''
+        }
+      </div>
+
+      <div class="cattabs" role="group" aria-label="View">
+        ${tabs
+          .map(
+            ([k, label]) =>
+              `<button type="button" data-view="${k}" aria-pressed="${v === k}">${esc(label)}</button>`
+          )
+          .join('')}
+      </div>
+
+      ${body}
+    </div>
+    <aside class="insp ${hasSel ? 'open' : ''}" id="insp" aria-label="Project details">${renderProjectInspector(proj)}</aside>
+  </div>`;
+}
+
+/* =========================================================== Actions */
+export async function toggleProjectArchive(pid, renderFn) {
+  const proj = projectById(pid);
+  if (!proj) return;
+  const prevStatus = proj.status || 'planning';
+  const nextStatus = proj.archived ? 'planning' : 'archived';
+  proj.status = nextStatus;
+  proj.archived = nextStatus === 'archived';
+  if (proj.archived && state.lens === pid) state.lens = null;
+  renderFn();
+  try {
+    const updated = await api.patchProject(pid, { status: nextStatus });
+    Object.assign(proj, updated);
+    renderFn();
+    toast(proj.archived ? `${proj.name} archived` : `${proj.name} restored`, async () => {
+      try {
+        const reverted = await api.patchProject(pid, { status: prevStatus });
+        Object.assign(proj, reverted);
+        renderFn();
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+  } catch (err) {
+    proj.status = prevStatus;
+    proj.archived = prevStatus === 'archived';
+    renderFn();
+    toast(err.message);
+  }
+}
+
+export async function toggleProjectCheck(pid, cid, isDone, renderFn) {
+  const proj = projectById(pid);
+  if (!proj) return;
+  const chk = (proj.checks || []).find((c) => c.id === cid);
+  if (!chk) return;
+  const prev = Boolean(chk.is_done);
+  chk.is_done = isDone;
+  renderFn();
+  try {
+    const updated = await api.patchProjectCheck(pid, cid, { is_done: isDone });
+    if (updated && updated.id) Object.assign(proj, updated);
+    renderFn();
+  } catch (err) {
+    chk.is_done = prev;
+    renderFn();
+    toast(err.message);
+  }
+}

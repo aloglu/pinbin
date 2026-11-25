@@ -1,0 +1,220 @@
+/* Settings screen: 7 sections, switches, bins table, stores shipping table, MCP controls, storage & danger zone. */
+
+.setgrid {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 720px);
+  gap: 32px;
+  align-items: start;
+}
+
+.setnav {
+  position: sticky;
+  top: calc(58px + env(safe-area-inset-top, 0px));
+}
+
+.sgroup { animation: in .2s var(--ease); }
+.sgroup > h2 { font-size: 17px; margin-bottom: 6px; }
+
+.srow, .ssub, .dzone {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 24px;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--hair);
+}
+.ssub { grid-template-columns: minmax(0, 1fr); }
+.sl { display: grid; gap: 2px; }
+.sl b { font-size: 14px; font-weight: var(--w-mid); }
+.sl > span { font-size: 13px; color: var(--ink-2); max-width: 56ch; }
+.sc { justify-self: end; }
+
+/* Toggle switches */
+.switch {
+  width: 40px;
+  height: 24px;
+  border-radius: 12px;
+  border: 0;
+  background: var(--line);
+  position: relative;
+  cursor: pointer;
+  padding: 0;
+  transition: background .2s;
+  flex: none;
+}
+.switch i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  transition: transform .2s var(--ease);
+}
+.switch[aria-checked="true"] { background: var(--ink); }
+.switch[aria-checked="true"] i { transform: translateX(16px); background: var(--bg); }
+
+/* Bins & Stores tables */
+.bintable, .storetable, .perm, .acty { display: grid; margin-top: 6px; }
+.binrow {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) 40px 156px;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--hair);
+  min-height: 44px;
+}
+.binrow .dim { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.binrow > :last-child { justify-self: end; }
+.binrow > .bin { justify-self: start; }
+.ren { display: flex; gap: 6px; align-items: center; }
+.ren input {
+  width: 78px;
+  height: 30px;
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: var(--raised);
+  padding: 0 8px;
+  font: 500 13px var(--mono);
+  text-transform: uppercase;
+}
+.ren .btn { height: 30px; padding: 0 10px; }
+
+.sth, .str {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px 130px 54px;
+  gap: 12px;
+  align-items: center;
+  padding: 7px 0;
+}
+.sth { font-size: 12px; font-weight: var(--w-mid); color: var(--ink-3); border-bottom: 1px solid var(--hair); }
+.str { border-bottom: 1px solid var(--hair); }
+.str .inu { height: 34px; }
+.str .inu input { height: 100%; font-size: 13.5px; }
+
+/* Assistant (MCP) section */
+.statusline {
+  display: flex;
+  gap: 6px 14px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hair);
+}
+.copyfield { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.copyfield code {
+  height: var(--ctl-h);
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 13px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--hair);
+}
+.prm b { display: block; font-weight: var(--w-mid); }
+.prm span { font-size: 13px; color: var(--ink-2); }
+.perm.off { opacity: .45; pointer-events: none; }
+
+.act {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--hair);
+}
+.act .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); margin-top: 7px; }
+.act b { display: block; font-weight: var(--w-body); }
+.act span { font-size: 12.5px; }
+
+/* Confirm boxes & storage stats */
+.confirm {
+  padding: 12px 14px;
+  margin: 4px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  display: grid;
+  gap: 10px;
+  animation: in .2s var(--ease);
+}
+.confirm .acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.dzone { margin-top: 18px; border-top: 1px solid var(--line); }
+.wipein {
+  height: var(--ctl-h);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--raised);
+  padding: 0 12px;
+  font: 500 14px var(--mono);
+  max-width: 220px;
+}
+
+.storage {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--hair);
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 8px 0 4px;
+}
+.storage div { background: var(--raised); padding: 10px 12px; display: grid; }
+.storage b { font: 600 18px var(--mono); }
+.storage span { font-size: 12.5px; color: var(--ink-2); }
+.snote { padding-top: 12px; font-size: 13px; }
+
+/* Mobile Next-section button */
+.setnext {
+  display: none;
+  margin-top: 20px;
+  width: 100%;
+  height: 48px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.setnext span:first-child { font-size: 12.5px; color: var(--ink-3); font-weight: var(--w-mid); }
+.setnext b { font-weight: var(--w-strong); }
+.setnext:hover { border-color: var(--ink-3); }
+
+@media (max-width: 980px) {
+  .setgrid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .sgroup > h2 { display: none; }
+  .setnext { display: grid; }
+}
+@media (max-width: 860px) {
+  .srow, .dzone { grid-template-columns: minmax(0, 1fr); }
+  .sc { justify-self: start; }
+  .srow:has(.switch) { grid-template-columns: minmax(0, 1fr) auto; }
+  .srow:has(.switch) .sc { justify-self: end; }
+  .copyfield { justify-content: flex-start; }
+  .binrow { grid-template-columns: 64px minmax(0, 1fr) 30px auto; }
+  .sth, .str { grid-template-columns: minmax(0, 1fr) 96px 96px; }
+  .sth span:last-child, .str span:last-child { display: none; }
+  .storage { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -496,3 +496,31 @@ GLOSSARY_SEED: list[dict[str, str]] = [
         "keywords": "kapton,polyimide,tape",
     },
 ]
+
+# Optional diagram, Bench tool, and related-term links for starter glossary terms.
+GLOSSARY_META: dict[str, dict[str, object]] = {
+    "voltage": {"related_ids": ["current", "resistance", "logic-level"], "bench_tool": "ohm", "figure_key": "ohm"},
+    "current": {"related_ids": ["voltage", "resistance", "power-watts"], "bench_tool": "ohm", "figure_key": "ohm"},
+    "resistance": {"related_ids": ["voltage", "current", "resistor"], "bench_tool": "ohm", "figure_key": "ohm"},
+    "ohms-law": {"related_ids": ["voltage", "current", "resistance"], "bench_tool": "ohm", "figure_key": "ohm"},
+    "ground": {"related_ids": ["voltage", "short-circuit"], "bench_tool": "", "figure_key": ""},
+    "voltage-regulator": {"related_ids": ["voltage", "power-watts"], "bench_tool": "", "figure_key": ""},
+    "voltage-divider": {"related_ids": ["resistor", "logic-level", "ultrasonic"], "bench_tool": "div", "figure_key": "divider"},
+    "pull-up-resistor": {"related_ids": ["gpio", "floating-pin", "resistor"], "bench_tool": "", "figure_key": "pullup"},
+    "floating-pin": {"related_ids": ["pull-up-resistor", "gpio"], "bench_tool": "", "figure_key": "pullup"},
+    "short-circuit": {"related_ids": ["current", "ground"], "bench_tool": "dmm", "figure_key": ""},
+    "polarity": {"related_ids": ["diode", "anode-vs-cathode", "forward-voltage"], "bench_tool": "", "figure_key": "diode"},
+    "resistor": {"related_ids": ["resistance", "voltage-divider", "current-limiting-resistor"], "bench_tool": "res", "figure_key": ""},
+    "current-limiting-resistor": {"related_ids": ["resistor", "forward-voltage", "anode-vs-cathode"], "bench_tool": "led", "figure_key": "led"},
+    "diode": {"related_ids": ["polarity", "anode-vs-cathode"], "bench_tool": "", "figure_key": "diode"},
+    "anode-vs-cathode": {"related_ids": ["diode", "polarity", "forward-voltage"], "bench_tool": "led", "figure_key": "led"},
+    "forward-voltage": {"related_ids": ["current-limiting-resistor", "anode-vs-cathode"], "bench_tool": "led", "figure_key": "led"},
+    "breadboard-rail": {"related_ids": ["ground", "short-circuit"], "bench_tool": "bb", "figure_key": ""},
+    "continuity": {"related_ids": ["multimeter-safety", "short-circuit"], "bench_tool": "dmm", "figure_key": ""},
+    "multimeter-safety": {"related_ids": ["continuity", "current", "voltage"], "bench_tool": "dmm", "figure_key": ""},
+    "gpio": {"related_ids": ["logic-level", "pull-up-resistor", "pwm"], "bench_tool": "esp32", "figure_key": ""},
+    "logic-level": {"related_ids": ["voltage-divider", "gpio", "microcontroller"], "bench_tool": "div", "figure_key": "divider"},
+    "i2c": {"related_ids": ["spi", "oled-vs-lcd", "rtc"], "bench_tool": "", "figure_key": "i2c"},
+    "spi": {"related_ids": ["i2c", "rfid-nfc"], "bench_tool": "", "figure_key": ""},
+    "pwm": {"related_ids": ["gpio", "servo-vs-stepper", "active-vs-passive-buzzer"], "bench_tool": "", "figure_key": ""},
+}
