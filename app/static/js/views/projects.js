@@ -402,13 +402,22 @@ function layoutProject(proj) {
   const boxes = Object.values(N);
   const H = Math.max(320, ...boxes.map((b) => b.y + b.h)) + 70;
   const Wd = Math.max(periphX + PW + 60, ...boxes.map((b) => b.x + b.w + 60));
-  N[mcuRef].usb = [mcuX + mcuW / 2, N[mcuRef].y + N[mcuRef].h];
+  const mcuItem = resolveProjectItem(proj, mcuRef);
+  const mcuName = String((mcuItem && (mcuItem.fullName || mcuItem.displayName)) || '').toLowerCase();
+  const usbBottom =
+    (mcuName.includes('esp32') || mcuName.includes('esp-32')) &&
+    !mcuName.includes('c3') &&
+    !mcuName.includes('mini') &&
+    !mcuName.includes('s3');
+  N[mcuRef].usb = usbBottom
+    ? { x: mcuX + mcuW / 2, y: N[mcuRef].y + N[mcuRef].h, side: 'b' }
+    : { x: mcuX + mcuW / 2, y: N[mcuRef].y, side: 't' };
   return { N, nets, W: Wd, H, mcuRef };
 }
 
-function renderMapSvg(proj) {
+export function buildMapDiagramData(proj) {
   const L = layoutProject(proj);
-  if (!L) return '';
+  if (!L) return null;
   const ws = warningsOfProject(proj);
 
   const netEls = (proj.nets || [])
@@ -480,9 +489,13 @@ function renderMapSvg(proj) {
       const shortNm = x.displayName.length > maxChars ? `${x.displayName.slice(0, maxChars - 1)}…` : x.displayName;
       const usb =
         r === L.mcuRef && b.usb
-          ? `<path d="M${b.usb[0]} ${b.usb[1]} v26" stroke="var(--sig)" stroke-width="2" stroke-dasharray="4 4"/><text class="pin" x="${
-              b.usb[0] + 8
-            }" y="${b.usb[1] + 22}">USB</text>`
+          ? b.usb.side === 't'
+            ? `<path d="M${b.usb.x} ${b.usb.y} v-24" stroke="var(--sig)" stroke-width="2" stroke-dasharray="4 4"/><text class="pin" x="${
+                b.usb.x + 8
+              }" y="${b.usb.y - 10}">USB</text>`
+            : `<path d="M${b.usb.x} ${b.usb.y} v26" stroke="var(--sig)" stroke-width="2" stroke-dasharray="4 4"/><text class="pin" x="${
+                b.usb.x + 8
+              }" y="${b.usb.y + 22}">USB</text>`
           : '';
 
       return `<g class="node ${x.owned ? 'own' : 'buy'} ${r === L.mcuRef ? 'mcu' : ''}" data-sel="node:${esc(
@@ -525,11 +538,247 @@ function renderMapSvg(proj) {
     })
     .join('');
 
-  const scale = state.zoom || 1;
-  const style = scale === 1 ? `width:100%;min-width:${isPhone() ? 0 : 760}px` : `width:${L.W * scale}px`;
-  return `<svg class="map" id="map" viewBox="0 0 ${L.W} ${L.H}" style="${style}" role="img" aria-label="${esc(
+  return { W: L.W, H: L.H, inner: `${netEls}${nodeEls}${marks}` };
+}
+
+function renderMapSvg(proj) {
+  const d = buildMapDiagramData(proj);
+  if (!d) return '';
+  return `<svg class="map" id="map" width="${d.W}" height="${d.H}" viewBox="0 0 ${d.W} ${d.H}" data-w="${d.W}" data-h="${d.H}" role="img" aria-label="${esc(
     proj.name
-  )} wiring map">${netEls}${nodeEls}${marks}</svg>`;
+  )} wiring map">${d.inner}</svg>`;
+}
+
+/* Interactive pan & zoom camera for the fixed-frame Map viewport */
+const mapCam = { pid: null, scale: 1, fitScale: 1, tx: 0, ty: 0, fitted: true, W: 0, H: 0 };
+let mapResizeObs = null;
+
+function computeMapFit(wrap, W, H) {
+  const rect = wrap.getBoundingClientRect();
+  const topPad = 48;
+  const padX = 20;
+  const padB = 22;
+  const availW = Math.max(120, rect.width - padX * 2);
+  const availH = Math.max(120, rect.height - topPad - padB);
+  const fitScale = Math.min(availW / W, availH / H, 1.15);
+  const tx = (rect.width - W * fitScale) / 2;
+  const ty = topPad + (availH - H * fitScale) / 2;
+  return { fitScale, tx, ty };
+}
+
+function clampMapCam(wrap) {
+  const rect = wrap.getBoundingClientRect();
+  const scaledW = mapCam.W * mapCam.scale;
+  const scaledH = mapCam.H * mapCam.scale;
+  const keep = Math.min(96, scaledW * 0.4, scaledH * 0.4);
+  const minTx = keep - scaledW;
+  const maxTx = rect.width - keep;
+  const minTy = keep - scaledH;
+  const maxTy = rect.height - keep;
+  mapCam.tx = Math.max(minTx, Math.min(maxTx, mapCam.tx));
+  mapCam.ty = Math.max(minTy, Math.min(maxTy, mapCam.ty));
+}
+
+function applyMapTransform(wrap, stage, animate = false) {
+  clampMapCam(wrap);
+  stage.classList.toggle('anim', animate);
+  stage.style.transform = `translate3d(${mapCam.tx.toFixed(1)}px, ${mapCam.ty.toFixed(1)}px, 0) scale(${mapCam.scale.toFixed(4)})`;
+  const g = Math.max(8, 16 * mapCam.scale);
+  wrap.style.backgroundSize = `${g.toFixed(2)}px ${g.toFixed(2)}px`;
+  wrap.style.backgroundPosition = `${(mapCam.tx % g).toFixed(1)}px ${(mapCam.ty % g).toFixed(1)}px`;
+  const fitBtn = wrap.querySelector('[data-zoom="fit"]');
+  if (fitBtn) {
+    const pct = Math.round((mapCam.scale / (mapCam.fitScale || 1)) * 100);
+    fitBtn.textContent = mapCam.fitted || Math.abs(pct - 100) <= 1 ? 'Fit' : `${pct}%`;
+  }
+}
+
+function zoomMapAround(wrap, stage, factor, cx, cy, animate = false) {
+  const minS = mapCam.fitScale * 0.45;
+  const maxS = Math.max(2.6, mapCam.fitScale * 3.5);
+  const nextS = Math.max(minS, Math.min(maxS, mapCam.scale * factor));
+  const ratio = nextS / mapCam.scale;
+  mapCam.tx = cx - (cx - mapCam.tx) * ratio;
+  mapCam.ty = cy - (cy - mapCam.ty) * ratio;
+  mapCam.scale = nextS;
+  mapCam.fitted = false;
+  applyMapTransform(wrap, stage, animate);
+}
+
+export function zoomMapViewport(action) {
+  const wrap = document.getElementById('mapwrap');
+  const stage = document.getElementById('mapstage');
+  if (!wrap || !stage || !mapCam.W) return;
+  const rect = wrap.getBoundingClientRect();
+  if (action === 'fit') {
+    const f = computeMapFit(wrap, mapCam.W, mapCam.H);
+    mapCam.fitScale = f.fitScale;
+    mapCam.scale = f.fitScale;
+    mapCam.tx = f.tx;
+    mapCam.ty = f.ty;
+    mapCam.fitted = true;
+    applyMapTransform(wrap, stage, true);
+    return;
+  }
+  const factor = action === 'in' ? 1.28 : 1 / 1.28;
+  zoomMapAround(wrap, stage, factor, rect.width / 2, rect.height / 2, true);
+}
+
+export function initMapViewport(pid) {
+  if (mapResizeObs) {
+    mapResizeObs.disconnect();
+    mapResizeObs = null;
+  }
+  const wrap = document.getElementById('mapwrap');
+  const stage = document.getElementById('mapstage');
+  const svg = document.getElementById('map');
+  if (!wrap || !stage || !svg) return;
+
+  const W = Number(svg.dataset.w) || 800;
+  const H = Number(svg.dataset.h) || 400;
+  const f = computeMapFit(wrap, W, H);
+  const sameProj = mapCam.pid === pid && mapCam.W === W && mapCam.H === H;
+
+  if (!sameProj || mapCam.fitted) {
+    mapCam.pid = pid;
+    mapCam.W = W;
+    mapCam.H = H;
+    mapCam.fitScale = f.fitScale;
+    mapCam.scale = f.fitScale;
+    mapCam.tx = f.tx;
+    mapCam.ty = f.ty;
+    mapCam.fitted = true;
+  } else {
+    mapCam.fitScale = f.fitScale;
+  }
+  applyMapTransform(wrap, stage, false);
+
+  if (typeof ResizeObserver === 'function') {
+    mapResizeObs = new ResizeObserver(() => {
+      if (!wrap.isConnected) return;
+      const nf = computeMapFit(wrap, mapCam.W, mapCam.H);
+      mapCam.fitScale = nf.fitScale;
+      if (mapCam.fitted) {
+        mapCam.scale = nf.fitScale;
+        mapCam.tx = nf.tx;
+        mapCam.ty = nf.ty;
+      }
+      applyMapTransform(wrap, stage, false);
+    });
+    mapResizeObs.observe(wrap);
+  }
+
+  // Pointer drag-to-pan + 2-finger pinch-to-zoom
+  const pts = new Map();
+  let dragStart = null;
+  let dragged = false;
+  let pinchPrev = null;
+
+  wrap.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.zoom')) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1) {
+      dragStart = { x: e.clientX, y: e.clientY, tx: mapCam.tx, ty: mapCam.ty, pid: e.pointerId };
+      dragged = false;
+      pinchPrev = null;
+    } else if (pts.size === 2) {
+      dragStart = null;
+      const [a, b] = [...pts.values()];
+      pinchPrev = {
+        dist: Math.hypot(b.x - a.x, b.y - a.y) || 1,
+        mx: (a.x + b.x) / 2,
+        my: (a.y + b.y) / 2,
+      };
+      wrap.classList.add('panning');
+    }
+  });
+
+  wrap.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pts.size === 2 && pinchPrev) {
+      const [a, b] = [...pts.values()];
+      const dist = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const rect = wrap.getBoundingClientRect();
+      mapCam.tx += mx - pinchPrev.mx;
+      mapCam.ty += my - pinchPrev.my;
+      zoomMapAround(wrap, stage, dist / pinchPrev.dist, mx - rect.left, my - rect.top, false);
+      pinchPrev = { dist, mx, my };
+      dragged = true;
+      return;
+    }
+
+    if (pts.size === 1 && dragStart && dragStart.pid === e.pointerId) {
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      if (!dragged && Math.hypot(dx, dy) > 4) {
+        dragged = true;
+        mapCam.fitted = false;
+        wrap.classList.add('panning');
+        if (state.hot) {
+          state.hot = null;
+          applyMapFocus(pid);
+        }
+        try {
+          wrap.setPointerCapture(e.pointerId);
+        } catch {}
+      }
+      if (dragged) {
+        mapCam.tx = dragStart.tx + dx;
+        mapCam.ty = dragStart.ty + dy;
+        applyMapTransform(wrap, stage, false);
+      }
+    }
+  });
+
+  const endPtr = (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinchPrev = null;
+    if (pts.size === 0) {
+      wrap.classList.remove('panning');
+      dragStart = null;
+      if (dragged) {
+        dragged = false;
+        const eat = (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+        };
+        wrap.addEventListener('click', eat, { capture: true, once: true });
+        setTimeout(() => wrap.removeEventListener('click', eat, true), 250);
+      }
+    }
+  };
+  wrap.addEventListener('pointerup', endPtr);
+  wrap.addEventListener('pointercancel', endPtr);
+
+  // Trackpad pinch / Ctrl+wheel zoom toward cursor
+  wrap.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const rect = wrap.getBoundingClientRect();
+      const factor = Math.exp(-e.deltaY * 0.0045);
+      zoomMapAround(wrap, stage, factor, e.clientX - rect.left, e.clientY - rect.top, false);
+    },
+    { passive: false }
+  );
+
+  // Double-click empty canvas to zoom in (or reset to Fit if already zoomed in)
+  wrap.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.zoom, [data-sel]')) return;
+    if (mapCam.scale > mapCam.fitScale * 1.75) {
+      zoomMapViewport('fit');
+    } else {
+      const rect = wrap.getBoundingClientRect();
+      zoomMapAround(wrap, stage, 1.5, e.clientX - rect.left, e.clientY - rect.top, true);
+    }
+  });
 }
 
 function relatedToSelection(proj, sel) {
@@ -578,7 +827,8 @@ export function applyMapFocus(pid) {
   const proj = projectById(pid);
   if (!proj) return;
   const on = relatedToSelection(proj, state.sel || state.hot);
-  el.parentElement.classList.toggle('focus', Boolean(on));
+  const wrap = el.closest('.mapwrap');
+  if (wrap) wrap.classList.toggle('focus', Boolean(on));
   el.querySelectorAll('[data-sel]').forEach((g) => {
     const raw = g.dataset.sel;
     const idx = raw.indexOf(':');
@@ -835,7 +1085,7 @@ function warnBlock(proj, w) {
   </div>`;
 }
 
-function renderProjectInspector(proj) {
+export function renderProjectInspector(proj) {
   const ws = warningsOfProject(proj);
   const sel = state.sel;
 
@@ -1049,13 +1299,18 @@ export function renderProjectDetailView(pid) {
   let body = '';
   if (v === 'map') {
     if (hasNets) {
+      const dlIcon = sv('<path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>');
       body = `<div class="mapwrap" id="mapwrap">
           <div class="zoom">
             <button class="btn" type="button" data-zoom="out" aria-label="Zoom out">−</button>
-            <button class="btn" type="button" data-zoom="fit">Fit</button>
+            <button class="btn" type="button" data-zoom="fit" title="Reset view to fit">Fit</button>
             <button class="btn" type="button" data-zoom="in" aria-label="Zoom in">+</button>
+            <span class="mapsep" aria-hidden="true"></span>
+            <button class="btn" type="button" data-map-export="png" title="Download wiring map as PNG">${dlIcon}PNG</button>
+            <button class="btn" type="button" data-map-export="pdf" title="Download wiring map as PDF">${dlIcon}PDF</button>
           </div>
-          ${renderMapSvg(proj)}
+          <div class="mapstage" id="mapstage">${renderMapSvg(proj)}</div>
+          <div class="maphint" aria-hidden="true">Drag to pan · Ctrl+scroll to zoom</div>
         </div>
         <div class="legend">
           <span><i style="background:var(--bat)"></i>battery</span>
@@ -1067,7 +1322,7 @@ export function renderProjectDetailView(pid) {
           <span><span class="sev danger">!</span>can damage parts</span>
           <span><span class="sev check">?</span>check first</span>
           <span><span class="sev ok">✓</span>works together</span>
-          <span class="faint">solid: owned · dashed: to buy · GND not drawn</span>
+          <span class="faint">solid: owned · dashed: to buy · GND not drawn · logical diagram (see Bench for physical pinout)</span>
         </div>`;
     } else {
       body = `<div class="map-empty">
@@ -1122,8 +1377,7 @@ export function renderProjectDetailView(pid) {
             ${
               proj.archived
                 ? ''
-                : `<a class="btn" href="#edit-proj-${esc(pid)}">Edit project</a>
-                   <button class="btn" type="button" data-lens-go="${esc(pid)}">Show in inventory</button>`
+                : `<a class="btn" href="#edit-proj-${esc(pid)}">Edit project</a>`
             }
             <button class="btn quiet" type="button" data-archive="${esc(pid)}">${
     proj.archived ? 'Restore' : 'Archive'
@@ -1207,7 +1461,6 @@ export async function toggleProjectCheck(pid, cid, isDone, renderFn) {
   try {
     const updated = await api.patchProjectCheck(pid, cid, { is_done: isDone });
     if (updated && updated.id) Object.assign(proj, updated);
-    renderFn();
   } catch (err) {
     chk.is_done = prev;
     renderFn();

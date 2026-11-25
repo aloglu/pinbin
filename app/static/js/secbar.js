@@ -117,7 +117,9 @@ export function initEditScrollSpy() {
   if (!('IntersectionObserver' in window)) return;
   const links = [...document.querySelectorAll('.enav a')];
   if (!links.length) return;
-  links.forEach((a, idx) => a.toggleAttribute('aria-current', idx === 0));
+  if (!links.some((a) => a.hasAttribute('aria-current')) && window.scrollY < 40) {
+    links[0].setAttribute('aria-current', '');
+  }
   spyObs = new IntersectionObserver(
     (entries) => {
       entries.forEach((en) => {

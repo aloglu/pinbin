@@ -12,15 +12,10 @@ import {
   menuHtml,
   ago,
   sevGlyph,
-  shoppingById,
   projectById,
-  storeDisplayName,
-  parsePriceNumber,
-  money,
-  currencyLabel,
 } from '../state.js';
 import { projectUseMap, openChecksOfProject } from '../rules.js';
-import { renderPartInspector, renderShoppingInspector } from '../inspectors.js';
+import { renderPartInspector } from '../inspectors.js';
 
 function dangerCount(p) {
   return (p.care_notes || []).filter((c) => c.severity === 'danger').length;
@@ -160,42 +155,12 @@ export function renderInventoryView() {
 
   let bodyHtml = '';
   if (lensProj) {
-    const buys = (lensProj.items || []).filter((x) => x.item_type === 'shopping');
     const usedParts = filtered.filter((p) => use[`p:${p.id}`]);
     const restParts = filtered.filter((p) => !use[`p:${p.id}`]);
 
-    const buyCards = buys
-      .map((x) => {
-        const it = shoppingById(x.shopping_item_id);
-        if (!it) return '';
-        const u = use[`i:${it.id}`] || { role: 'part', warn: [] };
-        const priceNum = parsePriceNumber(it.price);
-        return `<button type="button" class="card buy ${state.sel === `item:${it.id}` ? 'sel' : ''}" data-sel="item:${esc(it.id)}">
-          <span class="role">${esc(u.role)}</span>${flagHtml(u.warn)}${phPart(it)}
-          <div class="b">
-            <div>
-              <div class="n">${esc(it.name)}</div>
-              <div class="sub2">to buy · ${esc(storeDisplayName(it.retailer || it.url))}</div>
-            </div>
-            <div class="tags">${tagChips(tagsFromFacts(it))}</div>
-            <div class="f">
-              <span class="qty">${it.quantity}×</span>
-              <span class="mono">${priceNum !== null ? `${money(priceNum)} ${currencyLabel()}` : esc(it.price || '—')}</span>
-            </div>
-          </div>
-        </button>`;
-      })
-      .join('');
-
     bodyHtml = `
-      ${
-        buys.length
-          ? `<div class="sh"><h2>To buy for ${esc(lensProj.name)}</h2><span class="cnt">${buys.length}</span><a class="btn quiet aside" href="#shopping">Shopping →</a></div>
-             <div class="cards">${buyCards}</div>`
-          : ''
-      }
-      <div class="sh"><h2>From your bins</h2><span class="cnt">${usedParts.length}</span></div>
-      ${usedParts.length ? renderGroupBody(usedParts) : '<p class="faint">No matching parts from your bins.</p>'}
+      <div class="sh"><h2>In ${esc(lensProj.name)}</h2><span class="cnt">${usedParts.length}</span></div>
+      ${usedParts.length ? renderGroupBody(usedParts) : '<p class="faint">No matching owned parts in this project.</p>'}
       <div class="sh"><h2>Everything else</h2><span class="cnt">${restParts.length}</span></div>
       ${restParts.length ? renderGroupBody(restParts) : '<p class="faint">Nothing else matches.</p>'}
     `;
@@ -220,13 +185,12 @@ export function renderInventoryView() {
   let lensBanner = '';
   if (lensProj) {
     const ownedInProj = (lensProj.items || []).filter((x) => x.item_type === 'part').length;
-    const totalInProj = (lensProj.items || []).length;
     const openCnt = openChecksOfProject(lensProj).length;
     lensBanner = `<div class="lensbar">
       <b>${esc(lensProj.name)}</b>
-      <span class="dim">${ownedInProj} of ${totalInProj} parts from your bins${
-      totalInProj - ownedInProj ? ` · ${totalInProj - ownedInProj} to buy` : ' · nothing to buy'
-    }${openCnt ? ` · ${openCnt} open check${openCnt === 1 ? '' : 's'}` : ''}</span>
+      <span class="dim">${ownedInProj} owned part${ownedInProj === 1 ? '' : 's'} from your bins${
+      openCnt ? ` · ${openCnt} open check${openCnt === 1 ? '' : 's'}` : ''
+    }</span>
       <span style="flex:1"></span>
       <a class="btn" href="#p-${esc(lensProj.id)}">Open project</a>
       <button class="btn" type="button" data-lens="${esc(lensProj.id)}">Show all parts</button>
@@ -236,7 +200,6 @@ export function renderInventoryView() {
   const sel = state.sel;
   let inspHtml = '';
   if (sel && sel.startsWith('part:')) inspHtml = renderPartInspector(sel.slice(5));
-  else if (sel && sel.startsWith('item:')) inspHtml = renderShoppingInspector(sel.slice(5));
 
   return `<div class="screen full">
     <div class="work">

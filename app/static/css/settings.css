@@ -12,7 +12,7 @@
   top: calc(58px + env(safe-area-inset-top, 0px));
 }
 
-.sgroup { animation: in .2s var(--ease); }
+.sgroup { display: block; }
 .sgroup > h2 { font-size: 17px; margin-bottom: 6px; }
 
 .srow, .ssub, .dzone {

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 from collections import Counter
 from typing import Any
 
@@ -78,10 +79,17 @@ SERVER_INSTRUCTIONS = (
     "Instead, add unbought items to the shopping list (create_shopping_item, with fetch_metadata=true to grab product photos) "
     "and link both owned parts and shopping items into projects (create_project, add_project_item with role/ref/label) "
     "with project-scoped notes in project_notes. "
-    "Fill in structured electrical_facts (logic, interfaces, vin, io, i2c, out, vout, strap, wake, power) and care_notes "
+    "HARDWARE ACCURACY IS CRITICAL: Diagrams, pinouts, electrical_facts, and wiring notes are used to wire real physical hardware—"
+    "inaccurate diagrams can destroy components or cause battery fires. NEVER guess pin numbers, left/right pin order, USB port "
+    "orientation, voltage limits, I2C addresses, strapping pins, or deep-sleep wake pins from memory. Always verify against the "
+    "exact board's top-view pinout (chip facing up) and component datasheets before calling set_project_wiring, set_project_checks, "
+    "or writing electrical_facts/pinout_svg. If a detail (like a seller's exact pin order or module revision) cannot be confirmed, "
+    "explicitly label it as unverified and add a safety check telling the user to inspect the board silkscreen first. "
+    "Fill in verified electrical_facts (logic, interfaces, vin, io, i2c, out, vout, strap, wake, power) and care_notes "
     "([{severity: 'danger'|'check'|'info', text}]) on parts and shopping items so Pinbin's built-in compatibility checks run automatically. "
-    "You can attach part photos via image_url, pinout photos via pinout_image_url, and scalable board pinout diagrams via pinout_svg. "
-    "For projects, write wiring connections using set_project_wiring and beginner safety checks using set_project_checks. "
+    "You can attach part photos via image_url, pinout photos via pinout_image_url, and verified top-view board diagrams via pinout_svg. "
+    "For projects, write wiring connections using set_project_wiring (and resolve every issue returned in verification_report) "
+    "and beginner safety checks using set_project_checks. "
     "Each shopping item supports multiple retailer offers (pass offers=[...] on create_shopping_item or call add_shopping_offer). "
     "When planning a project shopping list, try to find parts on the same retailer(s) to minimize separate orders, attach alternative "
     "store offers when found, and call optimize_shopping_carts to check for consolidation opportunities or single-item straggler stores. "
@@ -232,7 +240,13 @@ def _part_properties_schema() -> dict[str, Any]:
         "pinout_url": {"type": "string", "description": "Official documentation or pinout URL."},
         "image_url": {"type": "string", "description": "Direct image or product page URL to download and attach as the part photo."},
         "pinout_image_url": {"type": "string", "description": "Direct image or page URL to download and attach as the pinout photo."},
-        "pinout_svg": {"type": "string", "description": "Scalable <svg> board pinout diagram (sanitized server-side)."},
+        "pinout_svg": {
+            "type": "string",
+            "description": (
+                "Scalable <svg> board pinout diagram (sanitized server-side). MUST be top view (chip facing up) "
+                "with verified physical left/right pin order and USB port position matching the real PCB."
+            ),
+        },
         "specs": {
             "type": "object",
             "additionalProperties": {"type": "string"},
@@ -626,7 +640,11 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
         },
         {
             "name": "set_project_wiring",
-            "description": "Set the complete list of wiring nets for a project (feeds Map, One part, Lines, and built-in safety checks).",
+            "description": (
+                "Set the complete list of wiring nets for a project (feeds Map, One part, Lines, and built-in safety checks). "
+                "Double-check every pin number, power rail voltage, strapping pin, wake pin, and I2C address against real datasheets "
+                "before calling. Returns a verification_report auditing pin conflicts, invalid board pins, voltage mismatches, and missing checks."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1035,6 +1053,169 @@ def _compute_inventory_summary(settings: Settings) -> dict[str, Any]:
     }
 
 
+_KNOWN_BOARD_PINS: dict[str, set[str]] = {
+    "c3": {
+        "5V", "GND", "3V3",
+        "GPIO0", "GPIO1", "GPIO2", "GPIO3", "GPIO4", "GPIO5", "GPIO6", "GPIO7",
+        "GPIO8", "GPIO9", "GPIO10", "GPIO20", "GPIO21",
+    },
+    "esp32": {
+        "EN", "VIN", "GND", "3V3",
+        "GPIO1", "GPIO2", "GPIO3", "GPIO4", "GPIO5", "GPIO12", "GPIO13", "GPIO14", "GPIO15",
+        "GPIO16", "GPIO17", "GPIO18", "GPIO19", "GPIO21", "GPIO22", "GPIO23", "GPIO25",
+        "GPIO26", "GPIO27", "GPIO32", "GPIO33", "GPIO34", "GPIO35", "GPIO36", "GPIO39",
+        "TX0", "RX0", "TX2", "RX2", "VP", "VN",
+    },
+    "pico": {
+        "VBUS", "VSYS", "GND", "3V3_EN", "3V3", "ADC_VREF", "RUN", "AGND",
+        *(f"GP{i}" for i in range(23)), "GP26", "GP27", "GP28",
+    },
+    "uno": {
+        "IOREF", "RESET", "3.3V", "3V3", "5V", "GND", "VIN", "AREF", "SDA", "SCL",
+        *(f"A{i}" for i in range(6)), *(f"D{i}" for i in range(14)),
+    },
+}
+
+
+def _detect_board_family(name: str) -> str:
+    low = (name or "").lower()
+    if "esp32-c3" in low or "esp32 c3" in low:
+        return "c3"
+    if "esp32" in low or "esp-32" in low:
+        return "esp32"
+    if "pico" in low or "rp2350" in low or "rp2040" in low:
+        return "pico"
+    if "uno" in low or "atmega328" in low:
+        return "uno"
+    return ""
+
+
+def _expand_pin_tokens(pin_str: str) -> list[str]:
+    raw = (pin_str or "").strip()
+    if not raw:
+        return []
+    m = re.match(r"^(GPIO|GP|D|A)(\d+(?:/\d+)+)$", raw, re.IGNORECASE)
+    if m:
+        prefix = m.group(1).upper()
+        return [f"{prefix}{num}" for num in m.group(2).split("/")]
+    return [tok.strip().upper() for tok in re.split(r"[,/]", raw) if tok.strip()]
+
+
+def _audit_project_wiring(project: dict[str, Any]) -> dict[str, Any]:
+    """Programmatically verify wiring nets against project items, board pinouts, and electrical facts."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    items = project.get("items") or []
+    by_ref = {str(it.get("ref") or ""): it for it in items if it.get("ref")}
+    nets = project.get("nets") or []
+    checks = project.get("checks") or []
+
+    # Track pin usage per node across distinct nets to detect pin collisions
+    pin_owners: dict[tuple[str, str], str] = {}
+    has_power_hazard_net = False
+    touches_strap = False
+
+    for net in nets:
+        net_name = str(net.get("name") or net.get("id") or "net")
+        kind = str(net.get("kind") or "sig")
+        if kind in ("bat", "v5"):
+            has_power_hazard_net = True
+        conns = net.get("conns") or []
+        if len(conns) < 2:
+            warnings.append(f"Net '{net_name}' has fewer than 2 endpoints.")
+
+        i2c_addrs: dict[str, str] = {}
+        seen_on_net: set[tuple[str, str]] = set()
+
+        for pair in conns:
+            if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+                continue
+            ref, pin_raw = str(pair[0]), str(pair[1] or "")
+            item = by_ref.get(ref)
+            if not item:
+                errors.append(f"Net '{net_name}' references unknown item ref '{ref}'.")
+                continue
+
+            item_name = str(item.get("label") or item.get("name") or ref)
+            facts = item.get("electrical_facts") or {}
+            tokens = _expand_pin_tokens(pin_raw)
+
+            # Danger check: battery or 5V connected directly to a 3.3V pin
+            if kind in ("bat", "v5") and any(t in ("3V3", "3.3V") for t in tokens):
+                errors.append(
+                    f"DANGER on '{net_name}': {kind.upper()} power connects to 3.3 V pin '{pin_raw}' on {item_name}."
+                )
+
+            # Board-specific pin validation (prevents hallucinated GPIOs)
+            board_family = _detect_board_family(str(item.get("name") or ""))
+            if board_family and (item.get("role") == "mcu" or item.get("category") == "Microcontrollers"):
+                valid_pins = _KNOWN_BOARD_PINS[board_family]
+                for tok in tokens:
+                    if tok not in valid_pins:
+                        errors.append(
+                            f"Invalid pin '{tok}' on {item_name} (net '{net_name}'): not a real exposed pin on this board."
+                        )
+
+            # Pin conflict across different nets on the same board/MCU
+            if item.get("role") == "mcu" or item.get("category") == "Microcontrollers":
+                for tok in tokens:
+                    key = (ref, tok)
+                    if key in seen_on_net:
+                        continue
+                    seen_on_net.add(key)
+                    if key in pin_owners and tok not in ("GND", "3V3", "3.3V", "5V", "VIN", "VBUS", "VSYS"):
+                        errors.append(
+                            f"Pin conflict on {item_name}: '{tok}' is wired to both '{pin_owners[key]}' and '{net_name}'."
+                        )
+                    else:
+                        pin_owners[key] = net_name
+
+            # Wake pin verification
+            wake_pins = {str(p).upper() for p in (facts.get("wake") or [])}
+            if net.get("wake") and wake_pins:
+                for tok in tokens:
+                    if tok.startswith(("GPIO", "GP")) and tok not in wake_pins:
+                        errors.append(
+                            f"Wake net '{net_name}' uses '{tok}' on {item_name}, which cannot wake it from deep sleep "
+                            f"(valid wake pins: {', '.join(sorted(wake_pins))})."
+                        )
+
+            # Strapping pin reminder
+            strap_pins = {str(p).upper() for p in (facts.get("strap") or [])}
+            for tok in tokens:
+                if tok in strap_pins:
+                    touches_strap = True
+                    warnings.append(
+                        f"Net '{net_name}' uses strapping pin '{tok}' on {item_name} — verify its power-on boot level."
+                    )
+
+            # I2C address collision check
+            if kind == "i2c" and facts.get("i2c"):
+                addr = str(facts["i2c"]).strip().lower()
+                if addr in i2c_addrs and i2c_addrs[addr] != item_name:
+                    errors.append(
+                        f"I2C address conflict on '{net_name}': both {i2c_addrs[addr]} and {item_name} use {addr}."
+                    )
+                else:
+                    i2c_addrs[addr] = item_name
+
+    if (has_power_hazard_net or touches_strap) and not checks:
+        warnings.append(
+            "Project has battery/5V power or strapping pins but no safety checks yet — call set_project_checks."
+        )
+
+    return {
+        "status": "issues_found" if errors else "ok",
+        "errors": errors,
+        "warnings": warnings,
+        "double_check_required": (
+            "Before presenting this wiring map to the user, double-check every pin name, voltage rail, "
+            "and physical top-view board orientation against official datasheets and product silkscreens."
+        ),
+    }
+
+
 def _compact_part(part: dict[str, Any]) -> dict[str, Any]:
     return {k: part.get(k) for k in COMPACT_PART_KEYS}
 
@@ -1437,7 +1618,9 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         record_mcp_request(
             settings.db_path, name, updated["name"], f"Wrote {len(updated['nets'])} wiring connections"
         )
-        return _strip_project_image_paths(updated)
+        result = _strip_project_image_paths(updated)
+        result["verification_report"] = _audit_project_wiring(updated)
+        return result
 
     if name == "set_project_checks":
         project_id = str(args.get("project_id") or "").strip()

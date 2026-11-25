@@ -41,10 +41,21 @@
   margin: 0 auto;
 }
 .pinout-art svg.compact { display: none; }
-.pinout-art .bp { cursor: pointer; }
-.pinout-art .bp:focus-visible circle { stroke-width: 4; }
+.pinout-art .bp { cursor: pointer; outline: none; }
+.pinout-art .bp-pill { fill: transparent; stroke: transparent; stroke-width: 1; transition: fill .14s, stroke .14s; }
+.pinout-art .bp:hover:not(.on) .bp-pill { fill: var(--hover); }
+.pinout-art .bp:hover:not(.on) .bp-pad { fill: color-mix(in srgb, var(--pc) 16%, var(--raised)); }
+.pinout-art .bp.on .bp-pill {
+  fill: color-mix(in srgb, var(--pc) 14%, var(--raised));
+  stroke: color-mix(in srgb, var(--pc) 48%, var(--line));
+}
+.pinout-art .bp-halo { fill: none; stroke: var(--pc); stroke-width: 2; opacity: .34; }
+.pinout-art .bp-core { fill: var(--raised); pointer-events: none; }
+.pinout-art .bp:focus-visible .bp-pill { stroke: var(--ink); stroke-width: 1.5; }
 .board2 .bn { font: 500 12px var(--mono); fill: var(--ink); }
+.board2 .bp.on .bn { font-weight: 700; }
 .board2 .bu { font: 400 11px var(--mono); fill: var(--ink-3); }
+.board2 .bp.on .bu { fill: var(--ink); font-weight: 500; }
 
 .legend2 {
   display: flex;

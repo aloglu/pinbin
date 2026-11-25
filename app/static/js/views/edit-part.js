@@ -307,16 +307,11 @@ const esec = (id, title, desc, body) =>
 
 function sevMenu(id, cur) {
   const c = SEVS.find((x) => x[0] === cur) || SEVS[2];
-  return `<div class="mn"><button type="button" class="btn mnb sevb" data-menu="${esc(id)}" aria-haspopup="menu" aria-expanded="${
-    state.menu === id
-  }" aria-label="Severity: ${esc(c[2])}"><span class="sev ${esc(c[0])}">${c[1]}</span><span>${esc(c[2])}</span>${caret}</button>${
-    state.menu === id
-      ? `<div class="mnp" role="menu">${SEVS.map(
-          ([v, g, t]) =>
-            `<button type="button" role="menuitemradio" aria-checked="${v === cur}" data-mpick="${esc(id)}|${esc(v)}"><span class="sev ${esc(v)}">${g}</span><span>${esc(t)}</span></button>`
-        ).join('')}</div>`
-      : ''
-  }</div>`;
+  const open = state.menu === id;
+  return `<div class="mn"><button type="button" class="btn mnb sevb" data-menu="${esc(id)}" aria-haspopup="menu" aria-expanded="${open}" aria-label="Severity: ${esc(c[2])}"><span class="sev ${esc(c[0])}">${c[1]}</span><span>${esc(c[2])}</span>${caret}</button><div class="mnp" role="menu"${open ? '' : ' hidden'}>${SEVS.map(
+    ([v, g, t]) =>
+      `<button type="button" role="menuitemradio" aria-checked="${v === cur}" data-mpick="${esc(id)}|${esc(v)}"><span class="sev ${esc(v)}">${g}</span><span>${esc(t)}</span></button>`
+  ).join('')}</div></div>`;
 }
 
 function rowsEditor(key, rows, cols, addLabel) {

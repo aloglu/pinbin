@@ -7,9 +7,10 @@ import {
   normalizeSort,
   partById,
   shoppingById,
+  projectById,
   toast,
 } from './state.js';
-import { closePanel } from './inspectors.js';
+import { closePanel, renderPartInspector, renderShoppingInspector } from './inspectors.js';
 import { renderInventoryView } from './views/inventory.js';
 import { sbStick, sbOpen, jumpToSection, initEditScrollSpy } from './secbar.js';
 import {
@@ -27,10 +28,14 @@ import {
 import {
   renderProjectsListView,
   renderProjectDetailView,
+  renderProjectInspector,
   applyMapFocus,
+  initMapViewport,
+  zoomMapViewport,
   toggleProjectArchive,
   toggleProjectCheck,
 } from './views/projects.js';
+import { exportProjectMap } from './map-export.js';
 import {
   renderProjectEditView,
   clearProjectDraft,
@@ -56,7 +61,7 @@ import {
   removeItemWithUndo,
 } from './views/edit-item.js';
 import { renderGlossaryView } from './views/glossary.js';
-import { renderBenchView, computeCalcOutputs } from './views/bench.js';
+import { renderBenchView, computeCalcOutputs, updateDmmDialInPlace } from './views/bench.js';
 import {
   renderSettingsView,
   loadSettingsExtras,
@@ -123,24 +128,116 @@ function renderNav() {
 
   const navEl = document.getElementById('nav');
   if (navEl) {
-    navEl.innerHTML = links
-      .map(
-        ([k, t, c]) =>
-          `<a href="#${k}" ${sec === k ? 'aria-current="page"' : ''}>${t}${
-            c !== '' ? `<span class="c">${c}</span>` : ''
-          }</a>`
-      )
-      .join('');
+    if (navEl.children.length !== links.length) {
+      navEl.innerHTML = links
+        .map(
+          ([k, t, c]) =>
+            `<a href="#${k}" data-nav="${k}">${t}${c !== '' ? `<span class="c">${c}</span>` : ''}</a>`
+        )
+        .join('');
+    }
+    links.forEach(([k, , c]) => {
+      const a = navEl.querySelector(`a[data-nav="${k}"]`);
+      if (!a) return;
+      if (sec === k) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+      const badge = a.querySelector('.c');
+      if (badge && String(badge.textContent) !== String(c)) badge.textContent = String(c);
+    });
+  }
+}
+
+// Toggle dropdown menus in place without rebuilding the page DOM
+function setMenuOpen(id) {
+  state.menu = id || null;
+  document.querySelectorAll('.mn').forEach((wrap) => {
+    const btn = wrap.querySelector('[data-menu]');
+    const pop = wrap.querySelector('.mnp');
+    if (!btn || !pop) return;
+    const isOpen = Boolean(id) && btn.dataset.menu === id;
+    btn.setAttribute('aria-expanded', String(isOpen));
+    pop.hidden = !isOpen;
+  });
+}
+
+// Update floating inspector (Inventory / Shopping / Glossary) in place without rebuilding cards/lists
+function updateFloatingInspector(swapAnim = false) {
+  const screen = document.querySelector('.screen.full');
+  if (!screen) return false;
+  const sel = state.sel;
+
+  // Toggle .sel on cards, list rows, and glossary mini cards in place
+  document.querySelectorAll('[data-sel]').forEach((el) => {
+    el.classList.toggle('sel', Boolean(sel) && el.dataset.sel === sel);
+  });
+  document.querySelectorAll('[data-openpart]').forEach((el) => {
+    el.classList.toggle('sel', Boolean(sel) && sel === `part:${el.dataset.openpart}`);
+  });
+
+  const existing = document.getElementById('insp');
+  if (!sel || (!sel.startsWith('part:') && !sel.startsWith('item:'))) {
+    if (existing) existing.remove();
+    state.panelWasOpen = false;
+    lockScroll(false);
+    return true;
   }
 
-  const th = document.documentElement.getAttribute('data-theme');
-  const dark = th === 'dark' || (!th && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  const themeBtn = document.getElementById('themeBtn');
-  if (themeBtn) {
-    themeBtn.innerHTML = dark
-      ? sv('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>')
-      : sv('<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>');
+  const content = sel.startsWith('part:')
+    ? renderPartInspector(sel.slice(5))
+    : renderShoppingInspector(sel.slice(5));
+  if (!content) {
+    if (existing) existing.remove();
+    state.panelWasOpen = false;
+    lockScroll(false);
+    return true;
   }
+
+  if (existing && existing.classList.contains('float')) {
+    existing.classList.remove('enter', 'leave');
+    existing.innerHTML = content;
+    existing.scrollTop = 0;
+    if (swapAnim) {
+      const inner = existing.querySelector('.insp-in');
+      if (inner) inner.classList.add('swap');
+    }
+  } else {
+    if (existing) existing.remove();
+    const aside = document.createElement('aside');
+    aside.id = 'insp';
+    aside.className = 'insp open float enter';
+    aside.setAttribute('aria-label', 'Details');
+    aside.innerHTML = content;
+    screen.appendChild(aside);
+  }
+
+  state.panelWasOpen = true;
+  lockScroll(window.matchMedia('(max-width: 980px)').matches);
+  return true;
+}
+
+// Update Project Detail inspector & map focus in place without rebuilding the SVG map
+function updateProjectSelection(pid, swapAnim = false) {
+  const proj = projectById(pid);
+  const aside = document.getElementById('insp');
+  if (!proj || !aside) return false;
+
+  applyMapFocus(pid);
+  document.querySelectorAll('.lrow[data-sel]').forEach((el) => {
+    el.classList.toggle('sel', Boolean(state.sel) && el.dataset.sel === state.sel);
+  });
+
+  const hasSel = Boolean(
+    state.sel && (state.sel.startsWith('node:') || state.sel.startsWith('net:') || state.sel.startsWith('warn:'))
+  );
+  aside.classList.toggle('open', hasSel);
+  aside.innerHTML = renderProjectInspector(proj);
+  aside.scrollTop = 0;
+  if (swapAnim) {
+    const inner = aside.querySelector('.insp-in');
+    if (inner) inner.classList.add('swap');
+  }
+  lockScroll(window.matchMedia('(max-width: 980px)').matches && hasSel);
+  return true;
 }
 
 function lockScroll(on) {
@@ -224,9 +321,27 @@ export function render() {
     html = renderInventoryView();
   }
 
+  // Preserve inner scroll positions across re-renders
+  const savedScrolls = {};
+  ['.gl-idx', '#insp', '#mapwrap', '.picklist'].forEach((selStr) => {
+    const el = document.querySelector(selStr);
+    if (el) savedScrolls[selStr] = [el.scrollTop, el.scrollLeft];
+  });
+
   app.innerHTML = html;
+
+  Object.entries(savedScrolls).forEach(([selStr, [st, sl]]) => {
+    const el = document.querySelector(selStr);
+    if (el) {
+      el.scrollTop = st;
+      el.scrollLeft = sl;
+    }
+  });
   renderLightbox();
-  if (curPid) applyMapFocus(curPid);
+  if (curPid) {
+    initMapViewport(curPid);
+    applyMapFocus(curPid);
+  }
   state.panelWasOpen = Boolean(document.querySelector('.insp.float'));
   lockScroll(window.matchMedia('(max-width: 980px)').matches && Boolean(document.querySelector('.insp.open')));
 
@@ -292,11 +407,17 @@ async function stepPartQty(id, delta) {
   const next = Math.max(0, prev + delta);
   if (next === prev) return;
   p.quantity = next;
-  render();
+  // Update steppers & card qty badges in place without flashing the page
+  document.querySelectorAll(`[data-qty="${CSS.escape(id)}|-1"]`).forEach((btn) => {
+    const out = btn.parentElement && btn.parentElement.querySelector('output');
+    if (out) out.textContent = String(next);
+  });
+  document.querySelectorAll(`[data-sel="part:${CSS.escape(id)}"] .qty`).forEach((q) => {
+    q.textContent = `×${next}`;
+  });
   try {
     const updated = await api.patchPart(id, { quantity: next });
     Object.assign(p, updated);
-    render();
   } catch (err) {
     p.quantity = prev;
     render();
@@ -315,7 +436,6 @@ async function stepShoppingQty(id, delta) {
   try {
     const updated = await api.patchShoppingItem(id, { quantity: next });
     Object.assign(it, updated);
-    render();
   } catch (err) {
     it.quantity = prev;
     render();
@@ -398,10 +518,9 @@ document.addEventListener('click', (e) => {
   }
   if (pop && !tgt.closest('.pop')) pop.innerHTML = '';
 
-  // Close open dropdown menu if clicked outside
+  // Close open dropdown menu in place if clicked outside (no full page re-render)
   if (state.menu && !tgt.closest('.mn')) {
-    state.menu = null;
-    render();
+    setMenuOpen(null);
   }
 
   // Section anchor jump on desktop edit pages
@@ -713,13 +832,6 @@ document.addEventListener('click', (e) => {
     toggleProjectArchive(archBtn.dataset.archive, render);
     return;
   }
-  const lensGo = tgt.closest('[data-lens-go]');
-  if (lensGo) {
-    state.lens = lensGo.dataset.lensGo;
-    state.sel = null;
-    location.hash = 'inventory';
-    return;
-  }
   const viewBtn = tgt.closest('[data-view]');
   if (viewBtn) {
     const r = route();
@@ -732,9 +844,22 @@ document.addEventListener('click', (e) => {
   }
   const zoomBtn = tgt.closest('[data-zoom]');
   if (zoomBtn) {
-    const z = zoomBtn.dataset.zoom;
-    state.zoom = z === 'fit' ? 1 : Math.max(0.7, Math.min(2, +(state.zoom + (z === 'in' ? 0.25 : -0.25)).toFixed(2)));
-    render();
+    zoomMapViewport(zoomBtn.dataset.zoom);
+    return;
+  }
+  const mapExp = tgt.closest('[data-map-export]');
+  if (mapExp) {
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
+    const proj = pid ? projectById(pid) : null;
+    if (proj && !mapExp.disabled) {
+      mapExp.disabled = true;
+      exportProjectMap(proj, mapExp.dataset.mapExport)
+        .catch((err) => toast(err.message || 'Could not export wiring map'))
+        .finally(() => {
+          mapExp.disabled = false;
+        });
+    }
     return;
   }
   const focBtn = tgt.closest('[data-focus]');
@@ -776,11 +901,10 @@ document.addEventListener('click', (e) => {
     return;
   }
 
-  // Dropdown toggle & selection
+  // Dropdown toggle (in place — zero page re-render!) & selection
   const mb = tgt.closest('[data-menu]');
   if (mb) {
-    state.menu = state.menu === mb.dataset.menu ? null : mb.dataset.menu;
-    render();
+    setMenuOpen(state.menu === mb.dataset.menu ? null : mb.dataset.menu);
     return;
   }
   const mp = tgt.closest('[data-mpick]');
@@ -881,23 +1005,34 @@ document.addEventListener('click', (e) => {
     return;
   }
 
-  // Select part, shopping item, or project map node/net/warn
+  // Select part, shopping item, or project map node/net/warn (update inspector in place!)
   const selEl = tgt.closest('[data-sel]');
   if (selEl) {
     const val = selEl.dataset.sel;
-    if (state.sel === val && document.querySelector('.insp.float')) {
-      closePanel(render);
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
+    if (pid && (val.startsWith('node:') || val.startsWith('net:') || val.startsWith('warn:'))) {
+      const changed = state.sel !== val;
+      state.sel = val;
+      if (!updateProjectSelection(pid, changed)) render();
       return;
     }
+    if (state.sel === val && document.querySelector('.insp.float')) {
+      closePanel(() => updateFloatingInspector(false));
+      return;
+    }
+    const changed = state.sel !== val;
     state.sel = val;
-    render();
+    if (!updateFloatingInspector(changed)) render();
     return;
   }
 
-  // Clicking empty background of wiring map clears selection
+  // Clicking empty background of wiring map clears selection in place
   if (tgt.closest('#mapwrap') && !tgt.closest('[data-sel]') && !tgt.closest('.zoom') && state.sel) {
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
     state.sel = null;
-    render();
+    if (!pid || !updateProjectSelection(pid, true)) render();
     return;
   }
 
@@ -906,19 +1041,14 @@ document.addEventListener('click', (e) => {
   if (actEl) {
     const act = actEl.dataset.act;
     if (act === 'clear') {
-      if (document.querySelector('.insp.float')) closePanel(render);
-      else {
+      if (document.querySelector('.insp.float')) {
+        closePanel(() => updateFloatingInspector(false));
+      } else {
+        const r = route();
+        const pid = r.startsWith('p-') ? r.slice(2) : null;
         state.sel = null;
-        render();
+        if (!pid || !updateProjectSelection(pid, true)) render();
       }
-      return;
-    }
-    if (act === 'theme') {
-      const th = document.documentElement.getAttribute('data-theme');
-      const dark = th === 'dark' || (!th && window.matchMedia('(prefers-color-scheme: dark)').matches);
-      const next = dark ? 'light' : 'dark';
-      persistUiSetting({ theme: next });
-      renderNav();
       return;
     }
     if (act === 'clearq') {
@@ -988,10 +1118,11 @@ document.addEventListener('click', (e) => {
   if (op) {
     const val = `part:${op.dataset.openpart}`;
     if (state.sel === val && document.querySelector('.insp.float')) {
-      closePanel(render);
+      closePanel(() => updateFloatingInspector(false));
     } else {
+      const changed = state.sel !== val;
       state.sel = val;
-      render();
+      if (!updateFloatingInspector(changed)) render();
     }
     return;
   }
@@ -1048,7 +1179,7 @@ document.addEventListener('click', (e) => {
   if (dialEl) {
     state.bench.dial = dialEl.dataset.dial;
     state.bench.dtask = dialEl.dataset.dtask != null ? Number(dialEl.dataset.dtask) : null;
-    render();
+    if (!updateDmmDialInPlace(state.bench.dial, state.bench.dtask)) render();
     return;
   }
   const cset = tgt.closest('[data-cset]');
@@ -1086,7 +1217,7 @@ document.addEventListener('click', (e) => {
   if (uiSet) {
     const [k, v] = uiSet.dataset.uiSet.split('|');
     if (k === 'view_mode') state.inv.view = v;
-    persistUiSetting({ [k]: v }).then(() => render());
+    persistUiSetting({ [k]: v });
     render();
     return;
   }
@@ -1094,7 +1225,7 @@ document.addEventListener('click', (e) => {
   if (uiTog) {
     const k = uiTog.dataset.uiTog;
     const curVal = state.config.ui_settings[k] !== false;
-    persistUiSetting({ [k]: !curVal }).then(() => render());
+    persistUiSetting({ [k]: !curVal });
     render();
     return;
   }
@@ -1428,10 +1559,12 @@ document.addEventListener('paste', (e) => {
         sbOpen(false);
       } else {
         if (!sheetOpen()) return;
-        if (document.querySelector('.insp.float')) closePanel(render);
+        if (document.querySelector('.insp.float')) closePanel(() => updateFloatingInspector(false));
         else {
+          const r = route();
+          const pid = r.startsWith('p-') ? r.slice(2) : null;
           state.sel = null;
-          render();
+          if (!pid || !updateProjectSelection(pid, true)) render();
         }
       }
       const eat = (ev) => {
@@ -1485,15 +1618,16 @@ document.addEventListener('keydown', (e) => {
     const pop = document.getElementById('popRoot');
     if (pop) pop.innerHTML = '';
     if (state.menu) {
-      state.menu = null;
-      render();
+      setMenuOpen(null);
       return;
     }
     if (state.sel) {
-      if (document.querySelector('.insp.float')) closePanel(render);
+      if (document.querySelector('.insp.float')) closePanel(() => updateFloatingInspector(false));
       else {
+        const r = route();
+        const pid = r.startsWith('p-') ? r.slice(2) : null;
         state.sel = null;
-        render();
+        if (!pid || !updateProjectSelection(pid, true)) render();
       }
       return;
     }
@@ -1554,6 +1688,172 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
     renderNav();
   }
 });
+
+// Initialize Pinbin header logo: trace-following power current on hover + soft independent RGB idle LEDs on the i-dots
+function initBrandPulse() {
+  const mark = document.querySelector('.mark');
+  if (!mark) return;
+
+  // Ordered pad-by-pad stroke paths so current flows along each letter's actual traces
+  const fullLetters = [
+    [[6, 22], [6, 18], [6, 14], [6, 10], [10, 10], [14, 10], [14, 14], [14, 18], [10, 18]],          // p
+    [[22, 18], [22, 14], [22, 10], [22, 2]],                                                           // i
+    [[30, 18], [30, 14], [30, 10], [34, 10], [38, 10], [38, 14], [38, 18]],                            // n
+    [[46, 2], [46, 6], [46, 10], [46, 14], [46, 18], [50, 18], [54, 18], [54, 14], [54, 10], [50, 10]], // b
+    [[62, 18], [62, 14], [62, 10], [62, 2]],                                                           // i
+    [[70, 18], [70, 14], [70, 10], [74, 10], [78, 10], [78, 14], [78, 18]],                            // n
+  ];
+  const miniLetters = [
+    [[2.8, 27], [2.8, 22.6], [2.8, 18.2], [2.8, 13.8], [7.2, 13.8], [11.6, 13.8], [11.6, 18.2], [11.6, 22.6], [7.2, 22.6]],
+    [[20.4, 5], [20.4, 9.4], [20.4, 13.8], [20.4, 18.2], [20.4, 22.6], [24.8, 22.6], [29.2, 22.6], [29.2, 18.2], [29.2, 13.8], [24.8, 13.8]],
+  ];
+
+  const assignTraceDelays = (svg, letters, stepMs, gapMs) => {
+    const segs = [];
+    let t = 0;
+    letters.forEach((pts) => {
+      pts.forEach(([px, py], i) => {
+        segs.push({ x: px, y: py, d: t });
+        if (i + 1 < pts.length) {
+          const [nx, ny] = pts[i + 1];
+          segs.push({ x: (px + nx) / 2, y: (py + ny) / 2, d: t + stepMs * 0.5 });
+        }
+        t += stepMs;
+      });
+      t += gapMs;
+    });
+
+    svg.querySelectorAll('circle, rect').forEach((el) => {
+      const isHole = el.getAttribute('fill') === 'none';
+      el.classList.add(isHole ? 'pb-hole' : 'pb-lit');
+      if (isHole) return;
+      const cx =
+        el.tagName.toLowerCase() === 'circle'
+          ? Number(el.getAttribute('cx') || 0)
+          : Number(el.getAttribute('x') || 0) + Number(el.getAttribute('width') || 0) / 2;
+      const cy =
+        el.tagName.toLowerCase() === 'circle'
+          ? Number(el.getAttribute('cy') || 0)
+          : Number(el.getAttribute('y') || 0) + Number(el.getAttribute('height') || 0) / 2;
+      let best = segs[0];
+      let bestDist = Infinity;
+      for (const s of segs) {
+        const dist = Math.hypot(cx - s.x, cy - s.y);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = s;
+        }
+      }
+      el.style.setProperty('--d', `${Math.round(best.d)}ms`);
+    });
+    return Math.round(t);
+  };
+
+  const fullSvg = mark.querySelector('.brand-full');
+  const miniSvg = mark.querySelector('.brand-mini');
+  const fullDur = fullSvg ? assignTraceDelays(fullSvg, fullLetters, 18, 22) : 600;
+  if (miniSvg) assignTraceDelays(miniSvg, miniLetters, 24, 30);
+
+  // Locate the two i-dots in the wordmark: (22, 2) and (62, 2)
+  const iDots = fullSvg
+    ? [...fullSvg.querySelectorAll('circle.pb-lit')].filter((c) => {
+        const cx = Number(c.getAttribute('cx'));
+        const cy = Number(c.getAttribute('cy'));
+        return cy === 2 && (cx === 22 || cx === 62);
+      })
+    : [];
+  iDots.forEach((d) => d.classList.add('pb-idot'));
+
+  const isReducedMotion = () =>
+    document.documentElement.classList.contains('reduce') ||
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const rand = () => {
+    if (window.crypto && crypto.getRandomValues) {
+      const a = new Uint32Array(1);
+      crypto.getRandomValues(a);
+      return a[0] / 4294967296;
+    }
+    return Math.random();
+  };
+
+  const RGB_LEDS = ['#ff0000', '#00cc00', '#0000ff'];
+
+  const pickRgb = () => RGB_LEDS[Math.floor(rand() * RGB_LEDS.length)];
+
+  let hovering = false;
+  let pulseTimer = null;
+  const resetDotLoops = [];
+
+  const triggerPower = () => {
+    if (isReducedMotion() || mark.classList.contains('pulse')) return;
+    // Lock one random pure RGB LED color for the entire power-current pass
+    mark.style.setProperty('--pb-cur', pickRgb());
+    resetDotLoops.forEach((fn) => fn());
+    mark.classList.add('pulse');
+    clearTimeout(pulseTimer);
+    pulseTimer = setTimeout(() => {
+      mark.classList.remove('pulse');
+    }, fullDur + 480);
+  };
+
+  mark.addEventListener('mouseenter', () => {
+    hovering = true;
+    triggerPower();
+  });
+  mark.addEventListener('mouseleave', () => {
+    hovering = false;
+  });
+  mark.addEventListener('click', triggerPower);
+
+  // Pick a random initial order for the two i-dots so they never start in sync on refresh
+  const firstIdx = iDots.length > 1 && rand() < 0.5 ? 1 : 0;
+
+  // Independent random RGB LED loop per i-dot (strict fade-in → hold → full fade-out → wait)
+  iDots.forEach((dot, idx) => {
+    let t1 = null;
+    let t2 = null;
+    let t3 = null;
+    const clearAll = () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      dot.style.fill = '';
+    };
+    const scheduleNext = (minWait, maxWait) => {
+      const waitMs = Math.round(minWait + rand() * (maxWait - minWait));
+      t1 = setTimeout(() => {
+        if (hovering || mark.classList.contains('pulse') || isReducedMotion()) {
+          scheduleNext(900, 2600);
+          return;
+        }
+        dot.style.fill = pickRgb();
+        // 550ms fade-in + calm hold before fading back out
+        const holdTotal = Math.round(550 + 300 + rand() * 350);
+        t2 = setTimeout(() => {
+          dot.style.fill = '';
+          // Wait for full 550ms fade-out to finish before picking any next color
+          t3 = setTimeout(() => {
+            scheduleNext(1400, 4800);
+          }, 620);
+        }, holdTotal);
+      }, waitMs);
+    };
+    resetDotLoops.push(() => {
+      clearAll();
+      const firstAfterHover = rand() < 0.5;
+      scheduleNext(firstAfterHover ? 900 : 2400, firstAfterHover ? 2000 : 4800);
+    });
+    // Randomly chosen first dot fires right away; the other starts clearly offset
+    if (idx === firstIdx) {
+      scheduleNext(300, 850);
+    } else {
+      scheduleNext(1800, 3600);
+    }
+  });
+}
+
+initBrandPulse();
 
 loadAllData().catch((err) => {
   const app = document.getElementById('app');

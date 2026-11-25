@@ -189,16 +189,13 @@ export function stepHtml(attrName, key, val, label) {
 }
 
 export function menuHtml(id, label, value, opts) {
-  return `<div class="mn"><button type="button" class="btn mnb" data-menu="${esc(id)}" aria-haspopup="menu" aria-expanded="${state.menu === id}">${label ? `<span class="faint">${esc(label)}</span>` : ''}<span>${esc(value)}</span>${caret}</button>${
-    state.menu === id
-      ? `<div class="mnp" role="menu">${opts
-          .map(
-            ([v, t, cur]) =>
-              `<button type="button" role="menuitemradio" aria-checked="${!!cur}" data-mpick="${esc(id)}|${esc(v)}"><span class="ck">${cur ? '✓' : ''}</span><span>${esc(t)}</span></button>`
-          )
-          .join('')}</div>`
-      : ''
-  }</div>`;
+  const open = state.menu === id;
+  return `<div class="mn"><button type="button" class="btn mnb" data-menu="${esc(id)}" aria-haspopup="menu" aria-expanded="${open}">${label ? `<span class="faint">${esc(label)}</span>` : ''}<span>${esc(value)}</span>${caret}</button><div class="mnp" role="menu"${open ? '' : ' hidden'}>${opts
+    .map(
+      ([v, t, cur]) =>
+        `<button type="button" role="menuitemradio" aria-checked="${!!cur}" data-mpick="${esc(id)}|${esc(v)}"><span class="ck">${cur ? '✓' : ''}</span><span>${esc(t)}</span></button>`
+    )
+    .join('')}</div></div>`;
 }
 
 export function parsePriceNumber(priceStr) {

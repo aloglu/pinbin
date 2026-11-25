@@ -94,18 +94,36 @@
   .projhead .pacts { flex-basis: 100%; }
 }
 
-/* ===== Wiring map (SVG block diagram) ===== */
+/* ===== Wiring map (interactive pan & zoom SVG viewport) ===== */
 .mapwrap {
   position: relative;
+  height: clamp(380px, 60vh, 640px);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 6px;
-  overflow: auto;
+  overflow: hidden;
   background-image: radial-gradient(var(--dot) 1px, transparent 1.2px);
   background-size: 16px 16px;
-  max-height: 76vh;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
-.map { display: block; height: auto; user-select: none; }
+.mapwrap.panning { cursor: grabbing; }
+.mapwrap.panning .map .node,
+.mapwrap.panning .map .net,
+.mapwrap.panning .map .mk { pointer-events: none; }
+.mapstage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.mapstage.anim { transition: transform .18s var(--ease); }
+.map { display: block; user-select: none; }
+@media (max-width: 760px) {
+  .mapwrap { height: clamp(320px, 54vh, 480px); }
+}
 .map text { font-family: var(--sans); fill: var(--ink); }
 .map .pin { font: 500 11px var(--mono); fill: var(--ink-2); }
 .map .lab { font: 600 11.5px var(--mono); }
@@ -149,11 +167,37 @@
 @keyframes ring { 0% { opacity: .7; r: 9; } 70%, 100% { opacity: 0; r: 18; } }
 .map .mk.sel circle.b { stroke: var(--ink); stroke-width: 2.4; }
 
-.zoom { position: sticky; left: 8px; top: 8px; z-index: 2; display: inline-flex; gap: 4px; margin: 8px; }
-.zoom .btn { height: 30px; padding: 0 9px; font-size: 13px; }
+.zoom {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  cursor: default;
+}
+.zoom .btn { height: 30px; padding: 0 9px; font-size: 13px; box-shadow: 0 1px 4px rgba(0, 0, 0, .06); }
+.zoom .btn[data-zoom="fit"] { min-width: 48px; justify-content: center; font-variant-numeric: tabular-nums; }
+.zoom .btn svg { width: 13px; height: 13px; }
+.zoom .mapsep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+.maphint {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  z-index: 2;
+  font: 500 11px var(--mono);
+  color: var(--ink-3);
+  pointer-events: none;
+  opacity: .75;
+}
+@media (pointer: coarse) {
+  .maphint { display: none; }
+}
 
 .legend { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-top: 10px; color: var(--ink-2); font-size: 13px; }
-.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 18px; height: 3px; border-radius: 2px; display: block; }
 
 .tray { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

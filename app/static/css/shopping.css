@@ -44,7 +44,6 @@
   margin-bottom: 16px;
   display: grid;
   gap: 12px;
-  animation: in .2s var(--ease);
 }
 .optpanel-h {
   display: flex;

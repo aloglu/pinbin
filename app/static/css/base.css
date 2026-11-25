@@ -17,6 +17,8 @@
 
 [hidden] { display: none !important; }
 
+html { scrollbar-gutter: stable; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -85,13 +87,26 @@ code {
   gap: 7px;
   font-weight: 600;
   text-decoration: none;
-  padding: 6px 8px;
+  padding: 4px 8px;
   margin-left: -8px;
   border-radius: 6px;
   transition: background .15s var(--ease);
 }
 .mark:hover { background: var(--hover); }
-.mark svg { width: 18px; height: 18px; }
+.mark .brand-full { width: 74px; height: 28px; display: block; }
+.mark .brand-mini { width: 20px; height: 20px; display: none; }
+.mark .pb-hole { opacity: .45; }
+.mark .pb-idot { transition: fill .55s ease-in-out; }
+.mark.pulse .pb-lit {
+  animation: pbPower .46s ease-in-out var(--d, 0ms) 1 both;
+}
+.mark.pulse .pb-idot {
+  transition: none;
+}
+@keyframes pbPower {
+  0%, 100% { fill: currentColor; }
+  40% { fill: var(--pb-cur, #ff0000); }
+}
 
 .nav {
   display: flex;
@@ -136,11 +151,12 @@ code {
 }
 .nav .c { font: 500 11.5px var(--mono); color: var(--ink-3); }
 .bar .right { margin-left: auto; display: flex; gap: 4px; align-items: center; }
-#gearBtn, #themeBtn { width: 32px; height: 32px; padding: 0; justify-content: center; }
+#gearBtn { width: 32px; height: 32px; padding: 0; justify-content: center; }
 
 @media (max-width: 720px) {
   .bar-in { gap: 8px; }
-  .mark span { display: none; }
+  .mark .brand-full { display: none; }
+  .mark .brand-mini { display: block; }
   .nav a { padding: 0 10px; }
   .nav a[aria-current]::after { left: 10px; right: 10px; }
 }
@@ -341,9 +357,10 @@ code {
   width: 17px;
   height: 17px;
   border-radius: 50%;
-  display: inline-grid;
-  place-items: center;
-  font: 700 11.5px var(--mono);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 11px/1 var(--mono);
   color: #fff;
   flex: none;
 }
@@ -568,7 +585,8 @@ code {
   overscroll-behavior: contain;
   padding-right: env(safe-area-inset-right, 0px);
 }
-.insp-in { padding: 14px 16px 40px; animation: swap .25s var(--ease); }
+.insp-in { padding: 14px 16px 40px; }
+.insp-in.swap { animation: swap .2s var(--ease); }
 .insp-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .insp .sec { padding: 12px 0; border-top: 1px solid var(--hair); }
 .insp .sec:first-of-type { border-top: 0; padding-top: 0; }

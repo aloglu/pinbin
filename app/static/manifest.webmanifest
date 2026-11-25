@@ -5,8 +5,8 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#111615",
-  "theme_color": "#19201e",
+  "background_color": "#ECEDEA",
+  "theme_color": "#ECEDEA",
   "icons": [
     {
       "src": "/static/brand/icon-192.png",

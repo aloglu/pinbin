@@ -2,8 +2,8 @@
 
 .gl3 {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
-  gap: 32px;
+  grid-template-columns: 356px minmax(0, 1fr);
+  gap: 28px;
   align-items: start;
 }
 
@@ -13,7 +13,10 @@
   position: sticky;
   top: calc(58px + env(safe-area-inset-top, 0px));
   max-height: calc(100vh - 76px);
-  overflow: auto;
+  padding-right: 14px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
 }
 .gl-idx .sh { margin: 18px 0 8px; }
@@ -105,5 +108,5 @@
 }
 @media (max-width: 860px) {
   .gl3 { grid-template-columns: minmax(0, 1fr); }
-  .gl-idx { position: static; max-height: none; }
+  .gl-idx { position: static; max-height: none; padding-right: 0; overflow: visible; scrollbar-gutter: auto; }
 }

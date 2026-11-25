@@ -19,6 +19,16 @@ const BUILTIN_BOARDS = {
     chip: 'ESP32-C3',
     usb: 'top',
     L: [
+      ['GPIO5', 'io', 'ADC. SPI MISO. Can wake the chip from deep sleep.'],
+      ['GPIO6', 'io', 'General use / SPI MOSI.'],
+      ['GPIO7', 'io', 'General use / SPI SS.'],
+      ['GPIO8', 'strap', 'On-board LED. Default I2C SDA. Strapping pin.'],
+      ['GPIO9', 'strap', 'BOOT button. Default I2C SCL. Strapping pin.'],
+      ['GPIO10', 'io', 'General use.'],
+      ['GPIO20', 'io', 'UART0 RX.'],
+      ['GPIO21', 'io', 'UART0 TX.'],
+    ],
+    R: [
       ['5V', 'pwr', 'Power in, from USB or battery. Has a regulator behind it.'],
       ['GND', 'gnd', 'Ground.'],
       ['3V3', 'v33', '3.3 V out from the regulator. About 500 mA max.'],
@@ -27,16 +37,6 @@ const BUILTIN_BOARDS = {
       ['GPIO2', 'strap', 'ADC. Strapping pin: keep it free at power-on.'],
       ['GPIO1', 'io', 'ADC. Can wake the chip from deep sleep.'],
       ['GPIO0', 'io', 'ADC. Can wake the chip from deep sleep.'],
-    ],
-    R: [
-      ['GPIO5', 'io', 'ADC. Can wake the chip from deep sleep.'],
-      ['GPIO6', 'io', 'General use / SPI MOSI.'],
-      ['GPIO7', 'io', 'General use / SPI SS.'],
-      ['GPIO8', 'strap', 'On-board LED. Default I2C SDA. Strapping pin.'],
-      ['GPIO9', 'strap', 'BOOT button. Default I2C SCL. Strapping pin.'],
-      ['GPIO10', 'io', 'General use.'],
-      ['GPIO20', 'io', 'UART0 RX.'],
-      ['GPIO21', 'io', 'UART0 TX.'],
     ],
   },
   esp32: {
@@ -98,6 +98,11 @@ const BUILTIN_BOARDS = {
       ['GND', 'gnd', 'Ground.'],
       ['GP10', 'io', 'SPI1 SCK / I2C1 SDA.'],
       ['GP11', 'io', 'SPI1 TX / I2C1 SCL.'],
+      ['GP12', 'io', 'SPI1 RX / I2C0 SDA.'],
+      ['GP13', 'io', 'SPI1 CS / I2C0 SCL.'],
+      ['GND', 'gnd', 'Ground.'],
+      ['GP14', 'io', 'SPI1 SCK / I2C1 SDA.'],
+      ['GP15', 'io', 'SPI1 TX / I2C1 SCL.'],
     ],
     R: [
       ['VBUS', 'pwr', '5 V straight from USB.'],
@@ -115,6 +120,11 @@ const BUILTIN_BOARDS = {
       ['GND', 'gnd', 'Ground.'],
       ['GP21', 'io', 'I2C0 SCL.'],
       ['GP20', 'io', 'I2C0 SDA.'],
+      ['GP19', 'io', 'SPI0 TX (MOSI) / I2C1 SCL.'],
+      ['GP18', 'io', 'SPI0 SCK / I2C1 SDA.'],
+      ['GND', 'gnd', 'Ground.'],
+      ['GP17', 'io', 'SPI0 CS / UART0 RX.'],
+      ['GP16', 'io', 'SPI0 RX (MISO) / UART0 TX.'],
     ],
   },
   uno: {
@@ -126,6 +136,7 @@ const BUILTIN_BOARDS = {
       ['RESET', 'ctrl', 'Pull LOW to restart.'],
       ['3.3V', 'v33', '3.3 V out (50 mA max — too weak for Wi-Fi).'],
       ['5V', 'pwr', 'Regulated 5 V out (up to ~500 mA from USB).'],
+      ['GND', 'gnd', 'Ground.'],
       ['GND', 'gnd', 'Ground.'],
       ['VIN', 'pwr', '7–12 V barrel / battery input to regulator.'],
       ['A0', 'io', 'Analog input 0 (0–5 V).'],
@@ -292,44 +303,57 @@ function renderBoardTool(id, toolDef) {
   const n = Math.max(b.L.length, b.R.length);
   const top = b.usb === 'top';
   const H = (top ? 70 : 40) + n * 30 + (top ? 20 : 50);
-  const all = [...b.L.map((p) => [...p, 'L']), ...b.R.map((p) => [...p, 'R'])];
-  const cur = all.find((p) => `${id}:${p[0]}:${p[3]}` === state.bench.pin);
+  const all = [...b.L.map((p, i) => [...p, 'L', i]), ...b.R.map((p, i) => [...p, 'R', i])];
+  const cur = all.find((p) => `${id}:${p[0]}:${p[3]}:${p[4]}` === state.bench.pin);
 
   const art = (compact) => {
+    const boardY = top ? 50 : 20;
+    const boardH = n * 30 + 10;
+    const chipY = Math.round(boardY + (boardH - 66) / 2);
     const pin = (side, i, [nm, k]) => {
       const y = (top ? 70 : 40) + i * 30;
       const x = side === 'L' ? 150 : 330;
-      const key = `${id}:${nm}:${side}`;
+      const key = `${id}:${nm}:${side}:${i}`;
       const on = state.bench.pin === key;
       const u = usage[nm] || '';
-      const rx = side === 'L' ? (compact ? 70 : -40) : x - 14;
-      const rw = side === 'L' ? x + 14 - (compact ? 70 : -40) : (compact ? 420 : 520) - x + 14;
-      return `<g class="bp" data-pin="${esc(key)}" role="button" tabindex="0" aria-label="${esc(nm)}${
+      const leftEdge = compact ? 52 : -66;
+      const rightEdge = compact ? 428 : 546;
+      const rx = side === 'L' ? leftEdge : x - 14;
+      const rw = side === 'L' ? x + 14 - leftEdge : rightEdge - (x - 14);
+      const labelX = side === 'L' ? 118 : 362;
+      const useX = side === 'L' ? 46 : 434;
+      const col = PK[k][0];
+      const pillW = Math.round(nm.length * 7.5 + 14);
+      const pillX = side === 'L' ? 125 - pillW : 355;
+      return `<g class="bp${on ? ' on' : ''}" data-pin="${esc(key)}" style="--pc:${col}" role="button" tabindex="0" aria-label="${esc(nm)}${
         u ? `: ${esc(u)}` : ''
       }">
-        <rect x="${rx}" y="${y - 14}" width="${rw}" height="28" fill="${on ? 'var(--surface)' : 'transparent'}" rx="4"/>
-        <circle cx="${x}" cy="${y}" r="9" fill="${on ? PK[k][0] : 'var(--raised)'}" stroke="${PK[k][0]}" stroke-width="2.2"/>
-        <text x="${side === 'L' ? x - 18 : x + 18}" y="${y + 4}" text-anchor="${
+        <rect class="bp-hit" x="${rx}" y="${y - 14}" width="${rw}" height="28" fill="transparent"/>
+        <rect class="bp-pill" x="${pillX}" y="${y - 11}" width="${pillW}" height="22" rx="5"/>
+        ${on ? `<circle class="bp-halo" cx="${x}" cy="${y}" r="12.5"/>` : ''}
+        <circle class="bp-pad" cx="${x}" cy="${y}" r="8.5" fill="${on ? col : 'var(--raised)'}" stroke="${col}" stroke-width="2.2"/>
+        ${on ? `<circle class="bp-core" cx="${x}" cy="${y}" r="3"/>` : ''}
+        <text x="${labelX}" y="${y + 4}" text-anchor="${
         side === 'L' ? 'end' : 'start'
       }" class="bn">${esc(nm)}</text>
         ${
           u && !compact
-            ? `<text x="${side === 'L' ? x - 78 : x + 78}" y="${y + 4}" text-anchor="${
+            ? `<text x="${useX}" y="${y + 4}" text-anchor="${
                 side === 'L' ? 'end' : 'start'
               }" class="bu">${esc(u)}</text>`
             : ''
         }
       </g>`;
     };
-    const vb = compact ? `70 0 350 ${H}` : `-40 0 560 ${H}`;
+    const vb = compact ? `48 0 384 ${H}` : `-70 0 620 ${H}`;
     return `<svg viewBox="${vb}" class="board2 ${compact ? 'compact' : 'wide'}" role="img" aria-label="${esc(
       b.title
     )} pinout">
-      <rect x="130" y="${top ? 50 : 20}" width="220" height="${n * 30 + 10}" rx="10" fill="var(--surface)" stroke="var(--ink-3)" stroke-width="1.4"/>
+      <rect x="130" y="${boardY}" width="220" height="${boardH}" rx="10" fill="var(--surface)" stroke="var(--ink-3)" stroke-width="1.4"/>
       <rect x="210" y="${top ? 34 : n * 30 + 22}" width="60" height="26" rx="5" fill="var(--bg)" stroke="var(--ink-3)"/>
       <text x="240" y="${top ? 51 : n * 30 + 39}" text-anchor="middle" class="bu">USB</text>
-      <rect x="195" y="${top ? 70 + n * 11 : 40 + n * 10}" width="90" height="66" rx="4" fill="var(--bg)" stroke="var(--ink-3)"/>
-      <text x="240" y="${(top ? 70 + n * 11 : 40 + n * 10) + 37}" text-anchor="middle" class="bu">${esc(b.chip)}</text>
+      <rect x="195" y="${chipY}" width="90" height="66" rx="4" fill="var(--bg)" stroke="var(--ink-3)"/>
+      <text x="240" y="${chipY + 37}" text-anchor="middle" class="bu">${esc(b.chip)}</text>
       ${b.L.map((p, i) => pin('L', i, p)).join('')}
       ${b.R.map((p, i) => pin('R', i, p)).join('')}
     </svg>`;
@@ -340,7 +364,7 @@ function renderBoardTool(id, toolDef) {
       <div class="pinout-art">${art(false)}${art(true)}</div>
       <figcaption class="legend2">${[...new Set(all.map((p) => p[1]))]
         .map((k) => `<span><i style="border-color:${PK[k][0]}"></i>${PK[k][1]}</span>`)
-        .join('')}</figcaption>
+        .join('')}<span class="faint">Top view · chip facing up</span></figcaption>
     </figure>
     <div class="readout">${
       cur
@@ -570,6 +594,33 @@ const DTASKS = [
   ['Which way round is this diode?', 'cont'],
   ['How much does the watch draw asleep?', 'adc'],
 ];
+
+export function updateDmmDialInPlace(dialId, dtask) {
+  const cur = DIAL.find((d) => d[0] === dialId) || DIAL[1];
+  const ptr = document.querySelector('.dialsvg .ptr');
+  if (!ptr) return false;
+  ptr.style.transform = `rotate(${cur[2]}deg)`;
+  document.querySelectorAll('.dialsvg .dpos').forEach((g) => {
+    const on = g.dataset.dial === cur[0];
+    const c = g.querySelector('circle');
+    const t = g.querySelector('text');
+    if (c) c.setAttribute('fill', on ? 'var(--ink)' : 'transparent');
+    if (t) t.style.fill = on ? 'var(--bg)' : 'var(--ink)';
+  });
+  document.querySelectorAll('.dmm-side [data-dtask]').forEach((b) => {
+    const on = dtask !== null && Number(b.dataset.dtask) === dtask;
+    b.classList.toggle('on', on);
+    if (on) b.setAttribute('aria-current', 'true');
+    else b.removeAttribute('aria-current');
+  });
+  const ro = document.querySelector('.tool .readout');
+  if (ro) {
+    ro.innerHTML = `<div><b>${cur[1]}</b> <span class="dim">${esc(cur[3])}</span></div>
+      ${cur[4] ? `<p>${esc(cur[4])}</p>` : ''}
+      ${cur[5] ? `<p class="warnline"><span class="sev danger">!</span><span>${esc(cur[5])}</span></p>` : ''}`;
+  }
+  return true;
+}
 
 function renderDmmTool() {
   const cur = DIAL.find((d) => d[0] === (state.bench.dial || 'vdc')) || DIAL[1];

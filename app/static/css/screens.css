@@ -12,7 +12,6 @@
   color: var(--ink);
   border: 1px solid var(--line);
   margin-bottom: 12px;
-  animation: in .25s var(--ease);
 }
 .lensbar b { font-size: 14px; }
 .lensbar .btn { background: var(--raised); color: var(--ink); border-color: var(--line); height: 32px; }
