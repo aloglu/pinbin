@@ -763,7 +763,7 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                     "url": {"type": "string"},
                     "price": {"type": "string"},
                     "retailer": {"type": "string"},
-                    "tag": {"type": "string", "description": "Group/project tag (e.g. 'Smartwatch')."},
+                    "tag": {"type": "string", "description": "Group/project tag (e.g. 'weather-station')."},
                     "category": {"type": "string", "enum": ["", *CATEGORIES]},
                     "status": {"type": "string", "enum": list(SHOPPING_STATUSES), "default": "order"},
                     "in_stock": {"type": "string", "enum": ["", "in_stock", "out_of_stock"]},
@@ -917,7 +917,7 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
         },
         {
             "name": "upsert_retailer",
-            "description": "Save optional shipping_cost and free_shipping_threshold metadata for a retailer domain (e.g. 'robolinkmarket.com').",
+            "description": "Save optional shipping_cost and free_shipping_threshold metadata for a retailer domain (e.g. 'store.example.com').",
             "inputSchema": {
                 "type": "object",
                 "properties": {

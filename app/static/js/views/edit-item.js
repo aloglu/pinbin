@@ -285,15 +285,11 @@ export function renderItemEditView(itemId) {
     ['danger', isEdit ? 'Remove' : ''],
   ].filter(([, label]) => Boolean(label));
 
-  // Known store list for quick datalist suggestions
+  // Known store list for quick datalist suggestions (derived from existing stores & shopping items)
   const knownStores = [
     ...new Set([
       ...(state.retailers || []).map((r) => r.domain).filter(Boolean),
       ...(state.shopping || []).flatMap((it) => [it.retailer, ...(it.offers || []).map((o) => o.retailer)]).filter(Boolean),
-      'direnc.net',
-      'robolinkmarket.com',
-      'motorobit.com',
-      'robotistan.com',
     ]),
   ].sort();
 

@@ -134,15 +134,20 @@ export function renderGlossaryView() {
     return hay.includes(q);
   });
 
-  // Ensure a valid selected term
+  // Group filtered terms by category in clean order
+  const catNames = [...new Set([...CATEGORY_ORDER, ...filtered.map((t) => t.category || 'Circuit Basics')])];
+  const firstDisplayed =
+    catNames
+      .flatMap((cat) => filtered.filter((t) => (t.category || 'Circuit Basics') === cat))
+      [0] || allTerms[0] || null;
+
+  // Ensure a valid selected term (defaults to the first visible item in the list)
   let cur = allTerms.find((t) => t.id === gl.termId);
   if (!cur) {
-    cur = allTerms.find((t) => t.id === 'i2c') || filtered[0] || allTerms[0] || null;
+    cur = firstDisplayed;
     if (cur) gl.termId = cur.id;
   }
 
-  // Group filtered terms by category in clean order
-  const catNames = [...new Set([...CATEGORY_ORDER, ...filtered.map((t) => t.category || 'Circuit Basics')])];
   const narrow = isNarrow();
   const showDetail = !narrow || gl.detail;
 

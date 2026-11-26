@@ -140,9 +140,9 @@ export const state = {
   trail: {},          // { [projectId]: [ref, ...] }
   zoom: 1,
   shopOpt: { open: false, mode: 'fewest_orders', loading: false, error: '', result: null },
-  gl: { q: '', filter: 'all', termId: 'i2c', detail: false },
+  gl: { q: '', filter: 'all', termId: '', detail: false },
   bench: {
-    tool: 'c3',
+    tool: '',
     pin: '',
     bb: 'mini',
     bbHot: '',

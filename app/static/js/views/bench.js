@@ -165,13 +165,32 @@ const BUILTIN_BOARDS = {
   },
 };
 
-function boardMatchKey(name) {
+export function matchBuiltinBoard(name) {
   const low = String(name || '').toLowerCase();
-  if (low.includes('esp32-c3')) return 'c3';
-  if (low.includes('esp32') || low.includes('esp-32')) return 'esp32';
+  if (low.includes('esp32-c3') || low.includes('esp32 c3')) return 'c3';
+  if ((low.includes('esp32') || low.includes('esp-32')) && !low.includes('s3') && !low.includes('mini')) return 'esp32';
   if (low.includes('pico') || low.includes('rp2350') || low.includes('rp2040')) return 'pico2';
   if (low.includes('uno') || low.includes('atmega328')) return 'uno';
   return '';
+}
+
+export function builtinBoardUsbSide(obj) {
+  const explicit = String(obj?.electrical_facts?.usb || '').toLowerCase();
+  if (explicit === 'top' || explicit === 'bottom') return explicit;
+  const label = `${obj?.name || obj?.fullName || obj?.displayName || ''} ${obj?.subtitle || ''}`;
+  const key = matchBuiltinBoard(label);
+  if (key && BUILTIN_BOARDS[key]) return BUILTIN_BOARDS[key].usb;
+  return 'top';
+}
+
+function detectMultimeterTag() {
+  const dmmPart = (state.parts || []).find((p) => {
+    const hay = `${p.name || ''} ${p.subtitle || ''}`.toLowerCase();
+    return p.category === 'Tools' && (hay.includes('multimeter') || hay.includes('dmm'));
+  });
+  if (!dmmPart) return '';
+  const m = String(dmmPart.name || '').match(/\b([A-Z]{1,4}\d{2,4}[A-Z0-9+-]*)\b/);
+  return m ? m[1] : '';
 }
 
 function buildToolCatalog() {
@@ -198,10 +217,11 @@ function buildToolCatalog() {
         d: 'Assistant-supplied board pinout diagram.',
         partId: src.id,
       };
-      addedBoards.add(boardMatchKey(src.name));
+      const mk = matchBuiltinBoard(src.name);
+      if (mk) addedBoards.add(mk);
       continue;
     }
-    const bk = boardMatchKey(src.name);
+    const bk = matchBuiltinBoard(src.name);
     if (bk && BUILTIN_BOARDS[bk] && !addedBoards.has(bk)) {
       addedBoards.add(bk);
       catalog[bk] = {
@@ -211,16 +231,6 @@ function buildToolCatalog() {
         d: 'Tap a pin to see what it does and what your projects use it for.',
       };
     }
-  }
-
-  // Fallback so Boards is never empty
-  if (!Object.values(catalog).some((t) => t.g === 'Boards')) {
-    catalog.c3 = {
-      t: BUILTIN_BOARDS.c3.title,
-      g: 'Boards',
-      tag: '',
-      d: 'Tap a pin to see what it does.',
-    };
   }
 
   // Guides
@@ -237,7 +247,7 @@ function buildToolCatalog() {
   catalog.dmm = {
     t: 'Multimeter dial',
     g: 'Guides',
-    tag: 'UT33D+',
+    tag: detectMultimeterTag(),
     d: 'Pick what you want to check. The dial shows where to turn it, and where the leads go.',
   };
 
@@ -265,7 +275,7 @@ function projectPinUsageForBoard(boardKey) {
   for (const pr of state.projects || []) {
     if (pr.archived) continue;
     const mcu = (pr.items || []).find(
-      (it) => (it.role === 'mcu' || it.category === 'Microcontrollers') && boardMatchKey(it.name) === boardKey
+      (it) => (it.role === 'mcu' || it.category === 'Microcontrollers') && matchBuiltinBoard(it.name) === boardKey
     );
     if (!mcu) continue;
     projName = pr.name;
@@ -500,7 +510,7 @@ function renderResistorTool() {
   const [a, b2, m] = state.bench.res;
   const val = (BANDS[a][2] * 10 + BANDS[b2][2]) * Math.pow(10, BANDS[m][2]);
   const presets = [
-    ['2.4 kΩ', [2, 4, 2], 'TP4056 charge resistor · Smartwatch'],
+    ['2.4 kΩ', [2, 4, 2], 'TP4056 charge-current resistor (500 mA)'],
     ['220 Ω', [2, 2, 1], 'LED current-limiting resistor'],
     ['1 kΩ', [1, 0, 2], 'Voltage divider top (5 V → 3.3 V)'],
     ['2 kΩ', [2, 0, 2], 'Voltage divider bottom (5 V → 3.3 V)'],
@@ -750,8 +760,8 @@ function renderCalcTool(id) {
     )}${numIn('dR2', 'R2 (bottom)', c.dR2, 'Ω', 100)}</div>
       <div class="chips" style="margin:12px 0 4px">
         <span class="k">Presets</span>
-        <button class="tag f" type="button" data-cset="dVin:5,dR1:1000,dR2:2000">HC-SR04 ECHO → ESP32</button>
-        <button class="tag f" type="button" data-cset="dVin:4.2,dR1:100000,dR2:100000">Battery level · Smartwatch</button>
+        <button class="tag f" type="button" data-cset="dVin:5,dR1:1000,dR2:2000">5 V signal → 3.3 V MCU</button>
+        <button class="tag f" type="button" data-cset="dVin:4.2,dR1:100000,dR2:100000">1S Li-Po sense (4.2 V → 2.1 V)</button>
       </div>
       <div class="bigval num" id="calcOut">${out1}</div>
       <p class="dim" id="calcOut2">${out2}</p>`;
@@ -778,10 +788,10 @@ function renderCalcTool(id) {
       c.bMa,
       'mA'
     )}</div>
-      <div class="ef tfield"><span>Fill in from Smartwatch</span><div class="presets">
-        <button class="btn" type="button" data-cset="bCap:500,bMa:50">Screen on · 50 mA</button>
-        <button class="btn" type="button" data-cset="bCap:500,bMa:4">Asleep, LEDs on · 4 mA</button>
-        <button class="btn" type="button" data-cset="bCap:500,bMa:0.3">Asleep, LEDs off · 0.3 mA</button>
+      <div class="ef tfield"><span>Typical presets (500 mAh)</span><div class="presets">
+        <button class="btn" type="button" data-cset="bCap:500,bMa:50">Active + display · 50 mA</button>
+        <button class="btn" type="button" data-cset="bCap:500,bMa:4">Light sleep · 4 mA</button>
+        <button class="btn" type="button" data-cset="bCap:500,bMa:0.3">Deep sleep · 0.3 mA</button>
       </div></div>
       <div class="bigval num" id="calcOut">${out1}</div>
       <p class="dim" id="calcOut2">${out2}</p>`;

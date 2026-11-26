@@ -20,6 +20,7 @@ import {
   apiUrl,
 } from './state.js';
 import { computeRelations, relHtml, careHtml, glossaryTermsFor, warningsOfProject } from './rules.js';
+import { matchBuiltinBoard } from './views/bench.js';
 
 export function closePanel(renderFn) {
   const el = document.querySelector('.insp.float');
@@ -47,13 +48,8 @@ export function closePanel(renderFn) {
 }
 
 function benchToolForPart(p) {
-  const nm = `${p.name || ''} ${p.subtitle || ''}`.toLowerCase();
   if (p.pinout_svg) return `part:${p.id}`;
-  if (nm.includes('esp32-c3')) return 'c3';
-  if (nm.includes('esp32') || nm.includes('esp-32')) return 'esp32';
-  if (nm.includes('pico') || nm.includes('rp2350') || nm.includes('rp2040')) return 'pico2';
-  if (nm.includes('uno') || nm.includes('atmega328')) return 'uno';
-  return '';
+  return matchBuiltinBoard(`${p.name || ''} ${p.subtitle || ''}`);
 }
 
 export function renderPartInspector(id) {

@@ -22,6 +22,7 @@ import {
   openChecksOfProject,
   nextStepOfProject,
 } from '../rules.js';
+import { builtinBoardUsbSide } from './bench.js';
 
 const STATUS_META = {
   danger: ['var(--danger)', 'Wiring problem'],
@@ -415,13 +416,8 @@ function layoutProject(proj) {
   const H = Math.max(320, ...boxes.map((b) => b.y + b.h)) + 70;
   const Wd = Math.max(periphX + PW + 60, ...boxes.map((b) => b.x + b.w + 60));
   const mcuItem = resolveProjectItem(proj, mcuRef);
-  const mcuName = String((mcuItem && (mcuItem.fullName || mcuItem.displayName)) || '').toLowerCase();
-  const usbBottom =
-    (mcuName.includes('esp32') || mcuName.includes('esp-32')) &&
-    !mcuName.includes('c3') &&
-    !mcuName.includes('mini') &&
-    !mcuName.includes('s3');
-  N[mcuRef].usb = usbBottom
+  const usbSide = builtinBoardUsbSide(mcuItem && mcuItem.src ? mcuItem.src : mcuItem);
+  N[mcuRef].usb = usbSide === 'bottom'
     ? { x: mcuX + mcuW / 2, y: N[mcuRef].y + N[mcuRef].h, side: 'b' }
     : { x: mcuX + mcuW / 2, y: N[mcuRef].y, side: 't' };
   return { N, nets, W: Wd, H, mcuRef };

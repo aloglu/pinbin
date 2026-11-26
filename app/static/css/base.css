@@ -497,11 +497,12 @@ code {
 .work { min-width: 0; padding: 14px max(16px, env(safe-area-inset-left, 0px)) 48px; }
 .pagehead {
   display: flex;
-  align-items: flex-end;
+  align-items: baseline;
   gap: 10px 16px;
   flex-wrap: wrap;
   margin-bottom: 16px;
 }
+.pagehead > .btn, .pagehead > .shop-head-acts { align-self: center; }
 .pagehead .sub { color: var(--ink-2); }
 .sh { display: flex; align-items: baseline; gap: 8px; margin: 22px 0 10px; }
 .sh:first-child { margin-top: 0; }
