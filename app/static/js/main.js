@@ -15,6 +15,7 @@ import {
   toast,
 } from './state.js';
 import { closePanel, renderPartInspector, renderShoppingInspector } from './inspectors.js';
+import { reservedStockOfPart } from './rules.js';
 import { renderInventoryView } from './views/inventory.js';
 import { sbStick, sbOpen, jumpToSection, initEditScrollSpy, disconnectEditScrollSpy } from './secbar.js';
 import {
@@ -503,6 +504,14 @@ async function stepPartQty(id, delta) {
   document.querySelectorAll(`[data-sel="part:${CSS.escape(id)}"] .qty`).forEach((q) => {
     q.textContent = `×${next}`;
   });
+  const st = reservedStockOfPart(id);
+  document.querySelectorAll(`[data-sel="part:${CSS.escape(id)}"] .free`).forEach((el) => {
+    el.textContent = `${st.free} free`;
+    el.classList.toggle('zero', st.free === 0);
+  });
+  if (state.sel === `part:${id}` && document.querySelector('.insp.float')) {
+    updateFloatingInspector(false);
+  }
   try {
     const updated = await api.patchPart(id, { quantity: next });
     Object.assign(p, updated);
@@ -559,6 +568,106 @@ async function moveToInventory(itemId) {
   }
 }
 
+async function restockPart(partId) {
+  if (isGuest()) return;
+  const p = partById(partId);
+  if (!p) return;
+  const normName = String(p.name || '').trim().toLowerCase();
+  const normUrl = String(p.source_url || '').trim().toLowerCase();
+  const existing = (state.shopping || []).find((s) => {
+    if ((s.status || 'order') !== 'order') return false;
+    if (normUrl && String(s.url || '').trim().toLowerCase() === normUrl) return true;
+    return normName && String(s.name || '').trim().toLowerCase() === normName;
+  });
+  try {
+    if (existing) {
+      const prevQty = Number(existing.quantity || 1);
+      const updated = await api.patchShoppingItem(existing.id, { quantity: prevQty + 1 });
+      const idx = state.shopping.findIndex((s) => s.id === existing.id);
+      if (idx >= 0) state.shopping[idx] = updated;
+      render();
+      toast(`Added +1 to ${updated.name} in Shopping`, async () => {
+        try {
+          const restored = await api.patchShoppingItem(existing.id, { quantity: prevQty });
+          const i2 = state.shopping.findIndex((s) => s.id === existing.id);
+          if (i2 >= 0) state.shopping[i2] = restored;
+          render();
+        } catch (err) {
+          toast(err.message);
+        }
+      });
+      return;
+    }
+    const created = await api.createShoppingItem({
+      name: p.name,
+      category: p.category || 'Sensors',
+      quantity: 1,
+      url: p.source_url || '',
+      image_path: p.image_path || '',
+      electrical_facts: p.electrical_facts || {},
+      care_notes: p.care_notes || [],
+      why_needed: 'Restock',
+    });
+    state.shopping.unshift(created);
+    render();
+    toast(`Added ${created.name} to Shopping`, async () => {
+      try {
+        await api.deleteShoppingItem(created.id);
+        state.shopping = state.shopping.filter((s) => s.id !== created.id);
+        render();
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function applyBatchBin(partIds, rawBin) {
+  if (isGuest()) return;
+  const ids = [...new Set((partIds || []).filter(Boolean))];
+  if (!ids.length) return;
+  const binClean = String(rawBin || '').trim().slice(0, 32);
+  const prevByBin = new Map();
+  for (const id of ids) {
+    const p = partById(id);
+    if (!p) continue;
+    const oldLoc = String(p.location || '').trim();
+    if (!prevByBin.has(oldLoc)) prevByBin.set(oldLoc, []);
+    prevByBin.get(oldLoc).push(id);
+  }
+  try {
+    const res = await api.batchAssignBin(ids, binClean);
+    const byId = new Map((res.parts || []).map((p) => [p.id, p]));
+    state.parts = state.parts.map((p) => byId.get(p.id) || p);
+    state.inv.picked = [];
+    if (state.inv.noBin && binClean && !state.parts.some((p) => !(p.location || '').trim())) {
+      state.inv.noBin = false;
+    }
+    render();
+    const n = res.updated_count || ids.length;
+    const msg = binClean
+      ? `Moved ${n} part${n === 1 ? '' : 's'} to bin ${binClean}`
+      : `Cleared bin on ${n} part${n === 1 ? '' : 's'}`;
+    toast(msg, async () => {
+      try {
+        const restoredMap = new Map();
+        for (const [oldLoc, grpIds] of prevByBin.entries()) {
+          const r2 = await api.batchAssignBin(grpIds, oldLoc);
+          (r2.parts || []).forEach((p) => restoredMap.set(p.id, p));
+        }
+        state.parts = state.parts.map((p) => restoredMap.get(p.id) || p);
+        render();
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 // Click delegation
 document.addEventListener('click', (e) => {
   const tgt = e.target;
@@ -581,6 +690,7 @@ document.addEventListener('click', (e) => {
     } else if (kind === 'bench') {
       state.bench.tool = key;
       state.bench.pin = '';
+      state.bench.pinf = '';
       render();
       window.scrollTo(0, 0);
     } else if (kind === 'set') {
@@ -1145,6 +1255,29 @@ document.addEventListener('click', (e) => {
     moveToInventory(moveBtn.dataset.moveInv);
     return;
   }
+  const restockBtn = tgt.closest('[data-restock]');
+  if (restockBtn) {
+    e.stopPropagation();
+    restockPart(restockBtn.dataset.restock);
+    return;
+  }
+
+  // Batch bin assignment selection & quick bin buttons
+  const pickPartEl = tgt.closest('[data-pickpart]');
+  if (pickPartEl) {
+    if (isGuest()) return;
+    const pid = pickPartEl.dataset.pickpart;
+    const cur = state.inv.picked || [];
+    state.inv.picked = cur.includes(pid) ? cur.filter((x) => x !== pid) : [...cur, pid];
+    render();
+    return;
+  }
+  const batchBinBtn = tgt.closest('[data-batchbin]');
+  if (batchBinBtn) {
+    if (isGuest() || batchBinBtn.disabled) return;
+    applyBatchBin(state.inv.picked, batchBinBtn.dataset.batchbin);
+    return;
+  }
 
   // Select part, shopping item, or project map node/net/warn (update inspector in place!)
   const selEl = tgt.closest('[data-sel]');
@@ -1196,6 +1329,7 @@ document.addEventListener('click', (e) => {
       state.inv.q = '';
       state.inv.cat = 'All';
       state.inv.binFilter = '';
+      state.inv.noBin = false;
       if (location.search) history.replaceState(null, '', location.pathname);
       render();
       return;
@@ -1203,6 +1337,35 @@ document.addEventListener('click', (e) => {
     if (act === 'clearbin') {
       state.inv.binFilter = '';
       if (location.search) history.replaceState(null, '', location.pathname);
+      render();
+      return;
+    }
+    if (act === 'toggle-nobin') {
+      state.inv.noBin = !state.inv.noBin;
+      if (state.inv.noBin && state.inv.binFilter) {
+        state.inv.binFilter = '';
+        if (location.search) history.replaceState(null, '', location.pathname);
+      }
+      render();
+      return;
+    }
+    if (act === 'binmode') {
+      if (isGuest()) return;
+      state.inv.binMode = !state.inv.binMode;
+      state.inv.picked = [];
+      if (state.inv.binMode) state.sel = null;
+      render();
+      return;
+    }
+    if (act === 'pick-all') {
+      if (isGuest()) return;
+      const visIds = [...document.querySelectorAll('[data-pickpart]')].map((el) => el.dataset.pickpart);
+      state.inv.picked = [...new Set([...(state.inv.picked || []), ...visIds])];
+      render();
+      return;
+    }
+    if (act === 'pick-none') {
+      state.inv.picked = [];
       render();
       return;
     }
@@ -1272,6 +1435,7 @@ document.addEventListener('click', (e) => {
   if (goTool) {
     state.bench.tool = goTool.dataset.gotool;
     state.bench.pin = '';
+    state.bench.pinf = '';
     navigate('/bench');
     return;
   }
@@ -1281,6 +1445,14 @@ document.addEventListener('click', (e) => {
   if (toolBtn) {
     state.bench.tool = toolBtn.dataset.tool;
     state.bench.pin = '';
+    state.bench.pinf = '';
+    render();
+    return;
+  }
+  const pinfBtn = tgt.closest('[data-pinf]');
+  if (pinfBtn) {
+    const val = pinfBtn.dataset.pinf || '';
+    state.bench.pinf = state.bench.pinf === val ? '' : val;
     render();
     return;
   }
@@ -1595,6 +1767,14 @@ document.addEventListener('submit', (e) => {
     render();
     return;
   }
+  if (e.target.matches('[data-batchbin-form]')) {
+    e.preventDefault();
+    if (isGuest()) return;
+    const raw = (e.target.bin && e.target.bin.value ? e.target.bin.value : '').trim();
+    if (!raw) return;
+    applyBatchBin(state.inv.picked, raw);
+    return;
+  }
   if (e.target.matches('[data-renform]')) {
     e.preventDefault();
     const oldBin = e.target.dataset.renform;
@@ -1872,6 +2052,12 @@ document.addEventListener('keydown', (e) => {
       setMenuOpen(null);
       return;
     }
+    if (state.inv.binMode) {
+      state.inv.binMode = false;
+      state.inv.picked = [];
+      render();
+      return;
+    }
     if (state.sel) {
       if (document.querySelector('.insp.float')) closePanel(() => updateFloatingInspector(false));
       else {
@@ -1893,7 +2079,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (
     (e.key === 'Enter' || e.key === ' ') &&
-    e.target.matches('[role="button"][data-sel], [role="button"][data-pin], [role="button"][data-dial]')
+    e.target.matches('[role="button"][data-sel], [role="button"][data-pickpart], [role="button"][data-pin], [role="button"][data-dial]')
   ) {
     e.preventDefault();
     e.target.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1902,6 +2088,10 @@ document.addEventListener('keydown', (e) => {
 
 function onRouteChange() {
   const r = route();
+  if (r !== 'inventory') {
+    state.inv.binMode = false;
+    state.inv.picked = [];
+  }
   if (r !== 'new-part' && !r.startsWith('edit-part-')) {
     clearPartDraft();
   } else if (state.partDraft) {

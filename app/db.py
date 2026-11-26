@@ -833,6 +833,15 @@ def _normalize_electrical_facts(raw: Any) -> dict[str, Any]:
     if glyph and re.match(r"^[a-z0-9_-]+$", glyph):
         clean["glyph"] = glyph
 
+    for num_key, max_val in (("ma", 20000.0), ("reg_ma", 10000.0), ("mah", 100000.0)):
+        if raw.get(num_key) not in (None, ""):
+            try:
+                nv = float(raw[num_key])
+                if math.isfinite(nv) and 0 < nv <= max_val:
+                    clean[num_key] = round(nv, 2)
+            except (TypeError, ValueError):
+                pass
+
     return clean
 
 
@@ -1105,6 +1114,47 @@ def rename_bin(db_path: Path, old_bin: str, new_bin: str) -> int:
                 (new_clean, now, old_clean),
             )
             return cur.rowcount
+
+
+def batch_assign_bin(db_path: Path, part_ids: list[str], location: str) -> list[dict[str, Any]]:
+    ids = list(dict.fromkeys(str(pid or "").strip() for pid in (part_ids or []) if str(pid or "").strip()))
+    if not ids:
+        raise ValueError("At least one part ID is required")
+    if len(ids) > 200:
+        raise ValueError("At most 200 parts can be updated at once")
+    loc_clean = str(location or "").strip()[:32]
+    now = utc_now_iso()
+    placeholders = ",".join("?" for _ in ids)
+    with db_lock:
+        with get_connection(db_path) as conn:
+            conn.execute(
+                f"UPDATE parts SET location = ?, updated_at = ? WHERE id IN ({placeholders})",
+                [loc_clean, now, *ids],
+            )
+            rows = conn.execute(
+                f"SELECT * FROM parts WHERE id IN ({placeholders})",
+                ids,
+            ).fetchall()
+            return [_row_to_dict(r) for r in rows]
+
+
+def is_image_referenced(db_path: Path, filename: str) -> bool:
+    fn = str(filename or "").strip()
+    if not fn:
+        return False
+    with db_lock:
+        with get_connection(db_path) as conn:
+            hit = conn.execute(
+                "SELECT 1 FROM parts WHERE image_path = ? OR pinout_image_path = ? LIMIT 1",
+                (fn, fn),
+            ).fetchone()
+            if hit:
+                return True
+            hit2 = conn.execute(
+                "SELECT 1 FROM shopping_items WHERE image_path = ? LIMIT 1",
+                (fn,),
+            ).fetchone()
+            return bool(hit2)
 
 
 def delete_part(db_path: Path, part_id: str) -> dict[str, Any] | None:

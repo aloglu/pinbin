@@ -23,6 +23,22 @@
 .tool-sub { font-size: 13px; font-weight: var(--w-strong); margin: 18px 0 8px; }
 
 /* Pinout & figure framing */
+.pinf {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.pinf .tag.f {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  font-size: 12.5px;
+}
+.pinf .fc { font: 500 11px var(--mono); opacity: .72; }
 .pinout { margin: 0; display: grid; gap: 10px; }
 .pinout-art, .tool-fig {
   background: var(--raised);
@@ -41,7 +57,15 @@
   margin: 0 auto;
 }
 .pinout-art svg.compact { display: none; }
-.pinout-art .bp { cursor: pointer; outline: none; }
+.pinout-art .bp { cursor: pointer; outline: none; transition: opacity .15s; }
+.pinout-art svg.filtering .bp:not(.match):not(.on) { opacity: .22; }
+.pinout-art svg.filtering .bp.match:not(.on) .bp-pill {
+  fill: color-mix(in srgb, var(--pc) 10%, var(--raised));
+  stroke: color-mix(in srgb, var(--pc) 34%, var(--line));
+}
+.pinout-art svg.filtering .bp.match:not(.on) .bp-pad {
+  fill: color-mix(in srgb, var(--pc) 20%, var(--raised));
+}
 .pinout-art .bp-pill { fill: transparent; stroke: transparent; stroke-width: 1; transition: fill .14s, stroke .14s; }
 .pinout-art .bp:hover:not(.on) .bp-pill { fill: var(--hover); }
 .pinout-art .bp:hover:not(.on) .bp-pad { fill: color-mix(in srgb, var(--pc) 16%, var(--raised)); }

@@ -45,6 +45,9 @@ const SECT_MAP = {
   vmax: 'facts',
   io: 'facts',
   i2c: 'facts',
+  ma: 'facts',
+  reg_ma: 'facts',
+  mah: 'facts',
   outs: 'facts',
   what: 'about',
   visual_tell: 'about',
@@ -105,6 +108,9 @@ export function startPartEdit(partId) {
     vmax: Array.isArray(f.vin) ? String(f.vin[1]) : '',
     io: f.io != null ? String(f.io) : '',
     i2c: f.i2c || '',
+    ma: f.ma != null ? String(f.ma) : '',
+    reg_ma: f.reg_ma != null ? String(f.reg_ma) : '',
+    mah: f.mah != null ? String(f.mah) : '',
     outs: f.out ? Object.entries(f.out).map(([k, v]) => [k, String(v)]) : [],
     what: p ? p.what_it_does || '' : '',
     visual_tell: p ? p.visual_tell || '' : '',
@@ -185,6 +191,9 @@ export function buildElectricalFacts(d) {
   delete base.vin;
   delete base.io;
   delete base.i2c;
+  delete base.ma;
+  delete base.reg_ma;
+  delete base.mah;
   delete base.out;
 
   if (d.logic) base.logic = d.logic;
@@ -201,6 +210,18 @@ export function buildElectricalFacts(d) {
   const cleanI2c = String(d.i2c || '').trim();
   if (cleanI2c && /^0x[0-9a-f]{2}$/i.test(cleanI2c)) {
     base.i2c = `0x${cleanI2c.slice(2).toUpperCase()}`;
+  }
+  if (d.ma !== '') {
+    const ma = Number(d.ma);
+    if (Number.isFinite(ma) && ma > 0 && ma <= 20000) base.ma = ma;
+  }
+  if (d.cat === 'Microcontrollers' && d.reg_ma !== '') {
+    const rma = Number(d.reg_ma);
+    if (Number.isFinite(rma) && rma > 0 && rma <= 10000) base.reg_ma = rma;
+  }
+  if (d.cat !== 'Microcontrollers' && d.mah !== '') {
+    const mah = Number(d.mah);
+    if (Number.isFinite(mah) && mah > 0 && mah <= 100000) base.mah = mah;
   }
   const outs = (d.outs || []).filter(([pin, v]) => String(pin || '').trim() && v !== '' && Number.isFinite(Number(v)));
   if (outs.length) {
@@ -225,6 +246,15 @@ export function validatePartDraft(d) {
     }
     if (d.i2c && !/^0x[0-9a-f]{2}$/i.test(String(d.i2c).trim())) {
       e.i2c = 'Write it like 0x3C.';
+    }
+    if (d.ma !== '' && (!Number.isFinite(Number(d.ma)) || Number(d.ma) <= 0 || Number(d.ma) > 20000)) {
+      e.ma = 'Between 1 and 20000 mA.';
+    }
+    if (d.cat === 'Microcontrollers' && d.reg_ma !== '' && (!Number.isFinite(Number(d.reg_ma)) || Number(d.reg_ma) <= 0 || Number(d.reg_ma) > 10000)) {
+      e.reg_ma = 'Usually 50 to 1000 mA.';
+    }
+    if (d.cat !== 'Microcontrollers' && d.mah !== '' && (!Number.isFinite(Number(d.mah)) || Number(d.mah) <= 0 || Number(d.mah) > 100000)) {
+      e.mah = 'Between 1 and 100000 mAh.';
     }
   }
   return e;
@@ -505,6 +535,14 @@ export function renderPartEditView(partId) {
                 isBoard
                   ? fNum('io', 'Pin limit', d.io, 'V', 'e.g. 3.6', 'The most its pins take')
                   : fIn('i2c', 'I2C address', d.i2c, 'e.g. 0x3C', d.ifaces.includes('I2C') ? '' : 'Only for I2C parts')
+              }
+            </div>
+            <div class="egrid2">
+              ${fNum('ma', 'Current draw', d.ma, 'mA', 'e.g. 25', 'Typical or peak draw for power checks')}
+              ${
+                isBoard
+                  ? fNum('reg_ma', '3.3 V rail limit', d.reg_ma, 'mA', 'e.g. 500', 'Optional on-board regulator max')
+                  : fNum('mah', 'Battery capacity', d.mah, 'mAh', 'e.g. 1000', 'Only for batteries or power packs')
               }
             </div>
             <div class="ef">

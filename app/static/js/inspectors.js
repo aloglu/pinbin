@@ -20,7 +20,7 @@ import {
   apiUrl,
   svgDataUrl,
 } from './state.js';
-import { computeRelations, relHtml, careHtml, glossaryTermsFor, warningsOfProject } from './rules.js';
+import { computeRelations, relHtml, careHtml, glossaryTermsFor, warningsOfProject, reservedStockOfPart } from './rules.js';
 import { matchBuiltinBoard } from './views/bench.js';
 
 let closeTimer = null;
@@ -80,6 +80,9 @@ export function renderPartInspector(id) {
     f.vin && ['Supply', `${f.vin[0]}–${f.vin[1]} V`],
     f.io && ['Pin limit', `${f.io} V`],
     f.i2c && ['I2C address', f.i2c],
+    f.ma && ['Current draw', `${f.ma} mA`],
+    f.reg_ma && ['3.3 V limit', `${f.reg_ma} mA`],
+    f.mah && ['Capacity', `${f.mah} mAh`],
     f.out && Object.keys(f.out).length && [
       'Signal out',
       Object.entries(f.out)
@@ -106,6 +109,12 @@ export function renderPartInspector(id) {
   const benchTool = benchToolForPart(p);
 
   const guest = isGuest();
+  const stock = reservedStockOfPart(id);
+  const needsRestock =
+    !guest &&
+    (p.quantity === 0 ||
+      stock.free === 0 ||
+      (p.low_stock_threshold != null && p.quantity <= p.low_stock_threshold));
   let pinoutInner = '';
   if (p.pinout_svg) {
     const svgSrc = svgDataUrl(p.pinout_svg);
@@ -137,6 +146,18 @@ export function renderPartInspector(id) {
       <div class="qtyrow">
         <span class="dim">${guest ? 'In stock' : 'You own'}</span>
         ${guest ? `<span class="mono">×${p.quantity}</span>` : stepHtml('data-qty', p.id, p.quantity, 'You own')}
+        ${
+          stock.reserved > 0
+            ? `<span class="stock-sub ${stock.free === 0 ? 'zero' : 'faint'}">${
+                stock.short > 0 ? `short ${stock.short} · ` : ''
+              }${stock.free} free · ${stock.reserved} in projects</span>`
+            : ''
+        }
+        ${
+          needsRestock
+            ? `<button class="btn restock-btn" type="button" data-restock="${esc(p.id)}">Restock</button>`
+            : ''
+        }
       </div>
     </div>
 
@@ -210,6 +231,7 @@ export function renderPartInspector(id) {
 
     <div class="sec" style="display:flex;gap:6px;flex-wrap:wrap">
       ${guest ? '' : `<a class="btn" href="${appHref(`/parts/${encodeURIComponent(id)}/edit`)}">Edit part</a>`}
+      ${guest || needsRestock ? '' : `<button class="btn" type="button" data-restock="${esc(p.id)}">Add to shopping</button>`}
       <button class="btn quiet" type="button" data-act="clear">Close</button>
     </div>
   </div></div>`;

@@ -40,6 +40,7 @@ from app.db import (
     get_mcp_runtime_settings,
     get_part,
     get_shopping_item,
+    is_image_referenced,
     list_glossary,
     list_parts,
     list_projects,
@@ -84,8 +85,8 @@ SERVER_INSTRUCTIONS = (
     "exact board's top-view pinout (chip facing up) and component datasheets before calling set_project_wiring, set_project_checks, "
     "or writing electrical_facts/pinout_svg. If a detail (like a seller's exact pin order or module revision) cannot be confirmed, "
     "explicitly label it as unverified and add a safety check telling the user to inspect the board silkscreen first. "
-    "Fill in verified electrical_facts (logic, interfaces, vin, io, i2c, out, vout, strap, wake, power) and care_notes "
-    "([{severity: 'danger'|'check'|'info', text}]) on parts and shopping items so Pinbin's built-in compatibility checks run automatically. "
+    "Fill in verified electrical_facts (logic, interfaces, vin, io, i2c, out, vout, ma, reg_ma, mah, strap, wake, power) and care_notes "
+    "([{severity: 'danger'|'check'|'info', text}]) on parts and shopping items so Pinbin's built-in compatibility and power-budget checks run automatically. "
     "You can attach part photos via image_url, pinout photos via pinout_image_url, and verified top-view board diagrams via pinout_svg. "
     "For projects, write wiring connections using set_project_wiring (and resolve every issue returned in verification_report) "
     "and beginner safety checks using set_project_checks. "
@@ -192,9 +193,10 @@ def _electrical_facts_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "description": (
-            "Structured electrical facts used by built-in safety checks: "
+            "Structured electrical facts used by built-in safety and power-budget checks: "
             "{logic: 'v33'|'v5'|'vboth'|'none', interfaces: ['I2C','SPI',...], vin: [minV, maxV], "
-            "io: maxPinV, i2c: '0x3C', out: {'ECHO': 5}, vout: 4.2, strap: ['GPIO0'], wake: ['GPIO0'], "
+            "io: maxPinV, i2c: '0x3C', out: {'ECHO': 5}, vout: 4.2, ma: typicalOrPeakMa, "
+            "reg_ma: board3v3RegulatorMaxMa, mah: batteryCapacityMah, strap: ['GPIO0'], wake: ['GPIO0'], "
             "power: {'VIN': [4.5, 12]}, pairs: ['part-id'], glyph: 'mcu'}."
         ),
     }
@@ -1505,9 +1507,11 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
                 safe_delete_image(new_pin_img, settings.images_dir)
             raise McpToolError(f"Part not found: {part_id}")
         if new_main_img and existing.get("image_path") and existing["image_path"] != new_main_img:
-            safe_delete_image(existing["image_path"], settings.images_dir)
+            if not is_image_referenced(settings.db_path, existing["image_path"]):
+                safe_delete_image(existing["image_path"], settings.images_dir)
         if new_pin_img and existing.get("pinout_image_path") and existing["pinout_image_path"] != new_pin_img:
-            safe_delete_image(existing["pinout_image_path"], settings.images_dir)
+            if not is_image_referenced(settings.db_path, existing["pinout_image_path"]):
+                safe_delete_image(existing["pinout_image_path"], settings.images_dir)
         record_mcp_request(settings.db_path, name, "Inventory", f"Updated {updated['name']}")
         return _strip_internal_image_paths(updated)
 
@@ -1549,8 +1553,9 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         deleted = delete_part(settings.db_path, part_id)
         if deleted is None:
             raise McpToolError(f"Part not found: {part_id}")
-        safe_delete_image(deleted.get("image_path", ""), settings.images_dir)
-        safe_delete_image(deleted.get("pinout_image_path", ""), settings.images_dir)
+        for img_fn in (deleted.get("image_path", ""), deleted.get("pinout_image_path", "")):
+            if img_fn and not is_image_referenced(settings.db_path, img_fn):
+                safe_delete_image(img_fn, settings.images_dir)
         record_mcp_request(settings.db_path, name, "Inventory", f"Removed {deleted.get('name', 'part')}")
         return {"status": "deleted", "id": part_id, "name": deleted.get("name", "")}
 
@@ -1811,7 +1816,8 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
                 safe_delete_image(new_img, settings.images_dir)
             raise McpToolError(f"Shopping item not found: {item_id}")
         if new_img and old_img and old_img != new_img:
-            safe_delete_image(old_img, settings.images_dir)
+            if not is_image_referenced(settings.db_path, old_img):
+                safe_delete_image(old_img, settings.images_dir)
         updated["has_photo"] = bool((updated.pop("image_path", "") or "").strip())
         return updated
 
@@ -1822,7 +1828,9 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         deleted = delete_shopping_item(settings.db_path, item_id)
         if deleted is None:
             raise McpToolError(f"Shopping item not found: {item_id}")
-        safe_delete_image(deleted.get("image_path", ""), settings.images_dir)
+        del_img = deleted.get("image_path", "")
+        if del_img and not is_image_referenced(settings.db_path, del_img):
+            safe_delete_image(del_img, settings.images_dir)
         return {"status": "deleted", "id": item_id, "name": deleted.get("name", "")}
 
     if name == "add_shopping_offer":

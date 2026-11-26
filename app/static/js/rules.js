@@ -1,7 +1,55 @@
 // Built-in electrical compatibility rules and project readiness helpers.
 import { state, partById, shoppingById, esc, termButton, sevGlyph, parsePriceNumber, money, currencyLabel, appHref } from './state.js';
+import { builtinBoardRegMa } from './views/bench.js';
 
 const boards = () => state.parts.filter((p) => p.category === 'Microcontrollers');
+
+/**
+ * Compute owned vs. reserved stock for a part across active (non-archived) projects.
+ */
+export function reservedStockOfPart(partId) {
+  const p = partById(partId);
+  const owned = p ? Math.max(0, Number(p.quantity) || 0) : 0;
+  let reserved = 0;
+  let projectCount = 0;
+  for (const pr of state.projects || []) {
+    if (pr.archived) continue;
+    let inProj = 0;
+    for (const q of pr.items || []) {
+      if (q.part_id === partId) {
+        inProj += Math.max(1, Number(q.quantity_needed) || 1);
+      }
+    }
+    if (inProj > 0) {
+      reserved += inProj;
+      projectCount += 1;
+    }
+  }
+  const free = Math.max(0, owned - reserved);
+  const short = Math.max(0, reserved - owned);
+  return { owned, reserved, free, short, projectCount };
+}
+
+/**
+ * Estimate total current draw (mA) and optional battery runtime for a project.
+ */
+export function computePowerBudget(proj) {
+  if (!proj) return { totalMa: 0, batteryMah: 0, estHours: null };
+  let totalMa = 0;
+  let batteryMah = 0;
+  for (const it of proj.items || []) {
+    const rec = resolveProjectItem(proj, it.ref);
+    const f = (rec && rec.facts) || {};
+    const qty = Math.max(1, Number(it.quantity_needed) || 1);
+    const ma = Number(f.ma);
+    if (Number.isFinite(ma) && ma > 0) totalMa += ma * qty;
+    const mah = Number(f.mah);
+    if (Number.isFinite(mah) && mah > batteryMah) batteryMah = mah;
+  }
+  const estHours =
+    batteryMah > 0 && totalMa > 0 ? Math.max(0.1, Math.round(((batteryMah * 0.85) / totalMa) * 10) / 10) : null;
+  return { totalMa: Math.round(totalMa * 10) / 10, batteryMah, estHours };
+}
 
 /**
  * Compute compatibility relationships between a part/shopping item and owned inventory.
@@ -224,6 +272,67 @@ export function runProjectRules(proj) {
           t: `Everything on the ${n.rail} V rail accepts ${n.rail} V.`,
           b: good.map(([x, vin]) => `${esc(x.displayName)}: ${vin[0]}–${vin[1]} V`).join(' · '),
         });
+      }
+
+      // Rail-load current budget check (when parts declare electrical_facts.ma)
+      const seenRefs = new Set();
+      const loadParts = [];
+      let railMa = 0;
+      for (const [r] of conns) {
+        if (r === mcu.ref || seenRefs.has(r)) continue;
+        seenRefs.add(r);
+        const x = resolveProjectItem(proj, r);
+        const ma = Number(x && x.facts && x.facts.ma);
+        if (Number.isFinite(ma) && ma > 0) {
+          const qty = Math.max(1, Number(x.quantity_needed) || 1);
+          const draw = Math.round(ma * qty * 10) / 10;
+          loadParts.push([x, draw]);
+          railMa += draw;
+        }
+      }
+      if (railMa > 0) {
+        const roundedMa = Math.round(railMa);
+        const breakdown = loadParts.map(([x, ma]) => `${esc(x.displayName)} ~${ma} mA`).join(' · ');
+        const nodesOnRail = loadParts.map(([x]) => x.ref);
+        if (n.rail <= 3.6) {
+          const regMax = Number(mf.reg_ma) || builtinBoardRegMa(mcu.src || mcu);
+          if (regMax) {
+            const pct = Math.round((railMa / regMax) * 100);
+            if (railMa > regMax) {
+              add({
+                id: `r-pwr-${n.id}`,
+                sev: 'danger',
+                on: { nets: [n.id], nodes: nodesOnRail },
+                t: `The ${n.rail} V rail draws ~${roundedMa} mA, above ${esc(mcu.displayName)}’s ${regMax} mA regulator limit.`,
+                b: `${breakdown}. Power heavy parts from a separate regulator or 5 V supply.`,
+              });
+            } else if (railMa >= regMax * 0.8) {
+              add({
+                id: `r-pwr-${n.id}`,
+                sev: 'check',
+                on: { nets: [n.id], nodes: nodesOnRail },
+                t: `The ${n.rail} V rail draws ~${roundedMa} mA (${pct}% of ${regMax} mA limit).`,
+                b: `${breakdown}. Leave headroom for peak current spikes.`,
+              });
+            } else {
+              add({
+                id: `r-pwr-${n.id}`,
+                sev: 'ok',
+                on: { nets: [n.id] },
+                t: `The ${n.rail} V rail draws ~${roundedMa} mA (under ${regMax} mA limit).`,
+                b: `${breakdown}.`,
+              });
+            }
+          }
+        } else if (n.rail >= 4.5 && n.rail <= 5.5 && railMa > 500) {
+          add({
+            id: `r-pwr-${n.id}`,
+            sev: 'check',
+            on: { nets: [n.id], nodes: nodesOnRail },
+            t: `The ${n.rail} V rail draws ~${roundedMa} mA (over a 500 mA USB port).`,
+            b: `${breakdown}. Use a dedicated 5 V power supply instead of a computer USB port.`,
+          });
+        }
       }
     }
 

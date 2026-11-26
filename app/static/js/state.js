@@ -143,6 +143,7 @@ export const state = {
   bench: {
     tool: '',
     pin: '',
+    pinf: '',
     bb: 'mini',
     bbHot: '',
     res: [2, 4, 2],
@@ -170,6 +171,9 @@ export const state = {
     sort: 'recent',
     view: 'grid',
     binFilter: '',    // from /?bin=... QR links
+    noBin: false,
+    binMode: false,
+    picked: [],
   },
   panelWasOpen: false,
   panelClosing: false,

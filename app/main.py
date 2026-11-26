@@ -24,6 +24,7 @@ from app.db import (
     GUEST_COOKIE_NAME,
     add_project_item,
     add_shopping_offer,
+    batch_assign_bin,
     bulk_update_shopping_status_by_store,
     create_glossary_term,
     create_part,
@@ -45,6 +46,7 @@ from app.db import (
     get_ui_settings,
     import_parts_from_rows,
     init_db,
+    is_image_referenced,
     issue_guest_session_cookie_value,
     list_glossary,
     list_mcp_activity,
@@ -139,6 +141,11 @@ class PartPatch(BaseModel):
 class BinRenameRequest(BaseModel):
     old_bin: str = Field(..., min_length=1, max_length=64)
     new_bin: str = Field(..., min_length=1, max_length=64)
+
+
+class BatchBinAssignRequest(BaseModel):
+    part_ids: list[str] = Field(..., min_length=1, max_length=200)
+    location: str = Field(default="", max_length=64)
 
 
 class ScrapeRequest(BaseModel):
@@ -387,6 +394,10 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     application.state.settings = settings
     application.add_middleware(CloudflareAccessMiddleware, settings=settings)
+
+    def _delete_image_if_unreferenced(filename: str) -> None:
+        if filename and not is_image_referenced(settings.db_path, filename):
+            safe_delete_image(filename, settings.images_dir)
 
     # Static assets (owner + isolated guest prefix)
     application.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -832,7 +843,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             old_img = existing.get("image_path") or ""
             new_img = updated.get("image_path") or ""
             if old_img and old_img != new_img:
-                safe_delete_image(old_img, settings.images_dir)
+                _delete_image_if_unreferenced(old_img)
         return updated
 
     @application.delete("/api/shopping/{item_id}")
@@ -840,7 +851,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         deleted = delete_shopping_item(settings.db_path, item_id)
         if deleted is None:
             raise HTTPException(status_code=404, detail="Shopping item not found")
-        safe_delete_image(deleted.get("image_path", ""), settings.images_dir)
+        _delete_image_if_unreferenced(deleted.get("image_path", ""))
         return {"status": "deleted", "id": item_id}
 
     @application.post("/api/shopping/{item_id}/move-to-inventory")
@@ -1091,6 +1102,19 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             status = exc.status_code if isinstance(exc, ImageError) else 400
             raise HTTPException(status_code=status, detail=str(exc)) from exc
 
+    @application.post("/api/parts/batch-bin")
+    async def api_batch_assign_bin(payload: BatchBinAssignRequest) -> dict[str, Any]:
+        try:
+            updated = batch_assign_bin(settings.db_path, payload.part_ids, payload.location)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "status": "ok",
+            "location": payload.location.strip()[:32],
+            "updated_count": len(updated),
+            "parts": updated,
+        }
+
     @application.patch("/api/parts/{part_id}")
     async def api_patch_part(part_id: str, payload: PartPatch) -> dict[str, Any]:
         updates = payload.model_dump(exclude_unset=True)
@@ -1111,7 +1135,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 old_fn = existing.get(col) or ""
                 new_fn = updated.get(col) or ""
                 if old_fn and old_fn != new_fn:
-                    safe_delete_image(old_fn, settings.images_dir)
+                    _delete_image_if_unreferenced(old_fn)
         return updated
 
     @application.delete("/api/parts/{part_id}")
@@ -1119,8 +1143,8 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         deleted = delete_part(settings.db_path, part_id)
         if deleted is None:
             raise HTTPException(status_code=404, detail="Part not found")
-        safe_delete_image(deleted.get("image_path", ""), settings.images_dir)
-        safe_delete_image(deleted.get("pinout_image_path", ""), settings.images_dir)
+        _delete_image_if_unreferenced(deleted.get("image_path", ""))
+        _delete_image_if_unreferenced(deleted.get("pinout_image_path", ""))
         return {"status": "deleted", "id": part_id}
 
     @application.post("/api/parts/{part_id}/photo")
@@ -1155,7 +1179,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             safe_delete_image(filename, settings.images_dir)
             raise HTTPException(status_code=404, detail="Part not found")
         if old_filename and old_filename != filename:
-            safe_delete_image(old_filename, settings.images_dir)
+            _delete_image_if_unreferenced(old_filename)
         return updated
 
     @application.delete("/api/parts/{part_id}/photo")
@@ -1177,7 +1201,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         if updated is None:
             raise HTTPException(status_code=404, detail="Part not found")
         if old_filename:
-            safe_delete_image(old_filename, settings.images_dir)
+            _delete_image_if_unreferenced(old_filename)
         return updated
 
     @application.post("/api/scrape")
@@ -1201,7 +1225,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                     patch["pinout_svg"] = ""
                 update_part(settings.db_path, payload.part_id, patch)
                 if old_filename and old_filename != result["image_path"]:
-                    safe_delete_image(old_filename, settings.images_dir)
+                    _delete_image_if_unreferenced(old_filename)
 
         return result
 

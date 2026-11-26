@@ -183,6 +183,43 @@ export function builtinBoardUsbSide(obj) {
   return 'top';
 }
 
+const BUILTIN_REG_MA = { c3: 500, esp32: 500, pico2: 300, uno: 50 };
+
+export function builtinBoardRegMa(obj) {
+  const explicit = Number(obj?.electrical_facts?.reg_ma ?? obj?.facts?.reg_ma);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const label = `${obj?.name || obj?.fullName || obj?.displayName || ''} ${obj?.subtitle || ''}`;
+  const key = matchBuiltinBoard(label);
+  return key && BUILTIN_REG_MA[key] ? BUILTIN_REG_MA[key] : null;
+}
+
+const PIN_FILTERS = [
+  ['', 'All'],
+  ['i2c', 'I2C'],
+  ['spi', 'SPI'],
+  ['uart', 'UART'],
+  ['adc', 'ADC'],
+  ['pwm', 'PWM / DAC'],
+  ['wake', 'Wake'],
+  ['strap', 'Strapping'],
+  ['power', 'Power'],
+];
+
+function pinCapabilities([nm, kind, desc]) {
+  const caps = new Set();
+  const d = String(desc || '');
+  const n = String(nm || '');
+  if (/\bi2c\b|\bsda\b|\bscl\b/i.test(d)) caps.add('i2c');
+  if (/\bspi\b|\bmosi\b|\bmiso\b|\bsck\b/i.test(d)) caps.add('spi');
+  if (/\buart\b|\btx\d?\b|\brx\d?\b|serial/i.test(d)) caps.add('uart');
+  if (/\badc\b|\banalog\b/i.test(d) || /^A\d+$/.test(n)) caps.add('adc');
+  if (/\bpwm\b|\bdac\b/i.test(d)) caps.add('pwm');
+  if (/\bwake\b/i.test(d)) caps.add('wake');
+  if (kind === 'strap' || /\bstrap/i.test(d)) caps.add('strap');
+  if (kind === 'pwr' || kind === 'v33' || kind === 'gnd') caps.add('power');
+  return caps;
+}
+
 function detectMultimeterTag() {
   const dmmPart = (state.parts || []).find((p) => {
     const hay = `${p.name || ''} ${p.subtitle || ''}`.toLowerCase();
@@ -318,15 +355,25 @@ function renderBoardTool(id, toolDef) {
   const all = [...b.L.map((p, i) => [...p, 'L', i]), ...b.R.map((p, i) => [...p, 'R', i])];
   const cur = all.find((p) => `${id}:${p[0]}:${p[3]}:${p[4]}` === state.bench.pin);
 
+  const capCounts = {};
+  for (const p of all) {
+    for (const c of pinCapabilities(p)) {
+      capCounts[c] = (capCounts[c] || 0) + 1;
+    }
+  }
+  const availFilters = PIN_FILTERS.filter(([k]) => !k || capCounts[k] > 0);
+  const activePinf = state.bench.pinf && capCounts[state.bench.pinf] ? state.bench.pinf : '';
+
   const art = (compact) => {
     const boardY = top ? 50 : 20;
     const boardH = n * 30 + 10;
     const chipY = Math.round(boardY + (boardH - 66) / 2);
-    const pin = (side, i, [nm, k]) => {
+    const pin = (side, i, [nm, k, desc]) => {
       const y = (top ? 70 : 40) + i * 30;
       const x = side === 'L' ? 150 : 330;
       const key = `${id}:${nm}:${side}:${i}`;
       const on = state.bench.pin === key;
+      const isMatch = activePinf ? pinCapabilities([nm, k, desc]).has(activePinf) : false;
       const u = usage[nm] || '';
       const leftEdge = compact ? 52 : -66;
       const rightEdge = compact ? 428 : 546;
@@ -337,7 +384,7 @@ function renderBoardTool(id, toolDef) {
       const col = PK[k][0];
       const pillW = Math.round(nm.length * 7.5 + 14);
       const pillX = side === 'L' ? 125 - pillW : 355;
-      return `<g class="bp${on ? ' on' : ''}" data-pin="${esc(key)}" style="--pc:${col}" role="button" tabindex="0" aria-label="${esc(nm)}${
+      return `<g class="bp${on ? ' on' : ''}${isMatch ? ' match' : ''}" data-pin="${esc(key)}" style="--pc:${col}" role="button" tabindex="0" aria-label="${esc(nm)}${
         u ? `: ${esc(u)}` : ''
       }">
         <rect class="bp-hit" x="${rx}" y="${y - 14}" width="${rw}" height="28" fill="transparent"/>
@@ -358,7 +405,7 @@ function renderBoardTool(id, toolDef) {
       </g>`;
     };
     const vb = compact ? `48 0 384 ${H}` : `-70 0 620 ${H}`;
-    return `<svg viewBox="${vb}" class="board2 ${compact ? 'compact' : 'wide'}" role="img" aria-label="${esc(
+    return `<svg viewBox="${vb}" class="board2 ${compact ? 'compact' : 'wide'}${activePinf ? ' filtering' : ''}" role="img" aria-label="${esc(
       b.title
     )} pinout">
       <rect x="130" y="${boardY}" width="220" height="${boardH}" rx="10" fill="var(--surface)" stroke="var(--ink-3)" stroke-width="1.4"/>
@@ -372,7 +419,18 @@ function renderBoardTool(id, toolDef) {
   };
 
   const used = all.filter((p) => usage[p[0]]);
-  return `<figure class="pinout">
+  const pinFilterBar =
+    availFilters.length > 1
+      ? `<div class="pinf" role="group" aria-label="Filter pins by function">${availFilters
+          .map(
+            ([k, label]) =>
+              `<button type="button" class="tag f" data-pinf="${esc(k)}" aria-pressed="${activePinf === k}">${esc(label)}${
+                k ? `<span class="fc">${capCounts[k]}</span>` : ''
+              }</button>`
+          )
+          .join('')}</div>`
+      : '';
+  return `${pinFilterBar}<figure class="pinout">
       <div class="pinout-art">${art(false)}${art(true)}</div>
       <figcaption class="legend2">${[...new Set(all.map((p) => p[1]))]
         .map((k) => `<span><i style="border-color:${PK[k][0]}"></i>${PK[k][1]}</span>`)

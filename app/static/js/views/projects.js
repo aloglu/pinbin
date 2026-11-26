@@ -22,6 +22,7 @@ import {
   warningsOfProject,
   openChecksOfProject,
   nextStepOfProject,
+  computePowerBudget,
 } from '../rules.js';
 import { builtinBoardUsbSide } from './bench.js';
 
@@ -1409,6 +1410,7 @@ export function renderProjectDetailView(pid) {
   const hasSel = Boolean(
     state.sel && (state.sel.startsWith('node:') || state.sel.startsWith('net:') || state.sel.startsWith('warn:'))
   );
+  const pwr = computePowerBudget(proj);
 
   return `<div class="screen">
     <div class="work">
@@ -1439,6 +1441,13 @@ export function renderProjectDetailView(pid) {
           <span style="flex:1"></span>
           <div class="stat">
             <div><span class="k">owned</span><b class="num">${ownedCount}/${items.length}</b></div>
+            ${
+              pwr.totalMa > 0
+                ? `<div><span class="k">draw</span><b class="num">~${Math.round(pwr.totalMa)} mA${
+                    pwr.estHours ? ` · ~${pwr.estHours} h` : ''
+                  }</b></div>`
+                : ''
+            }
             <div><span class="k">checks</span><b class="num">${doneN}/${checks.length}</b><span class="meter"><i style="width:${
     checks.length ? (doneN / checks.length) * 100 : 100
   }%"></i></span></div>

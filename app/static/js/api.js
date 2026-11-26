@@ -44,6 +44,8 @@ export const api = {
     request('/api/scrape', jsonOpts('POST', { url, part_id: partId, slot })),
   renameBin: (oldBin, newBin) =>
     request('/api/bins/rename', jsonOpts('POST', { old_bin: oldBin, new_bin: newBin })),
+  batchAssignBin: (partIds, location) =>
+    request('/api/parts/batch-bin', jsonOpts('POST', { part_ids: partIds, location })),
 
   // Projects
   listProjects: () => request('/api/projects'),
