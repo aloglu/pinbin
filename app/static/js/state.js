@@ -210,10 +210,13 @@ export function glyphFor(obj) {
   return CATG[obj.category] || 'proto';
 }
 
+export const loadedImgSrcs = new Set();
+
 export function phPart(obj, cls = '', zoomable = false, eager = false) {
   if (obj && obj.image_path) {
     const src = apiUrl(`/images/${encodeURIComponent(obj.image_path)}`);
-    return `<div class="ph ${cls}${zoomable ? ' zoomable' : ''}"${zoomable ? ` data-lightbox="${src}"` : ''}><img src="${src}" alt="${esc(obj.name || '')}"${eager ? '' : ' loading="lazy"'}></div>`;
+    const ready = eager || loadedImgSrcs.has(src);
+    return `<div class="ph ${cls}${zoomable ? ' zoomable' : ''}"${zoomable ? ` data-lightbox="${src}"` : ''}><img src="${src}" alt="${esc(obj.name || '')}"${ready ? ' decoding="sync"' : ' loading="lazy"'}></div>`;
   }
   return ph(glyphFor(obj || {}), cls);
 }

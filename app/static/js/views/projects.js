@@ -9,6 +9,7 @@ import {
   phPart,
   glyphFor,
   stepHtml,
+  menuHtml,
   sevGlyph,
   projectById,
   storeDisplayName,
@@ -114,7 +115,7 @@ function glyphOfItem(rec) {
   return glyphFor(rec);
 }
 
-function findMcuRef(proj) {
+export function findMcuRef(proj) {
   const items = proj.items || [];
   const explicit = items.find((x) => x.role === 'mcu');
   if (explicit) return explicit.ref;
@@ -876,7 +877,8 @@ function renderFocusView(proj) {
   if (!x) return '';
   const ws = warningsOfProject(proj);
   const trail = state.trail[proj.id] || [];
-  const mine = (proj.nets || []).filter((n) => (n.conns || []).some(([r]) => r === x.ref));
+  const allNets = proj.nets || [];
+  const mine = allNets.filter((n) => (n.conns || []).some(([r]) => r === x.ref));
   const nodeWarn = ws.filter((w) => (w.on.nodes || []).includes(x.ref));
   const wRow = (w) => {
     const done = w.src === 'assistant' && w.is_done;
@@ -886,49 +888,83 @@ function renderFocusView(proj) {
     )}</span><b>${w.t}</b></div>`;
   };
 
-  return `<div class="fview">
-    ${
-      trail.length
-        ? `<div class="crumbs">${trail
-            .map((r) => {
-              const tr = resolveProjectItem(proj, r);
-              return tr ? `<button type="button" data-focus="${esc(r)}">${esc(tr.displayName)}</button><span>→</span>` : '';
-            })
-            .join('')}<span>${esc(x.displayName)}</span></div>`
-        : `<div class="crumbs">${
-            mine.length
-              ? 'Tap a connected part to move along the circuit.'
-              : 'No wiring connections drawn for this part yet.'
-          }</div>`
-    }
+  // Part switcher options: MCU first, then power, peripherals, and materials
+  const roleOrder = { mcu: 0, power: 1, periph: 2, material: 3 };
+  const switchItems = (proj.items || [])
+    .filter((it) => it.role !== 'material')
+    .slice()
+    .sort((a, b) => (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9))
+    .map((it) => {
+      const rec = resolveProjectItem(proj, it.ref);
+      if (!rec) return null;
+      const wired = allNets.some((n) => (n.conns || []).some(([r]) => r === it.ref));
+      return [it.ref, `${rec.displayName}${wired ? '' : ' (unwired)'}`, it.ref === x.ref];
+    })
+    .filter(Boolean);
 
-    <div class="fcenter ${x.owned ? '' : 'buy'}" data-sel="node:${esc(x.ref)}" role="button" tabindex="0">
-      ${x.src ? phPart(x.src) : ph(glyphOfItem(x))}
-      <div>
-        <b>${esc(x.displayName)}</b>
-        <div class="faint">${x.owned ? 'owned' : 'to buy'}${x.project_notes ? ` · ${esc(x.project_notes)}` : ''}</div>
-        ${nodeWarn.map(wRow).join('')}
+  const crumbBar = trail.length
+    ? `<nav class="crumbs" aria-label="Part trail">${trail
+        .map((r) => {
+          const tr = resolveProjectItem(proj, r);
+          return tr
+            ? `<button type="button" data-focus="${esc(r)}" data-crumb="1">${esc(tr.displayName)}</button><span class="csep" aria-hidden="true">→</span>`
+            : '';
+        })
+        .join('')}<span class="ccur" aria-current="page">${esc(x.displayName)}</span></nav>`
+    : `<div class="crumbs empty">${
+        mine.length
+          ? 'Tap a connected part below to step through the circuit.'
+          : 'No wiring connections drawn for this part yet.'
+      }</div>`;
+
+  return `<div class="fview">
+    <div class="fbar">
+      ${switchItems.length > 1 ? menuHtml('focuspart', 'Part', x.displayName, switchItems) : ''}
+      ${crumbBar}
+    </div>
+
+    <div class="fcenter ${x.owned ? '' : 'buy'}">
+      <div class="fcenter-main" data-sel="node:${esc(x.ref)}" role="button" tabindex="0">
+        ${x.src ? phPart(x.src) : ph(glyphOfItem(x))}
+        <div>
+          <b>${esc(x.displayName)}</b>
+          <div class="faint">${x.owned ? 'owned' : 'to buy'}${x.project_notes ? ` · ${esc(x.project_notes)}` : ''}</div>
+        </div>
       </div>
+      ${nodeWarn.length ? `<div class="fcenter-warns">${nodeWarn.map(wRow).join('')}</div>` : ''}
     </div>
 
     ${
       mine.length
         ? mine
             .map((n, i) => {
-              const myEntry = (n.conns || []).find(([r]) => r === x.ref);
-              const myPin = myEntry ? myEntry[1] : '';
+              const myPins = [
+                ...new Set(
+                  (n.conns || [])
+                    .filter(([r]) => r === x.ref)
+                    .map(([, pin]) => pin)
+                    .filter(Boolean)
+                ),
+              ];
+              const myPin = myPins.join(', ');
               const others = (n.conns || []).filter(([r]) => r !== x.ref);
               const uniq = [];
               others.forEach(([r, pin]) => {
                 const u = uniq.find((q) => q[0] === r);
-                if (u) u[1] += pin ? `, ${pin}` : '';
-                else uniq.push([r, pin || '']);
+                if (u) {
+                  if (pin && !u[1].split(', ').includes(pin)) u[1] += u[1] ? `, ${pin}` : pin;
+                } else {
+                  uniq.push([r, pin || '']);
+                }
               });
               const nw = ws.filter((w) => (w.on.nets || []).includes(n.id));
               return `<div class="fnet" style="animation-delay:${i * 40}ms">
                 <div class="rail" style="background:var(--${esc(n.kind || 'sig')})"></div>
                 <div>
-                  <div class="hd"><b>${esc(n.name)}</b><span class="via">${esc(myPin)}</span></div>
+                  <div class="hd">
+                    <button type="button" class="fnet-btn" data-sel="net:${esc(n.id)}">${esc(n.name)}</button>
+                    <span class="via">${esc(myPin)}</span>
+                  </div>
                   <div class="nbrs">${uniq
                     .map(([r, pin]) => {
                       const y = resolveProjectItem(proj, r);
@@ -1222,20 +1258,27 @@ export function renderProjectInspector(proj) {
       ${
         nets.length
           ? `<div class="sec"><span class="k">connects to</span><div class="conn">${nets
-              .map(
-                (n) =>
-                  `<i style="background:var(--${esc(n.kind || 'sig')})"></i><button class="term" type="button" data-sel="net:${esc(
-                    n.id
-                  )}" style="cursor:pointer;text-decoration:none;text-align:left">${esc(n.name)}</button><span class="dim">${(
-                    n.conns || []
-                  )
-                    .filter(([r]) => r !== id)
-                    .map(([r, pin]) => {
-                      const other = resolveProjectItem(proj, r);
-                      return `${esc(other ? other.displayName : r)} <span class="mono">${esc(pin || '')}</span>`;
-                    })
-                    .join(', ')}</span>`
-              )
+              .map((n) => {
+                const grouped = [];
+                (n.conns || [])
+                  .filter(([r]) => r !== id)
+                  .forEach(([r, pin]) => {
+                    const g = grouped.find((q) => q[0] === r);
+                    if (g) {
+                      if (pin && !g[1].includes(pin)) g[1].push(pin);
+                    } else {
+                      grouped.push([r, pin ? [pin] : []]);
+                    }
+                  });
+                return `<i style="background:var(--${esc(n.kind || 'sig')})"></i><button class="term" type="button" data-sel="net:${esc(
+                  n.id
+                )}" style="cursor:pointer;text-decoration:none;text-align:left">${esc(n.name)}</button><span class="dim">${grouped
+                  .map(([r, pins]) => {
+                    const other = resolveProjectItem(proj, r);
+                    return `${esc(other ? other.displayName : r)}${pins.length ? ` <span class="mono">${esc(pins.join(', '))}</span>` : ''}`;
+                  })
+                  .join(', ')}</span>`;
+              })
               .join('')}</div></div>`
           : ''
       }

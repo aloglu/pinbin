@@ -214,26 +214,55 @@
 .map-empty p { color: var(--ink-2); }
 
 /* ===== Focus view (One part — phone default) ===== */
-.fview { display: grid; gap: 10px; max-width: 640px; }
+.fview { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; max-width: 640px; }
+.fbar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+.fbar .mn { justify-self: start; max-width: 100%; min-width: 0; }
+.fbar .mnb { max-width: 100%; min-width: 0; }
+.fbar .mnb span:not(.faint) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.fbar .mnp { max-width: min(380px, calc(100vw - 32px)); right: auto; left: 0; }
 .fcenter {
+  background: var(--raised);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  animation: in .3s var(--ease);
+  overflow: hidden;
+}
+.fcenter-main {
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   padding: 10px;
-  background: var(--raised);
-  border: 2px solid var(--ink);
-  border-radius: 6px;
-  animation: in .3s var(--ease);
   cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .fcenter-main:hover { background: var(--hover); }
+}
+.fcenter-warns {
+  padding: 6px 10px 10px;
+  border-top: 1px solid var(--hair);
+  display: grid;
+  gap: 4px;
 }
 .fcenter .ph { width: 52px; height: 52px; }
 .fcenter.buy { border-style: dashed; }
 .fnet { display: grid; grid-template-columns: 4px minmax(0, 1fr); gap: 10px; animation: in .35s var(--ease) both; }
 .fnet .rail { border-radius: 2px; }
 .fnet .hd { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; padding-top: 2px; }
-.fnet .hd b { font-weight: var(--w-strong); }
-.fnet .via { font: 500 12px var(--mono); color: var(--ink-2); }
+.fnet .fnet-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: var(--w-strong);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+@media (hover: hover) and (pointer: fine) {
+  .fnet .fnet-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
+}
+.fnet .via { font: 500 12px var(--mono); color: var(--ink-2); text-align: right; }
 .nbrs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .nbr {
   display: inline-flex;
@@ -246,7 +275,10 @@
   border-radius: 4px;
   cursor: pointer;
   text-align: left;
+  max-width: 100%;
+  min-width: 0;
 }
+.nbr > span { min-width: 0; }
 .nbr.buy { border-style: dashed; }
 @media (hover: hover) and (pointer: fine) {
   .nbr:hover { border-color: var(--ink); }
@@ -254,10 +286,40 @@
 .nbr .ph { width: 26px; height: 26px; }
 .nbr small { display: block; font: 500 11.5px var(--mono); color: var(--ink-3); }
 .fwarn { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; font-size: 13px; cursor: pointer; }
+.fcenter-warns .fwarn { margin-top: 0; }
 .fwarn:hover b { text-decoration: underline; }
 .fwarn b { font-weight: var(--w-mid); }
-.crumbs { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; font: 500 12px var(--mono); color: var(--ink-3); }
-.crumbs button { background: none; border: 0; padding: 0; color: var(--ink-2); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; font: inherit; }
+.crumbs {
+  display: flex;
+  gap: 6px 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+.crumbs.empty { color: var(--ink-3); font-size: 13px; }
+.crumbs button {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 9px;
+  min-height: 28px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  transition: border-color .14s, background .14s;
+}
+@media (hover: hover) and (pointer: fine) {
+  .crumbs button:hover { border-color: var(--ink); background: var(--hover); }
+}
+.crumbs .csep { color: var(--ink-3); font: 500 13px var(--mono); }
+.crumbs .ccur { font-weight: var(--w-strong); color: var(--ink); padding: 3px 2px; }
 
 /* ===== Metro view (Lines) ===== */
 .metro { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px 22px; align-items: start; }

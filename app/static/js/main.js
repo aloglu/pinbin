@@ -13,6 +13,7 @@ import {
   shoppingById,
   projectById,
   toast,
+  loadedImgSrcs,
 } from './state.js';
 import { closePanel, renderPartInspector, renderShoppingInspector } from './inspectors.js';
 import { reservedStockOfPart } from './rules.js';
@@ -34,6 +35,7 @@ import {
   renderProjectsListView,
   renderProjectDetailView,
   renderProjectInspector,
+  findMcuRef,
   applyMapFocus,
   initMapViewport,
   disconnectMapObserver,
@@ -361,6 +363,60 @@ function renderLightbox() {
   </div>`;
 }
 
+document.addEventListener(
+  'load',
+  (e) => {
+    const t = e.target;
+    if (t && t.tagName === 'IMG' && t.naturalWidth > 0) {
+      const src = t.getAttribute('src');
+      if (src) loadedImgSrcs.add(src);
+    }
+  },
+  true
+);
+
+// Swap #app content while reusing already-decoded live <img> DOM nodes so photos never flash on re-render.
+function replaceAppHtml(app, html) {
+  const liveImgs = new Map();
+  app.querySelectorAll('img[src]').forEach((img) => {
+    if (!img.complete || img.naturalWidth === 0) return;
+    const src = img.getAttribute('src');
+    if (!src) return;
+    loadedImgSrcs.add(src);
+    let pool = liveImgs.get(src);
+    if (!pool) {
+      pool = [];
+      liveImgs.set(src, pool);
+    }
+    pool.push(img);
+  });
+
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+
+  if (liveImgs.size) {
+    tpl.content.querySelectorAll('img[src]').forEach((nextImg) => {
+      const src = nextImg.getAttribute('src');
+      const pool = src && liveImgs.get(src);
+      if (!pool || !pool.length) return;
+      const live = pool.shift();
+      for (const attr of [...live.attributes]) {
+        if (attr.name !== 'src' && !nextImg.hasAttribute(attr.name)) {
+          live.removeAttribute(attr.name);
+        }
+      }
+      for (const attr of nextImg.attributes) {
+        if (attr.name === 'src' || attr.name === 'loading') continue;
+        live.setAttribute(attr.name, attr.value);
+      }
+      live.removeAttribute('loading');
+      nextImg.replaceWith(live);
+    });
+  }
+
+  app.replaceChildren(tpl.content);
+}
+
 export function render() {
   renderNav();
   const r = route();
@@ -412,7 +468,7 @@ export function render() {
     if (el) savedScrolls[selStr] = [el.scrollTop, el.scrollLeft];
   });
 
-  app.innerHTML = html;
+  replaceAppHtml(app, html);
 
   Object.entries(savedScrolls).forEach(([selStr, [st, sl]]) => {
     const el = document.querySelector(selStr);
@@ -1118,18 +1174,25 @@ document.addEventListener('click', (e) => {
     const r = route();
     const pid = r.startsWith('p-') ? r.slice(2) : null;
     if (pid) {
+      const proj = projectById(pid);
       const nextRef = focBtn.dataset.focus;
-      const curRef = state.focusRef[pid];
+      const curRef = state.focusRef[pid] || (proj ? findMcuRef(proj) : null);
       if (focBtn.dataset.viewTo) {
         state.projView[pid] = focBtn.dataset.viewTo;
-        state.sel = null;
-      }
-      if (curRef && curRef !== nextRef) {
-        const tr = state.trail[pid] || [];
-        const existingIdx = tr.indexOf(nextRef);
-        state.trail[pid] = existingIdx >= 0 ? tr.slice(0, existingIdx) : [...tr, curRef].slice(-6);
-      } else if (!curRef) {
         state.trail[pid] = [];
+        state.sel = null;
+      } else {
+        if (curRef && curRef !== nextRef) {
+          const tr = state.trail[pid] || [];
+          const existingIdx = tr.indexOf(nextRef);
+          state.trail[pid] = existingIdx >= 0 ? tr.slice(0, existingIdx) : [...tr, curRef].slice(-6);
+        } else if (!curRef) {
+          state.trail[pid] = [];
+        }
+        if (state.sel) {
+          const isDesktop = !window.matchMedia('(max-width: 980px)').matches;
+          state.sel = isDesktop && state.sel.startsWith('node:') ? `node:${nextRef}` : null;
+        }
       }
       state.focusRef[pid] = nextRef;
       render();
@@ -1172,6 +1235,24 @@ document.addEventListener('click', (e) => {
     if (m === 'lens') {
       state.lens = v || null;
       state.sel = null;
+    }
+    if (m === 'focuspart') {
+      const r = route();
+      const pid = r.startsWith('p-') ? r.slice(2) : null;
+      if (pid && v) {
+        const proj = projectById(pid);
+        const curRef = state.focusRef[pid] || (proj ? findMcuRef(proj) : null);
+        if (curRef && curRef !== v) {
+          const tr = state.trail[pid] || [];
+          const existingIdx = tr.indexOf(v);
+          state.trail[pid] = existingIdx >= 0 ? tr.slice(0, existingIdx) : [...tr, curRef].slice(-6);
+        }
+        state.focusRef[pid] = v;
+        if (state.sel) {
+          const isDesktop = !window.matchMedia('(max-width: 980px)').matches;
+          state.sel = isDesktop && state.sel.startsWith('node:') ? `node:${v}` : null;
+        }
+      }
     }
     if (state.partDraft) {
       if (m === 'dcat') state.partDraft.cat = v;
