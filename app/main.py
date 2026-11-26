@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.auth import GUEST_LOCKED_HTML, CloudflareAccessMiddleware
+from app.auth import CloudflareAccessMiddleware, render_guest_locked_html
 from app.backup import BackupError, create_backup_zip_bytes, restore_backup_zip_bytes
 from app.config import CATEGORIES, Settings, load_settings
 from app.db import (
@@ -471,7 +471,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
     @application.get("/guest/pass/{token}")
     async def guest_pass_redeem(token: str, next: str | None = Query(default=None)) -> Response:
         if not verify_guest_pass_token(settings.db_path, token):
-            resp = HTMLResponse(status_code=403, content=GUEST_LOCKED_HTML)
+            resp = HTMLResponse(status_code=403, content=render_guest_locked_html())
             resp.delete_cookie(GUEST_COOKIE_NAME, path="/guest")
             resp.headers["Cache-Control"] = "no-store"
             resp.headers["Referrer-Policy"] = "no-referrer"
@@ -479,7 +479,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
         cookie_val = issue_guest_session_cookie_value(settings.db_path)
         if not cookie_val:
-            resp = HTMLResponse(status_code=403, content=GUEST_LOCKED_HTML)
+            resp = HTMLResponse(status_code=403, content=render_guest_locked_html())
             resp.headers["Cache-Control"] = "no-store"
             return resp
 
@@ -511,7 +511,13 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     @application.get("/guest/logout")
     async def guest_logout() -> Response:
-        resp = HTMLResponse(status_code=200, content=GUEST_LOCKED_HTML)
+        resp = HTMLResponse(
+            status_code=200,
+            content=render_guest_locked_html(
+                "Signed out of guest view",
+                "Open your guest link again to browse in read-only mode.",
+            ),
+        )
         resp.delete_cookie(GUEST_COOKIE_NAME, path="/guest")
         resp.headers["Cache-Control"] = "no-store"
         return resp
