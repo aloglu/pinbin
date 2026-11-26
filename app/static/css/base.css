@@ -66,6 +66,17 @@ code {
   background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
+@media (display-mode: standalone) {
+  .bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+  }
+  #app {
+    padding-top: calc(43px + env(safe-area-inset-top, 0px));
+  }
+}
 .bar-in {
   height: 42px;
   display: flex;
@@ -594,34 +605,31 @@ code {
 
 /* Inspector panel (desktop right floating/sticky panel, phone bottom sheet) */
 .insp {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-left: 1px solid var(--line);
   background: var(--surface);
   position: sticky;
   top: calc(43px + env(safe-area-inset-top, 0px));
   height: calc(100vh - 43px - env(safe-area-inset-top, 0px));
-  overflow: auto;
-  overscroll-behavior: contain;
   padding-right: env(safe-area-inset-right, 0px);
 }
-.insp-in { padding: 0 16px 40px; }
-.insp-in.swap { animation: swap .2s var(--ease); }
 .insp-h {
-  position: sticky;
-  top: 0;
-  z-index: 4;
+  flex: none;
+  position: relative;
+  z-index: 2;
   background: var(--surface);
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  margin: 0 -16px 10px;
   padding: 14px 16px 10px;
   border-bottom: 1px solid transparent;
   transition: border-color .15s var(--ease);
 }
 .insp-h.insp-h-bar {
   align-items: center;
-  margin-bottom: 2px;
   padding: 10px 10px 6px 16px;
 }
 .insp-htitle {
@@ -636,6 +644,15 @@ code {
 }
 .insp.scrolled .insp-h { border-bottom-color: var(--line); }
 .insp.scrolled .insp-htitle { opacity: 1; }
+.insp-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.insp-in { padding: 2px 16px 40px; }
+.insp-in.swap { animation: swap .2s var(--ease); }
 .insp .sec { padding: 12px 0; border-top: 1px solid var(--hair); }
 .insp .sec:first-of-type { border-top: 0; padding-top: 0; }
 .insp .sec > .k { display: block; margin-bottom: 6px; }
@@ -687,14 +704,15 @@ code {
     z-index: 35;
     border-radius: 10px 10px 0 0;
     box-shadow: 0 -10px 30px rgba(0, 0, 0, .18);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
     transform: translateY(105%);
-    transition: transform .3s var(--ease);
+    transition: transform .28s var(--ease);
+    will-change: transform;
   }
-  .insp.open { transform: none; }
+  .insp.open { transform: translateY(0); }
+  .insp.float { transition: none; }
   .insp.dragging { transition: none !important; }
-  .insp.float.enter { animation: sheetin .28s var(--ease); }
-  .insp.float.leave { animation: sheetout .24s var(--ease) forwards; pointer-events: none; }
+  .insp.float.enter { animation: sheetin .28s var(--ease) both; }
+  .insp.float.leave { animation: sheetout .22s cubic-bezier(.4, 0, 1, 1) forwards; pointer-events: none; }
   .insp-h {
     border-radius: 10px 10px 0 0;
     padding-top: 20px;
@@ -714,6 +732,9 @@ code {
     border-radius: 2px;
     background: var(--line);
     pointer-events: none;
+  }
+  .insp-body {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .close { display: inline-flex; }
   .work { padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -789,8 +810,14 @@ code {
 @keyframes swap { from { opacity: 0; transform: translateX(6px); } }
 @keyframes panelin { from { transform: translateX(24px); opacity: 0; } }
 @keyframes panelout { to { transform: translateX(24px); opacity: 0; } }
-@keyframes sheetin { from { transform: translateY(40px); opacity: 0; } }
-@keyframes sheetout { to { transform: translateY(40px); opacity: 0; } }
+@keyframes sheetin {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes sheetout {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
 
 .reduce *, .reduce *::before, .reduce *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) {

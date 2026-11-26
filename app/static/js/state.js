@@ -207,10 +207,10 @@ export function glyphFor(obj) {
   return CATG[obj.category] || 'proto';
 }
 
-export function phPart(obj, cls = '', zoomable = false) {
+export function phPart(obj, cls = '', zoomable = false, eager = false) {
   if (obj && obj.image_path) {
     const src = apiUrl(`/images/${encodeURIComponent(obj.image_path)}`);
-    return `<div class="ph ${cls}${zoomable ? ' zoomable' : ''}"${zoomable ? ` data-lightbox="${src}"` : ''}><img src="${src}" alt="${esc(obj.name || '')}" loading="lazy"></div>`;
+    return `<div class="ph ${cls}${zoomable ? ' zoomable' : ''}"${zoomable ? ` data-lightbox="${src}"` : ''}><img src="${src}" alt="${esc(obj.name || '')}"${eager ? '' : ' loading="lazy"'}></div>`;
   }
   return ph(glyphFor(obj || {}), cls);
 }

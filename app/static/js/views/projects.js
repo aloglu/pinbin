@@ -1120,8 +1120,8 @@ export function renderProjectInspector(proj) {
     const next = nextStepOfProject(proj);
     const checks = ws.filter((w) => w.sev !== 'ok');
     const okChecks = ws.filter((w) => w.sev === 'ok');
-    return `<div class="insp-in">
-      ${inspHead(esc(proj.name), esc(proj.description || ''))}
+    return `${inspHead(esc(proj.name), esc(proj.description || ''))}
+    <div class="insp-body"><div class="insp-in">
       <div class="sec">
         <span class="k">next</span>
         <div class="next">
@@ -1185,7 +1185,7 @@ export function renderProjectInspector(proj) {
           ? 'Built-in checks run automatically against the wiring.'
           : 'The built-in checks run every time the wiring changes. The assistant’s notes need you to tick them.'
       }</div>
-    </div>`;
+    </div></div>`;
   }
 
   const idx = sel.indexOf(':');
@@ -1206,9 +1206,9 @@ export function renderProjectInspector(proj) {
           x.retailer || (x.src && x.src.retailer) || 'store'
         )}`;
 
-    return `<div class="insp-in">
-      ${inspHead(esc(x.fullName), esc(sub))}
-      <div class="sec">${x.src ? phPart(x.src, 'photo', Boolean(x.src.image_path)) : ph(glyphOfItem(x), 'photo')}</div>
+    return `${inspHead(esc(x.fullName), esc(sub))}
+    <div class="insp-body"><div class="insp-in">
+      <div class="sec">${x.src ? phPart(x.src, 'photo', Boolean(x.src.image_path), true) : ph(glyphOfItem(x), 'photo')}</div>
       ${x.project_notes ? `<div class="sec"><span class="k">in this project</span><p>${esc(x.project_notes)}</p></div>` : ''}
       ${!x.owned && (x.why_needed || (x.src && x.src.why_needed)) ? `<div class="sec"><span class="k">why buy it</span><p>${esc(x.why_needed || x.src.why_needed)}</p></div>` : ''}
       ${
@@ -1243,7 +1243,7 @@ export function renderProjectInspector(proj) {
             : ''
         }
       </div>
-    </div>`;
+    </div></div>`;
   }
 
   if (type === 'net') {
@@ -1253,11 +1253,11 @@ export function renderProjectInspector(proj) {
       return renderProjectInspector(proj);
     }
     const nw = ws.filter((w) => (w.on.nets || []).includes(id));
-    return `<div class="insp-in">
-      ${inspHead(
-        esc(n.name),
-        `<span style="color:var(--${esc(n.kind || 'sig')})">●</span> ${esc(n.rail ? `${n.rail} V` : n.kind || 'signal')}`
-      )}
+    return `${inspHead(
+      esc(n.name),
+      `<span style="color:var(--${esc(n.kind || 'sig')})">●</span> ${esc(n.rail ? `${n.rail} V` : n.kind || 'signal')}`
+    )}
+    <div class="insp-body"><div class="insp-in">
       <div class="sec">
         <span class="k">stops</span>
         ${(n.conns || [])
@@ -1271,7 +1271,7 @@ export function renderProjectInspector(proj) {
       </div>
       ${nw.length ? `<div class="sec"><span class="k">on this wire</span>${nw.map((w) => warnBlock(proj, w)).join('')}</div>` : ''}
       <div class="sec"><button class="btn" type="button" data-act="clear">← Whole project</button></div>
-    </div>`;
+    </div></div>`;
   }
 
   if (type === 'warn') {
@@ -1291,11 +1291,11 @@ export function renderProjectInspector(proj) {
       }),
     ];
     const headTitle = w.sev === 'danger' ? 'Can damage parts' : w.sev === 'check' ? 'Check first' : 'Works together';
-    return `<div class="insp-in">
-      ${inspHead(headTitle, esc(where.join(' · ')))}
+    return `${inspHead(headTitle, esc(where.join(' · ')))}
+    <div class="insp-body"><div class="insp-in">
       <div class="sec">${warnBlock(proj, w)}</div>
       <div class="sec"><button class="btn" type="button" data-act="clear">← Whole project</button></div>
-    </div>`;
+    </div></div>`;
   }
 
   return '';

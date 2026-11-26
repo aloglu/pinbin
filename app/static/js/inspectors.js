@@ -110,14 +110,13 @@ export function renderPartInspector(id) {
       : `<div class="pinimg empty"><span>No pinout yet</span></div><p class="faint">Add the seller’s pinout image when you edit the part, or ask your assistant to find it.</p>`;
   }
 
-  return `<div class="insp-in">
-    <div class="insp-h insp-h-bar">
-      <span class="insp-htitle">${esc(p.name)}</span>
-      <button class="btn quiet close" type="button" data-act="clear" aria-label="Close">${sv('<path d="M18 6 6 18M6 6l12 12"/>')}</button>
-    </div>
-
+  return `<div class="insp-h insp-h-bar">
+    <span class="insp-htitle">${esc(p.name)}</span>
+    <button class="btn quiet close" type="button" data-act="clear" aria-label="Close">${sv('<path d="M18 6 6 18M6 6l12 12"/>')}</button>
+  </div>
+  <div class="insp-body"><div class="insp-in">
     <div class="hero">
-      ${phPart(p, 'photo', Boolean(p.image_path))}
+      ${phPart(p, 'photo', Boolean(p.image_path), true)}
       <div>
         <h2>${esc(p.name)}</h2>
         ${p.subtitle ? `<div class="subt">${esc(p.subtitle)}</div>` : ''}
@@ -204,7 +203,7 @@ export function renderPartInspector(id) {
       ${guest ? '' : `<a class="btn" href="${appHref(`/parts/${encodeURIComponent(id)}/edit`)}">Edit part</a>`}
       <button class="btn quiet" type="button" data-act="clear">Close</button>
     </div>
-  </div>`;
+  </div></div>`;
 }
 
 export function renderShoppingInspector(id) {
@@ -225,14 +224,13 @@ export function renderShoppingInspector(id) {
   const statusLabels = { order: 'to order', ordered: 'on the way', arrived: 'arrived' };
   const offers = it.offers || [];
 
-  return `<div class="insp-in">
-    <div class="insp-h insp-h-bar">
-      <span class="insp-htitle">${esc(it.name)}</span>
-      <button class="btn quiet close" type="button" data-act="clear" aria-label="Close">${sv('<path d="M18 6 6 18M6 6l12 12"/>')}</button>
-    </div>
-
+  return `<div class="insp-h insp-h-bar">
+    <span class="insp-htitle">${esc(it.name)}</span>
+    <button class="btn quiet close" type="button" data-act="clear" aria-label="Close">${sv('<path d="M18 6 6 18M6 6l12 12"/>')}</button>
+  </div>
+  <div class="insp-body"><div class="insp-in">
     <div class="hero">
-      ${phPart(it, 'photo', Boolean(it.image_path))}
+      ${phPart(it, 'photo', Boolean(it.image_path), true)}
       <div>
         <h2>${esc(it.name)}</h2>
         <div class="subt">Not owned yet</div>
@@ -295,5 +293,5 @@ export function renderShoppingInspector(id) {
       <a class="btn quiet" href="${appHref('/shopping')}">Shopping →</a>
       <button class="btn quiet" type="button" data-act="clear">Close</button>
     </div>
-  </div>`;
+  </div></div>`;
 }

@@ -296,11 +296,12 @@ function updateProjectSelection(pid, swapAnim = false) {
 function bindInspectorScroll() {
   const insp = document.getElementById('insp');
   if (!insp) return;
-  const update = () => insp.classList.toggle('scrolled', insp.scrollTop > 12);
+  const scroller = insp.querySelector('.insp-body') || insp;
+  const update = () => insp.classList.toggle('scrolled', scroller.scrollTop > 12);
   update();
-  if (!insp.dataset.scrollBound) {
-    insp.dataset.scrollBound = '1';
-    insp.addEventListener('scroll', update, { passive: true });
+  if (!scroller.dataset.scrollBound) {
+    scroller.dataset.scrollBound = '1';
+    scroller.addEventListener('scroll', update, { passive: true });
   }
 }
 
@@ -412,7 +413,7 @@ export function render() {
 
   // Preserve inner scroll positions across re-renders
   const savedScrolls = {};
-  ['.gl-idx', '#insp', '#mapwrap', '.picklist'].forEach((selStr) => {
+  ['.gl-idx', '#insp .insp-body', '#mapwrap', '.picklist'].forEach((selStr) => {
     const el = document.querySelector(selStr);
     if (el) savedScrolls[selStr] = [el.scrollTop, el.scrollLeft];
   });
@@ -1730,16 +1731,19 @@ document.addEventListener('paste', (e) => {
       if (!isMobileSheet() || e.touches.length !== 1) return;
       const insp = e.target.closest && e.target.closest('.insp.open');
       if (!insp) return;
+      const scroller = insp.querySelector('.insp-body') || insp;
       const inHeader = Boolean(e.target.closest('.insp-h'));
       if (!inHeader) {
-        if (insp.scrollTop > 0) return;
+        if (scroller.scrollTop > 0) return;
         if (e.target.closest('input, textarea, select')) return;
       }
       const t = e.touches[0];
       drag = {
         insp,
+        scroller,
         startX: t.clientX,
         startY: t.clientY,
+        originY: t.clientY,
         lastY: t.clientY,
         startT: Date.now(),
         lastT: Date.now(),
@@ -1766,18 +1770,20 @@ document.addEventListener('paste', (e) => {
           return;
         }
         if (dy > 8) {
-          if (!drag.inHeader && drag.insp.scrollTop > 0) {
+          if (!drag.inHeader && drag.scroller.scrollTop > 0) {
             drag = null;
             return;
           }
           drag.active = true;
+          drag.originY = t.clientY;
+          drag.startT = Date.now();
           drag.insp.classList.remove('enter');
           drag.insp.classList.add('dragging');
         }
       }
       if (drag.active) {
         e.preventDefault();
-        const offset = Math.max(0, dy);
+        const offset = Math.max(0, t.clientY - drag.originY);
         drag.insp.style.transform = `translateY(${offset}px)`;
         drag.lastY = t.clientY;
         drag.lastT = Date.now();
@@ -1790,15 +1796,15 @@ document.addEventListener('paste', (e) => {
     const d = drag;
     drag = null;
     if (!d.active) return;
-    const dy = Math.max(0, d.lastY - d.startY);
+    const dy = Math.max(0, d.lastY - d.originY);
     const dt = Math.max(1, d.lastT - d.startT);
     const vy = dy / dt;
     const h = d.insp.offsetHeight || 300;
-    const shouldClose = dy > 90 || dy > h * 0.28 || (dy > 32 && vy > 0.45);
+    const shouldClose = dy > 84 || dy > h * 0.26 || (dy > 28 && vy > 0.42);
     d.insp.classList.remove('dragging');
     if (shouldClose) {
-      d.insp.style.transition = 'transform .2s var(--ease)';
-      d.insp.style.transform = 'translateY(105%)';
+      d.insp.style.transition = 'transform .2s cubic-bezier(.4, 0, 1, 1)';
+      d.insp.style.transform = 'translateY(100%)';
       let doneFlag = false;
       const finish = () => {
         if (doneFlag) return;
