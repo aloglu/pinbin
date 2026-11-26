@@ -131,7 +131,8 @@
 @media (max-width: 720px) {
   .plh { display: none; }
   .ctl .search.big { flex-basis: 100%; }
-  .mnp { right: auto; left: 0; }
+  .mnp { right: auto; left: 0; max-width: calc(100vw - 32px); }
+  .ctl .mn + .mn .mnp { left: auto; right: 0; }
   .prt { grid-template-columns: 44px minmax(0, 1fr) auto; gap: 4px 10px; }
   .prt .ph { width: 44px; height: 44px; grid-row: span 2; }
   .prt .c-info, .prt .c-care { display: none; }
@@ -224,10 +225,6 @@
   color: var(--ink-3);
   font-size: 13px;
 }
-
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
-.kv dt { color: var(--ink-2); }
-.kv dd { margin: 0; text-align: right; font: 500 12px var(--mono); }
 
 .notes { max-width: 74ch; }
 .notes h3 { margin: 14px 0 6px; font-size: 13px; }

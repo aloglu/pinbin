@@ -13,7 +13,33 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check Python compilation and security/unit tests
+        run: |
+          python -m py_compile app/*.py
+          python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Check frontend JavaScript syntax
+        run: |
+          for f in app/static/js/*.js app/static/js/views/*.js; do
+            node --check "$f"
+          done
+
   build-and-push:
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read

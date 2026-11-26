@@ -18,9 +18,12 @@ import {
   isGuest,
   appHref,
   apiUrl,
+  svgDataUrl,
 } from './state.js';
 import { computeRelations, relHtml, careHtml, glossaryTermsFor, warningsOfProject } from './rules.js';
 import { matchBuiltinBoard } from './views/bench.js';
+
+let closeTimer = null;
 
 export function closePanel(renderFn) {
   const el = document.querySelector('.insp.float');
@@ -28,6 +31,9 @@ export function closePanel(renderFn) {
   const reduce =
     motion === 'reduced' || (motion !== 'full' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   if (!el || reduce) {
+    clearTimeout(closeTimer);
+    closeTimer = null;
+    state.panelClosing = false;
     state.sel = null;
     renderFn();
     return;
@@ -37,14 +43,16 @@ export function closePanel(renderFn) {
   el.classList.remove('enter');
   el.classList.add('leave');
   const done = () => {
+    if (!state.panelClosing) return;
+    clearTimeout(closeTimer);
+    closeTimer = null;
     state.panelClosing = false;
     state.sel = null;
     renderFn();
   };
   el.addEventListener('animationend', done, { once: true });
-  setTimeout(() => {
-    if (state.panelClosing) done();
-  }, 400);
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(done, 400);
 }
 
 function benchToolForPart(p) {
@@ -100,7 +108,8 @@ export function renderPartInspector(id) {
   const guest = isGuest();
   let pinoutInner = '';
   if (p.pinout_svg) {
-    pinoutInner = `<div class="pinimg">${p.pinout_svg}</div>`;
+    const svgSrc = svgDataUrl(p.pinout_svg);
+    pinoutInner = `<div class="pinimg zoomable" data-lightbox="${esc(svgSrc)}"><img src="${esc(svgSrc)}" alt="${esc(p.name)} pinout"></div>`;
   } else if (p.pinout_image_path) {
     const pSrc = apiUrl(`/images/${encodeURIComponent(p.pinout_image_path)}`);
     pinoutInner = `<div class="pinimg zoomable" data-lightbox="${pSrc}"><img src="${pSrc}" alt="${esc(p.name)} pinout" loading="lazy"></div>`;

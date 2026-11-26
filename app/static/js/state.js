@@ -138,7 +138,6 @@ export const state = {
   projView: {},       // { [projectId]: 'map' | 'focus' | 'metro' | 'list' | 'notes' }
   focusRef: {},       // { [projectId]: ref }
   trail: {},          // { [projectId]: [ref, ...] }
-  zoom: 1,
   shopOpt: { open: false, mode: 'fewest_orders', loading: false, error: '', result: null },
   gl: { q: '', filter: 'all', termId: '', detail: false },
   bench: {
@@ -334,23 +333,18 @@ export function toast(msg, undoFn = null) {
   }, 6000);
 }
 
-export function mdLite(text) {
-  return esc(text || '')
-    .split(/\n\n+/)
-    .filter(Boolean)
-    .map((block) => {
-      if (block.startsWith('### ')) return `<h3>${block.slice(4)}</h3>`;
-      if (block.startsWith('## ')) return `<h3>${block.slice(3)}</h3>`;
-      const lines = block.split('\n');
-      if (lines.every((l) => l.startsWith('- ') || l.startsWith('* '))) {
-        return `<ul>${lines
-          .map((l) => `<li>${l.slice(2).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</li>`)
-          .join('')}</ul>`;
-      }
-      return `<p>${block
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-        .replace(/\n/g, '<br>')}</p>`;
-    })
-    .join('');
+export function svgDataUrl(rawSvg) {
+  const s = String(rawSvg || '').trim();
+  if (!s) return '';
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(s)}`;
+}
+
+export function plainWarningText(htmlStr) {
+  return String(htmlStr || '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }

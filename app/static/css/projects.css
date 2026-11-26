@@ -38,33 +38,13 @@
 }
 
 /* ===== Project detail header ===== */
-.eback.pback {
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 10px;
-  margin-left: -10px;
-  margin-bottom: 4px;
-  border-radius: 6px;
-  color: var(--ink-2);
-  text-decoration: none;
-  font-size: 14px;
-  font-weight: var(--w-mid);
-  transition: background .15s var(--ease);
-}
-.eback.pback:hover { background: var(--hover); color: var(--ink); }
+.eback.pback { margin-bottom: 4px; }
 
 .projhead { display: grid; gap: 6px; margin-bottom: 14px; }
 .projhead .row1 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .projhead .pacts { display: flex; gap: 8px; flex-wrap: wrap; }
 .projhead .desc { color: var(--ink-2); max-width: 80ch; }
 .projhead .row2 { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-top: 2px; }
-.tag.opt {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  color: var(--ink-2);
-  border-radius: 4px;
-}
 .stat { display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; }
 .stat > div { display: flex; align-items: baseline; gap: 6px; }
 .stat .num { font-size: 14px; font-weight: var(--w-strong); }

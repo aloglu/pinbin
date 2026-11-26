@@ -16,6 +16,7 @@ import {
   toast,
   appHref,
   navigate,
+  svgDataUrl,
 } from '../state.js';
 import { computeRelations, relHtml, careHtml } from '../rules.js';
 import { secBarHtml } from '../secbar.js';
@@ -55,10 +56,20 @@ const SECT_MAP = {
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
-// Keep pending uploaded File objects out of JSON.stringify snapshot
+// Keep pending uploaded File objects and blob preview URLs out of JSON.stringify snapshot
 let pendingFiles = { photo: null, pinout: null };
+let pendingUrls = { photo: '', pinout: '' };
+
+function revokePendingUrl(slot) {
+  if (pendingUrls[slot]) {
+    URL.revokeObjectURL(pendingUrls[slot]);
+    pendingUrls[slot] = '';
+  }
+}
 
 export function clearPartDraft() {
+  revokePendingUrl('photo');
+  revokePendingUrl('pinout');
   state.partDraft = null;
   state.partOrig = null;
   state.leaveTo = null;
@@ -68,6 +79,8 @@ export function clearPartDraft() {
 }
 
 export function startPartEdit(partId) {
+  revokePendingUrl('photo');
+  revokePendingUrl('pinout');
   const p = partId ? partById(partId) : null;
   const f = (p && p.electrical_facts) || {};
   pendingFiles = { photo: null, pinout: null };
@@ -110,18 +123,22 @@ export function startPartEdit(partId) {
 
 export function setPendingPhoto(slot, file, previewUrl) {
   if (!state.partDraft) return;
+  revokePendingUrl(slot);
   pendingFiles[slot] = file;
+  if (previewUrl && previewUrl.startsWith('blob:')) pendingUrls[slot] = previewUrl;
   if (slot === 'photo') {
     state.partDraft.photoPreview = previewUrl;
     state.partDraft.removePhoto = false;
   } else {
     state.partDraft.pinoutPreview = previewUrl;
+    state.partDraft.pinout_svg = '';
     state.partDraft.removePinout = false;
   }
 }
 
 export function clearPhotoSlot(slot) {
   if (!state.partDraft) return;
+  revokePendingUrl(slot);
   pendingFiles[slot] = null;
   if (slot === 'photo') {
     state.partDraft.photoPreview = '';
@@ -375,7 +392,7 @@ export function renderPartEditView(partId) {
   const pinoutBox = d.pinoutPreview
     ? `<div class="ph big"><img src="${esc(d.pinoutPreview)}" alt="Pinout photo"></div>`
     : d.pinout_svg
-    ? `<div class="ph big" style="padding:8px;background:var(--raised);border:1px solid var(--line)">${d.pinout_svg}</div>`
+    ? `<div class="ph big" style="padding:8px;background:var(--raised);border:1px solid var(--line)"><img src="${esc(svgDataUrl(d.pinout_svg))}" alt="Pinout diagram"></div>`
     : `<label class="ph big drop"><span>Optional. The pin labels, or the seller’s pinout image. Your assistant can find it for you.</span><input type="file" accept="image/*" data-photo="pinout" hidden></label>`;
 
   const usedIn = isEdit
@@ -706,7 +723,7 @@ export async function savePartEdit(renderFn) {
     care_notes: careNotes,
   };
   if (d.image_path && !pendingFiles.photo) payload.image_path = d.image_path;
-  if (d.removePinout) payload.pinout_svg = '';
+  if (d.removePinout || pendingFiles.pinout) payload.pinout_svg = '';
 
   const isNew = !d.id;
   try {

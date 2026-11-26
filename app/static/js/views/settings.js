@@ -300,7 +300,7 @@ export function renderSettingsView() {
           mcp.enabled ? 'Connected' : 'Disabled on server'
         }</span>
         <span class="dim">${
-          mcp.last_request_at ? `Last request ${fmtWhen(mcp.last_request_at)}` : 'No assistant requests yet'
+          mcp.last_request_at ? `Last request ${esc(fmtWhen(mcp.last_request_at))}` : 'No assistant requests yet'
         } · ${mcp.weekly_requests || 0} request${mcp.weekly_requests === 1 ? '' : 's'} this week</span>
       </div>
       ${srow(
@@ -312,9 +312,13 @@ export function renderSettingsView() {
       )}
       ${srow(
         'Access',
-        'Read only lets the assistant look and plan, but not change anything.',
+        mcp.env_read_only
+          ? 'Locked to read only by MCP_READ_ONLY=true on the server.'
+          : 'Read only lets the assistant look and plan, but not change anything.',
         `<div class="tabs" role="group">
-          <button type="button" data-mcp-set="access|rw" aria-pressed="${mcp.access !== 'ro'}">Read and write</button>
+          <button type="button" data-mcp-set="access|rw" aria-pressed="${mcp.access !== 'ro'}"${
+            mcp.env_read_only ? ' disabled' : ''
+          }>Read and write</button>
           <button type="button" data-mcp-set="access|ro" aria-pressed="${mcp.access === 'ro'}">Read only</button>
         </div>`
       )}
@@ -394,8 +398,8 @@ export function renderSettingsView() {
           guestCfg.enabled ? 'Active' : 'Off'
         }</span>
         <span class="dim">${
-          guestCfg.last_used_at ? `Last opened ${fmtWhen(guestCfg.last_used_at)}` : 'Not opened yet'
-        }${guestCfg.created_at ? ` · Link created ${ago(guestCfg.created_at) || fmtWhen(guestCfg.created_at)}` : ''}</span>
+          guestCfg.last_used_at ? `Last opened ${esc(fmtWhen(guestCfg.last_used_at))}` : 'Not opened yet'
+        }${guestCfg.created_at ? ` · Link created ${esc(ago(guestCfg.created_at) || fmtWhen(guestCfg.created_at))}` : ''}</span>
       </div>
       ${srow(
         'Allow read-only guest access',

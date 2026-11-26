@@ -16,7 +16,7 @@ import {
 } from './state.js';
 import { closePanel, renderPartInspector, renderShoppingInspector } from './inspectors.js';
 import { renderInventoryView } from './views/inventory.js';
-import { sbStick, sbOpen, jumpToSection, initEditScrollSpy } from './secbar.js';
+import { sbStick, sbOpen, jumpToSection, initEditScrollSpy, disconnectEditScrollSpy } from './secbar.js';
 import {
   renderPartEditView,
   clearPartDraft,
@@ -35,6 +35,7 @@ import {
   renderProjectInspector,
   applyMapFocus,
   initMapViewport,
+  disconnectMapObserver,
   zoomMapViewport,
   toggleProjectArchive,
   toggleProjectCheck,
@@ -346,14 +347,6 @@ function lockScroll(on) {
   }
 }
 
-function placeholderScreen(title, stepNote) {
-  return `<div class="screen full"><div class="work">
-    <div class="pagehead"><div class="ph-title"><h1>${esc(title)}</h1></div></div>
-    <p class="dim" style="max-width:60ch">${esc(stepNote)}</p>
-    <p style="margin-top:14px"><a class="btn" href="${appHref('/inventory')}">← Back to Inventory</a></p>
-  </div></div>`;
-}
-
 function renderLightbox() {
   const root = document.getElementById('lightboxRoot');
   if (!root) return;
@@ -431,14 +424,14 @@ export function render() {
   if (curPid) {
     initMapViewport(curPid);
     applyMapFocus(curPid);
+  } else {
+    disconnectMapObserver();
   }
   state.panelWasOpen = Boolean(document.querySelector('.insp.float'));
   bindInspectorScroll();
   syncSheetState();
 
   sbStick();
-  const tb = document.querySelector('.bar');
-  if (tb) document.documentElement.style.setProperty('--hdr', `${tb.getBoundingClientRect().height}px`);
 
   if (document.querySelector('.edit') && (state.partDraft || state.projDraft || state.itemDraft)) {
     const sizeAll = () => document.querySelectorAll('textarea.grow').forEach(autosizeTextarea);
@@ -449,6 +442,8 @@ export function render() {
     if (state.projDraft) refreshProjectEditBits();
     if (state.itemDraft) refreshItemEditBits();
     initEditScrollSpy();
+  } else {
+    disconnectEditScrollSpy();
   }
 }
 
@@ -1201,6 +1196,7 @@ document.addEventListener('click', (e) => {
       state.inv.q = '';
       state.inv.cat = 'All';
       state.inv.binFilter = '';
+      if (location.search) history.replaceState(null, '', location.pathname);
       render();
       return;
     }
@@ -1868,7 +1864,10 @@ document.addEventListener('keydown', (e) => {
       return;
     }
     const pop = document.getElementById('popRoot');
-    if (pop) pop.innerHTML = '';
+    if (pop && pop.innerHTML) {
+      pop.innerHTML = '';
+      return;
+    }
     if (state.menu) {
       setMenuOpen(null);
       return;
@@ -1892,7 +1891,10 @@ document.addEventListener('keydown', (e) => {
       inp.select();
     }
   }
-  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"][data-sel]')) {
+  if (
+    (e.key === 'Enter' || e.key === ' ') &&
+    e.target.matches('[role="button"][data-sel], [role="button"][data-pin], [role="button"][data-dial]')
+  ) {
     e.preventDefault();
     e.target.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   }
@@ -1931,10 +1933,14 @@ function onRouteChange() {
 window.addEventListener('popstate', onRouteChange);
 window.addEventListener('pb:navigate', onRouteChange);
 
+let lastGlossaryNarrow = window.matchMedia('(max-width: 860px)').matches;
 window.addEventListener('resize', () => {
-  const tb = document.querySelector('.bar');
-  if (tb) document.documentElement.style.setProperty('--hdr', `${tb.getBoundingClientRect().height}px`);
   document.querySelectorAll('textarea.grow').forEach(autosizeTextarea);
+  const glNarrow = window.matchMedia('(max-width: 860px)').matches;
+  if (glNarrow !== lastGlossaryNarrow) {
+    lastGlossaryNarrow = glNarrow;
+    if (route() === 'glossary') render();
+  }
 });
 
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {

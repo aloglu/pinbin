@@ -22,9 +22,6 @@
   --check: #C99400;
   --ok: #2E9A61;
   --sel: #17181A;
-  --danger-bg: #FBE6E4;
-  --check-bg: #FBF1D3;
-  --ok-bg: #E1F2E7;
 
   --sans: 'IBM Plex Sans', 'Segoe UI', Arial, system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
@@ -33,7 +30,6 @@
   --w-strong: 600;
 
   --ease: cubic-bezier(.2, .8, .2, 1);
-  --barh: 44px;
   --ctl-h: 36px;
   --hover: color-mix(in srgb, var(--ink) 7%, transparent);
   --selbg: color-mix(in srgb, var(--ink) 5%, transparent);
@@ -71,9 +67,6 @@
     --check: #E8B94A;
     --ok: #6FC08F;
     --sel: #EDEAE4;
-    --danger-bg: #3B2421;
-    --check-bg: #3A3020;
-    --ok-bg: #20322A;
     color-scheme: dark;
   }
 }
@@ -100,8 +93,5 @@
   --check: #E8B94A;
   --ok: #6FC08F;
   --sel: #EDEAE4;
-  --danger-bg: #3B2421;
-  --check-bg: #3A3020;
-  --ok-bg: #20322A;
   color-scheme: dark;
 }

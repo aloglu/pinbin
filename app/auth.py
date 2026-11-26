@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import hashlib
+import html
 import re
+import time
+from collections import deque
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 import jwt
 from jwt import PyJWKClient
@@ -15,6 +22,20 @@ from app.db import GUEST_COOKIE_NAME, verify_guest_session_cookie
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _BRAND_FULL_RE = re.compile(r'<svg class="brand-full".*?</svg>', re.DOTALL)
+_GUEST_PASS_RATE_WINDOW_SEC = 60.0
+_GUEST_PASS_RATE_MAX = 30
+_APP_CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'none'; "
+    "form-action 'self'"
+)
 
 # Static, public brand & font assets only (zero app JS, CSS, images, or user data).
 _GUEST_PUBLIC_ASSETS = {
@@ -242,8 +263,8 @@ def render_guest_locked_html(
   </header>
   <main>
     <section class="card">
-      <h1>{heading}</h1>
-      <p>{message}</p>
+      <h1>{html.escape(heading)}</h1>
+      <p>{html.escape(message)}</p>
     </section>
   </main>
   <script>
@@ -358,6 +379,51 @@ def is_allowed_guest_resource(path: str) -> bool:
     return False
 
 
+def _locked_page_csp() -> str:
+    page = render_guest_locked_html()
+    m = re.search(r"<script>(.*?)</script>", page, re.DOTALL)
+    if not m:
+        return _APP_CSP
+    digest = base64.b64encode(hashlib.sha256(m.group(1).encode("utf-8")).digest()).decode("ascii")
+    return _APP_CSP.replace("script-src 'self';", f"script-src 'self' 'sha256-{digest}';")
+
+
+def _apply_security_headers(response: Response, path: str, *, is_locked_page: bool = False) -> Response:
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Content-Security-Policy", _locked_page_csp() if is_locked_page else _APP_CSP)
+    if path.startswith("/static/js/") or path.startswith("/guest/static/js/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+def _is_cross_site_csrf(request: Request) -> bool:
+    """Block cross-site browser mutations (e.g. HTML form POSTs to multipart/body-less endpoints)."""
+    sec_fetch_site = (request.headers.get("sec-fetch-site") or "").strip().lower()
+    if sec_fetch_site == "cross-site":
+        return True
+    origin = (request.headers.get("origin") or "").strip()
+    if origin:
+        if origin.lower() == "null":
+            return True
+        try:
+            origin_host = urlparse(origin).netloc.lower()
+        except Exception:
+            return True
+        expected_hosts = {
+            h.strip().lower()
+            for h in (
+                request.headers.get("host", ""),
+                request.headers.get("x-forwarded-host", "").split(",")[0],
+            )
+            if h.strip()
+        }
+        if expected_hosts and origin_host not in expected_hosts:
+            return True
+    return False
+
+
 class CloudflareAccessMiddleware(BaseHTTPMiddleware):
     """Validates Cloudflare Access JWTs on owner routes and enforces strict read-only isolation on /guest/*."""
 
@@ -365,6 +431,7 @@ class CloudflareAccessMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.settings = settings
         self._jwks_client: PyJWKClient | None = None
+        self._guest_pass_hits: dict[str, deque[float]] = {}
 
     def _get_jwks_client(self) -> PyJWKClient:
         if self._jwks_client is None:
@@ -383,26 +450,59 @@ class CloudflareAccessMiddleware(BaseHTTPMiddleware):
             issuer=self.settings.cf_team_domain,
         )
 
+    def _check_guest_pass_rate_limit(self, request: Request) -> bool:
+        client_ip = (
+            (request.headers.get("cf-connecting-ip") or "").strip()
+            or (request.client.host if request.client else "unknown")
+        )
+        now = time.monotonic()
+        cutoff = now - _GUEST_PASS_RATE_WINDOW_SEC
+        bucket = self._guest_pass_hits.setdefault(client_ip, deque())
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= _GUEST_PASS_RATE_MAX:
+            return False
+        bucket.append(now)
+        if len(self._guest_pass_hits) > 500:
+            for ip_key in list(self._guest_pass_hits.keys()):
+                b = self._guest_pass_hits[ip_key]
+                while b and b[0] < cutoff:
+                    b.popleft()
+                if not b:
+                    del self._guest_pass_hits[ip_key]
+        return True
+
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
         if path == "/healthz":
-            return await call_next(request)
+            return _apply_security_headers(await call_next(request), path)
 
         # Strict, isolated read-only boundary for /guest/* (never grants owner access)
         if is_guest_path(path):
             request.state.is_guest = True
             if request.method not in ("GET", "HEAD"):
-                return JSONResponse(
-                    status_code=403,
-                    content={"detail": "Guest pass is read-only"},
+                return _apply_security_headers(
+                    JSONResponse(status_code=403, content={"detail": "Guest pass is read-only"}),
+                    path,
                 )
 
-            if (
-                path.startswith("/guest/pass/")
-                or path == "/guest/logout"
-                or path in _GUEST_PUBLIC_ASSETS
-            ):
-                return await call_next(request)
+            if path.startswith("/guest/pass/"):
+                if not self._check_guest_pass_rate_limit(request):
+                    resp = HTMLResponse(
+                        status_code=429,
+                        content=render_guest_locked_html(
+                            "Too many attempts",
+                            "Please wait a minute before trying this link again.",
+                        ),
+                    )
+                    resp.headers["Cache-Control"] = "no-store"
+                    return _apply_security_headers(resp, path, is_locked_page=True)
+                resp = await call_next(request)
+                is_locked = resp.status_code in (401, 403, 429) and "text/html" in (resp.headers.get("content-type") or "")
+                return _apply_security_headers(resp, path, is_locked_page=is_locked)
+
+            if path == "/guest/logout" or path in _GUEST_PUBLIC_ASSETS:
+                return _apply_security_headers(await call_next(request), path)
 
             cookie_val = request.cookies.get(GUEST_COOKIE_NAME, "")
             if not verify_guest_session_cookie(self.settings.db_path, cookie_val):
@@ -411,45 +511,54 @@ class CloudflareAccessMiddleware(BaseHTTPMiddleware):
                     or path.startswith("/guest/static/")
                     or path.startswith("/guest/images/")
                 ):
-                    return JSONResponse(
-                        status_code=401,
-                        content={"detail": "Guest pass required or revoked"},
+                    return _apply_security_headers(
+                        JSONResponse(status_code=401, content={"detail": "Guest pass required or revoked"}),
+                        path,
                     )
                 resp = HTMLResponse(status_code=401, content=render_guest_locked_html())
                 resp.headers["Cache-Control"] = "no-store"
-                return resp
+                return _apply_security_headers(resp, path, is_locked_page=True)
 
             if not is_allowed_guest_resource(path):
                 if path.startswith("/guest/api/"):
-                    return JSONResponse(
-                        status_code=403,
-                        content={"detail": "Not available in guest mode"},
+                    return _apply_security_headers(
+                        JSONResponse(status_code=403, content={"detail": "Not available in guest mode"}),
+                        path,
                     )
-                return JSONResponse(
-                    status_code=404,
-                    content={"detail": "Not found"},
+                return _apply_security_headers(
+                    JSONResponse(status_code=404, content={"detail": "Not found"}),
+                    path,
                 )
 
-            return await call_next(request)
+            return _apply_security_headers(await call_next(request), path)
 
         request.state.is_guest = False
+
+        # CSRF check on browser state-changing requests (exempt /mcp which authenticates via Bearer/Service Token)
+        if request.method not in ("GET", "HEAD", "OPTIONS") and path != "/mcp":
+            if _is_cross_site_csrf(request):
+                return _apply_security_headers(
+                    JSONResponse(status_code=403, content={"detail": "Cross-site request blocked"}),
+                    path,
+                )
+
         if self.settings.local_dev_mode:
-            return await call_next(request)
+            return _apply_security_headers(await call_next(request), path)
 
         token = request.headers.get("Cf-Access-Jwt-Assertion", "").strip()
         if not token:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Missing Cloudflare Access JWT assertion"},
+            return _apply_security_headers(
+                JSONResponse(status_code=401, content={"detail": "Missing Cloudflare Access JWT assertion"}),
+                path,
             )
 
         try:
-            claims = self._verify_token(token)
+            claims = await asyncio.to_thread(self._verify_token, token)
             request.state.cf_user = claims.get("email") or claims.get("sub")
         except Exception:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid or expired Cloudflare Access token"},
+            return _apply_security_headers(
+                JSONResponse(status_code=401, content={"detail": "Invalid or expired Cloudflare Access token"}),
+                path,
             )
 
-        return await call_next(request)
+        return _apply_security_headers(await call_next(request), path)

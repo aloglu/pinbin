@@ -1,5 +1,5 @@
 // Bench screen: interactive board pinouts, breadboard, resistor bands, multimeter dial, calculators, and bin QR labels.
-import { state, esc, partById, isGuest } from '../state.js';
+import { state, esc, partById, isGuest, svgDataUrl } from '../state.js';
 import { secBarHtml } from '../secbar.js';
 
 const PK = {
@@ -306,7 +306,7 @@ function renderBoardTool(id, toolDef) {
   if (id.startsWith('part:')) {
     const p = partById(toolDef.partId);
     if (!p || !p.pinout_svg) return '<p class="faint">No pinout SVG attached yet.</p>';
-    return `<figure class="pinout"><div class="pinout-art">${p.pinout_svg}</div></figure>`;
+    return `<figure class="pinout"><div class="pinout-art"><img src="${esc(svgDataUrl(p.pinout_svg))}" alt="${esc(p.name)} pinout" style="display:block;width:100%;height:auto"></div></figure>`;
   }
 
   const b = BUILTIN_BOARDS[id];
@@ -399,8 +399,8 @@ function renderBoardTool(id, toolDef) {
            <div class="lgroup pinlist">${used
              .map(
                (p) =>
-                 `<button type="button" class="li ${`${id}:${p[0]}:${p[3]}` === state.bench.pin ? 'on' : ''}" data-pin="${esc(
-                   `${id}:${p[0]}:${p[3]}`
+                 `<button type="button" class="li ${`${id}:${p[0]}:${p[3]}:${p[4]}` === state.bench.pin ? 'on' : ''}" data-pin="${esc(
+                   `${id}:${p[0]}:${p[3]}:${p[4]}`
                  )}"><span class="pdot" style="border-color:${PK[p[1]][0]}"></span><span class="lt"><b class="mono">${esc(
                    p[0]
                  )}</b><span>${esc(usage[p[0]])}</span></span></button>`

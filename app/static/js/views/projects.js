@@ -15,6 +15,7 @@ import {
   toast,
   isGuest,
   appHref,
+  plainWarningText,
 } from '../state.js';
 import {
   resolveProjectItem,
@@ -429,12 +430,14 @@ export function buildMapDiagramData(proj) {
   if (!L) return null;
   const ws = warningsOfProject(proj);
 
+  const validKinds = new Set(['bat', 'v5', 'v33', 'i2c', 'spi', 'sig']);
   const netEls = (proj.nets || [])
     .map((n) => {
       const g = L.nets[n.id];
       if (!g || !g.paths.length) return '';
-      const col = `var(--${n.kind || 'sig'})`;
-      const bus = n.kind === 'i2c' || n.kind === 'spi';
+      const safeKind = validKinds.has(n.kind) ? n.kind : 'sig';
+      const col = `var(--${safeKind})`;
+      const bus = safeKind === 'i2c' || safeKind === 'spi';
       const draw = g.paths
         .map((d) =>
           bus
@@ -443,10 +446,10 @@ export function buildMapDiagramData(proj) {
         )
         .join('');
       const lab =
-        g.label && n.kind !== 'sig'
-          ? `<text class="lab" x="${g.label[0]}" y="${g.label[1]}" style="fill:${col}">${
-              n.rail ? `${n.rail} V` : n.kind === 'bat' ? '3.0–4.2 V' : String(n.kind || '').toUpperCase()
-            }</text>`
+        g.label && safeKind !== 'sig'
+          ? `<text class="lab" x="${g.label[0]}" y="${g.label[1]}" style="fill:${col}">${esc(
+              n.rail ? `${n.rail} V` : safeKind === 'bat' ? '3.0–4.2 V' : safeKind.toUpperCase()
+            )}</text>`
           : '';
       return `<g class="net" data-sel="net:${esc(n.id)}">${draw}${g.paths
         .map((d) => `<path class="flow" d="${d}"/>`)
@@ -535,7 +538,7 @@ export function buildMapDiagramData(proj) {
       usedAnchors[key] = (usedAnchors[key] || 0) + 1;
       if (usedAnchors[key] > 1) a[1] += (usedAnchors[key] - 1) * 22;
       const done = w.src === 'assistant' && w.is_done;
-      const plainLabel = String(w.t || '').replace(/<[^>]+>/g, '');
+      const plainLabel = plainWarningText(w.t);
       return `<g class="mk ${esc(w.sev)} ${done ? 'done' : ''}" data-sel="warn:${esc(
         w.id
       )}" tabindex="0" role="button" aria-label="${esc(plainLabel)}">
@@ -633,11 +636,15 @@ export function zoomMapViewport(action) {
   zoomMapAround(wrap, stage, factor, rect.width / 2, rect.height / 2, true);
 }
 
-export function initMapViewport(pid) {
+export function disconnectMapObserver() {
   if (mapResizeObs) {
     mapResizeObs.disconnect();
     mapResizeObs = null;
   }
+}
+
+export function initMapViewport(pid) {
+  disconnectMapObserver();
   const wrap = document.getElementById('mapwrap');
   const stage = document.getElementById('mapstage');
   const svg = document.getElementById('map');
@@ -872,7 +879,7 @@ function renderFocusView(proj) {
   const nodeWarn = ws.filter((w) => (w.on.nodes || []).includes(x.ref));
   const wRow = (w) => {
     const done = w.src === 'assistant' && w.is_done;
-    return `<div class="fwarn" data-sel="warn:${esc(w.id)}"><span class="sev ${done ? 'done' : esc(w.sev)}">${sevGlyph(
+    return `<div class="fwarn" data-sel="warn:${esc(w.id)}" role="button" tabindex="0"><span class="sev ${done ? 'done' : esc(w.sev)}">${sevGlyph(
       w.sev,
       done
     )}</span><b>${w.t}</b></div>`;
@@ -894,7 +901,7 @@ function renderFocusView(proj) {
           }</div>`
     }
 
-    <div class="fcenter ${x.owned ? '' : 'buy'}" data-sel="node:${esc(x.ref)}">
+    <div class="fcenter ${x.owned ? '' : 'buy'}" data-sel="node:${esc(x.ref)}" role="button" tabindex="0">
       ${x.src ? phPart(x.src) : ph(glyphOfItem(x))}
       <div>
         <b>${esc(x.displayName)}</b>
@@ -993,7 +1000,7 @@ function renderMetroView(proj) {
             const sw = ws.filter((w) => (w.on.nodes || []).includes(s.r) && !(w.on.nets || []).length);
             return `<div class="stop ${j === 0 || j === stops.length - 1 ? 'term' : ''} ${
               x.owned ? '' : 'buy'
-            }" data-sel="node:${esc(s.r)}"><b>${esc(x.displayName)}</b>${
+            }" data-sel="node:${esc(s.r)}" role="button" tabindex="0"><b>${esc(x.displayName)}</b>${
               s.pins.length ? `<span class="pinl">${esc(s.pins.join(' → '))}</span>` : ''
             }${
               sw.length
@@ -1010,7 +1017,7 @@ function renderMetroView(proj) {
         ${nw
           .map((w) => {
             const d = w.src === 'assistant' && w.is_done;
-            return `<div class="fwarn" data-sel="warn:${esc(w.id)}"><span class="sev ${
+            return `<div class="fwarn" data-sel="warn:${esc(w.id)}" role="button" tabindex="0"><span class="sev ${
               d ? 'done' : esc(w.sev)
             }">${sevGlyph(w.sev, d)}</span><b>${w.t}</b></div>`;
           })
@@ -1060,7 +1067,7 @@ function renderPartsListView(proj) {
             ? stepHtml('data-qty', q.part_id, qtyVal, 'You own')
             : stepHtml('data-buy', q.shopping_item_id, qtyVal, 'To buy');
 
-          return `<div class="lrow ${state.sel === `node:${q.ref}` ? 'sel' : ''}" data-sel="node:${esc(q.ref)}">
+          return `<div class="lrow ${state.sel === `node:${q.ref}` ? 'sel' : ''}" data-sel="node:${esc(q.ref)}" role="button" tabindex="0">
             ${x.src ? phPart(x.src) : ph(glyphOfItem(x))}
             <div class="n">${esc(x.displayName)}<small>${esc(q.project_notes || '')}</small></div>
             <span class="c3 dim">${loc}</span>
@@ -1143,7 +1150,7 @@ export function renderProjectInspector(proj) {
             ? checks
                 .map((w) => {
                   const done = w.src === 'assistant' && w.is_done;
-                  return `<div class="check-row ${done ? 'done' : ''}" data-sel="warn:${esc(w.id)}">
+                  return `<div class="check-row ${done ? 'done' : ''}" data-sel="warn:${esc(w.id)}" role="button" tabindex="0">
                     ${
                       w.src === 'assistant' && !guest
                         ? `<input class="tick" type="checkbox" data-done="${esc(proj.id)}|${esc(w.id)}" ${
@@ -1173,7 +1180,7 @@ export function renderProjectInspector(proj) {
               ${okChecks
                 .map(
                   (w) =>
-                    `<div class="check-row" data-sel="warn:${esc(w.id)}"><span class="sev ok">✓</span><b>${w.t}</b><span></span></div>`
+                    `<div class="check-row" data-sel="warn:${esc(w.id)}" role="button" tabindex="0"><span class="sev ok">✓</span><b>${w.t}</b><span></span></div>`
                 )
                 .join('')}
             </div>`

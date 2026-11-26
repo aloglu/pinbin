@@ -10,7 +10,3 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
-
-# Built stylesheet and its build tool (made by `npm run build:css` or the Docker build)
-node_modules/
-app/static/tailwind.css

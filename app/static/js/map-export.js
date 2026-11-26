@@ -1,5 +1,5 @@
 // Client-side PNG & PDF export for Project wiring maps (zero external dependencies).
-import { esc, sevGlyph, toast } from './state.js';
+import { esc, sevGlyph, toast, isGuest, plainWarningText } from './state.js';
 import { warningsOfProject, resolveProjectItem } from './rules.js';
 import { buildMapDiagramData } from './views/projects.js';
 
@@ -98,8 +98,7 @@ async function getEmbeddedFontCss() {
           ['IBM Plex Mono', '600', '/static/fonts/ibm-plex-mono-latin-600-normal.woff2', 'woff2'],
         ];
 
-  const assetBase =
-    location.pathname === '/guest' || location.pathname.startsWith('/guest/') ? '/guest' : '';
+  const assetBase = isGuest() ? '/guest' : '';
 
   const rules = await Promise.all(
     specs.map(async ([family, weight, url, fmt]) => {
@@ -259,7 +258,7 @@ async function buildStandaloneSheetSvg(proj, { forceLight = false } = {}) {
       const stroke = done ? pal.ok : 'none';
       const fg = done ? pal.ok : w.sev === 'check' ? '#1a1400' : '#ffffff';
       const ch = sevGlyph(w.sev, done);
-      const plain = stripTags(w.t);
+      const plain = plainWarningText(w.t);
       const clipped = plain.length > maxCh ? `${plain.slice(0, maxCh - 1)}…` : plain;
       checksSvg += `<circle cx="${cx + 8}" cy="${cy}" r="7.5" fill="${fill}"${
         stroke !== 'none' ? ` stroke="${stroke}" stroke-width="1.5"` : ''

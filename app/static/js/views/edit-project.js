@@ -556,6 +556,8 @@ export async function saveProjectEdit(renderFn) {
     };
     const proj = isNew ? await api.createProject(metaPayload) : await api.patchProject(d.id, metaPayload);
     const pid = proj.id;
+    // Record created project ID immediately so retrying after a later failure updates instead of duplicating
+    if (isNew) d.id = pid;
 
     // 2. Create any new "Something to buy" shopping items
     const tempToRealShopId = {};
@@ -570,6 +572,11 @@ export async function saveProjectEdit(renderFn) {
         why_needed: `Needed for ${d.name.trim()}`,
       });
       tempToRealShopId[tempId] = created.id;
+      // Persist mapping onto draft so a retry never duplicates created shopping items
+      d.parts.forEach((q) => {
+        if (q.shopping_item_id === tempId) q.shopping_item_id = created.id;
+      });
+      delete d.newItems[tempId];
     }
 
     // 3. Diff project items: delete removed, update existing, add new

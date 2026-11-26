@@ -112,8 +112,15 @@ export function jumpToSection(key) {
   el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
 }
 
+export function disconnectEditScrollSpy() {
+  if (spyObs) {
+    spyObs.disconnect();
+    spyObs = null;
+  }
+}
+
 export function initEditScrollSpy() {
-  if (spyObs) spyObs.disconnect();
+  disconnectEditScrollSpy();
   if (!('IntersectionObserver' in window)) return;
   const links = [...document.querySelectorAll('.enav a')];
   if (!links.length) return;

@@ -14,28 +14,81 @@ MAX_SVG_BYTES = 512 * 1024
 FILENAME_RE = re.compile(r"^[a-f0-9-]{8,64}\.webp$")
 
 _SVG_NS = "http://www.w3.org/2000/svg"
-_XLINK_NS = "http://www.w3.org/1999/xlink"
-_FORBIDDEN_SVG_TAGS = {
-    "script",
-    "foreignobject",
-    "iframe",
-    "object",
-    "embed",
-    "audio",
-    "video",
-    "meta",
-    "link",
-    "base",
-    "form",
-    "input",
-    "button",
-    "textarea",
-    "animate",
-    "animatemotion",
-    "animatetransform",
-    "set",
+_ALLOWED_SVG_TAGS = {
+    "svg",
+    "g",
+    "rect",
+    "circle",
+    "ellipse",
+    "line",
+    "polyline",
+    "polygon",
+    "path",
+    "text",
+    "tspan",
+    "defs",
+    "lineargradient",
+    "radialgradient",
+    "stop",
+    "clippath",
+    "title",
+    "desc",
 }
-_DANGEROUS_CSS_RE = re.compile(r"(url\s*\(|javascript:|expression\s*\(|@import)", re.IGNORECASE)
+_ALLOWED_SVG_ATTRS = {
+    "xmlns",
+    "viewbox",
+    "width",
+    "height",
+    "preserveaspectratio",
+    "id",
+    "class",
+    "transform",
+    "x",
+    "y",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "cx",
+    "cy",
+    "r",
+    "rx",
+    "ry",
+    "d",
+    "points",
+    "fill",
+    "fill-opacity",
+    "fill-rule",
+    "stroke",
+    "stroke-width",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-dasharray",
+    "stroke-dashoffset",
+    "stroke-opacity",
+    "opacity",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "text-anchor",
+    "dominant-baseline",
+    "letter-spacing",
+    "dx",
+    "dy",
+    "offset",
+    "stop-color",
+    "stop-opacity",
+    "gradientunits",
+    "gradienttransform",
+    "clip-path",
+    "clip-rule",
+    "aria-label",
+    "aria-hidden",
+    "role",
+}
+_SAFE_LOCAL_URL_RE = re.compile(r"^url\(\s*#[A-Za-z_][A-Za-z0-9_.:-]*\s*\)$")
+_URL_TOKEN_RE = re.compile(r"url\s*\(|javascript:|data:", re.IGNORECASE)
 
 
 class ImageError(Exception):
@@ -46,6 +99,22 @@ class ImageError(Exception):
 
 def is_valid_image_filename(filename: str) -> bool:
     return bool(filename and FILENAME_RE.match(filename))
+
+
+def is_valid_webp_bytes(raw_bytes: bytes) -> bool:
+    """Verify raw bytes represent a real, decodable WebP image."""
+    if not raw_bytes or len(raw_bytes) < 12:
+        return False
+    if raw_bytes[:4] != b"RIFF" or raw_bytes[8:12] != b"WEBP":
+        return False
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            if img.format != "WEBP":
+                return False
+            img.verify()
+        return True
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
+        return False
 
 
 def process_and_save_image(raw_bytes: bytes, images_dir: Path, max_bytes: int) -> str:
@@ -125,34 +194,29 @@ def _local_tag(tag: str) -> str:
 
 
 def _sanitize_svg_element(el: ET.Element) -> None:
-    # Remove forbidden child elements
+    # Strict allowlist of safe SVG drawing elements (drops <script>, <style>, <foreignObject>, etc.)
     for child in list(el):
-        if _local_tag(child.tag) in _FORBIDDEN_SVG_TAGS:
+        if _local_tag(child.tag) not in _ALLOWED_SVG_TAGS:
             el.remove(child)
         else:
             _sanitize_svg_element(child)
 
-    # Clean attributes
+    # Strict allowlist of safe geometry & presentation attributes
     for attr_name in list(el.attrib.keys()):
         local = _local_tag(attr_name)
-        val = el.attrib.get(attr_name, "")
-        if local.startswith("on"):
+        val = (el.attrib.get(attr_name) or "").strip()
+        if local not in _ALLOWED_SVG_ATTRS:
             del el.attrib[attr_name]
             continue
-        if local in ("href", "src", "action", "formaction"):
-            if not val.strip().startswith("#"):
-                del el.attrib[attr_name]
+        if _URL_TOKEN_RE.search(val):
+            # Only allow local fragment refs like fill="url(#grad1)" or clip-path="url(#c1)"
+            if local in ("fill", "stroke", "clip-path") and _SAFE_LOCAL_URL_RE.match(val):
                 continue
-        if local == "style" and _DANGEROUS_CSS_RE.search(val):
             del el.attrib[attr_name]
-            continue
-        if "javascript:" in val.lower() or "data:text/html" in val.lower():
-            del el.attrib[attr_name]
-            continue
 
 
 def sanitize_pinout_svg(raw_svg: str) -> str:
-    """Validate and sanitize an SVG string for safe inline rendering."""
+    """Validate and sanitize an SVG string using a strict element & attribute allowlist."""
     cleaned = str(raw_svg or "").strip()
     if not cleaned:
         return ""

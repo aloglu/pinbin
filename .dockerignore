@@ -12,10 +12,5 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
-pinbin_65_item_seed_data.json
-pinbin_technical_specification.md
-workbench_inventory_ui_preview.html
-
-# Built stylesheet and its build tool (made by `npm run build:css` or the Docker build)
-node_modules/
-app/static/tailwind.css
+docs/
+tests/

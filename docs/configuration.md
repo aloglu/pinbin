@@ -32,19 +32,6 @@ Copy `.env.example` to `.env` and edit the values you need. After editing `.env`
 | `MCP_READ_ONLY` | `false` | Set to `true` to block all write and delete actions over MCP. |
 | `MCP_API_TOKEN` | *(empty)* | Optional Bearer token checked on every `/mcp` request. |
 
-### Optional Server-Side AI API
-
-If you leave `AI_API_KEY` blank, built-in AI API endpoints stay disabled.
-
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `AI_PROVIDER` | `gemini` | Provider name: `gemini`, `openai`, `openrouter`, or `openai_compat`. |
-| `AI_API_KEY` | *(empty)* | API key for the chosen provider. Never stored in SQLite or included in backups. |
-| `AI_MODEL` | `gemini-3.5-flash-lite` | Model name sent to the provider. |
-| `AI_BASE_URL` | *(empty)* | Custom API URL (only needed when `AI_PROVIDER=openai_compat`). |
-| `AI_REASONING_EFFORT` | *(empty)* | Optional reasoning level (`low`, `medium`, `high`, or `none`). |
-| `AI_DAILY_LIMIT` | `30` | Maximum API calls per day to protect your billing. |
-
 ---
 
 ## Data Storage and Backups

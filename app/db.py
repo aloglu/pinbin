@@ -272,7 +272,6 @@ def get_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(str(db_path), timeout=10.0)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.execute("PRAGMA busy_timeout=5000;")
         yield conn
@@ -289,6 +288,7 @@ def init_db(settings: Settings) -> None:
     settings.images_dir.mkdir(parents=True, exist_ok=True)
     with db_lock:
         with get_connection(settings.db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
             conn.executescript(SCHEMA_SQL)
 
             def _ensure_cols(table: str, migrations: list[tuple[str, str]]) -> None:
@@ -635,59 +635,6 @@ def _seed_glossary_if_empty(conn: sqlite3.Connection) -> None:
                 """,
                 (rel_json, bench_tool, figure_key, item["id"]),
             )
-
-
-def upsert_suggested_glossary_terms(
-    db_path: Path, suggestions: list[dict[str, str]]
-) -> list[dict[str, Any]]:
-    """Automatically add AI-suggested glossary terms that do not already exist."""
-    if not suggestions:
-        return []
-    added: list[dict[str, Any]] = []
-    now = utc_now_iso()
-    with db_lock:
-        with get_connection(db_path) as conn:
-            existing_rows = conn.execute("SELECT LOWER(TRIM(term)) AS t FROM glossary").fetchall()
-            existing_terms = {r["t"] for r in existing_rows}
-
-            for item in suggestions[:3]:
-                term = str(item.get("term") or "").strip()
-                summary = str(item.get("summary") or "").strip()
-                if not term or not summary:
-                    continue
-                base_norm = term.lower().split("(")[0].strip()
-                if term.lower() in existing_terms or any(
-                    et.split("(")[0].strip() == base_norm for et in existing_terms
-                ):
-                    continue
-
-                cat = str(item.get("category") or "Circuit Basics").strip()
-                if cat not in GLOSSARY_CATEGORIES:
-                    cat = "Circuit Basics"
-
-                term_id = uuid.uuid4().hex
-                conn.execute(
-                    """
-                    INSERT INTO glossary (
-                        id, term, category, summary, rule_of_thumb, keywords, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        term_id,
-                        term[:120],
-                        cat,
-                        summary[:500],
-                        str(item.get("rule_of_thumb") or "").strip()[:400],
-                        str(item.get("keywords") or term.lower()).strip()[:300],
-                        now,
-                        now,
-                    ),
-                )
-                row = conn.execute("SELECT * FROM glossary WHERE id = ?", (term_id,)).fetchone()
-                if row:
-                    added.append(dict(row))
-                    existing_terms.add(term.lower())
-    return added
 
 
 def seed_if_empty(settings: Settings) -> int:
@@ -1171,42 +1118,6 @@ def delete_part(db_path: Path, part_id: str) -> dict[str, Any] | None:
             return part
 
 
-def get_ai_usage_today(db_path: Path) -> int:
-    today = utc_today_str()
-    with db_lock:
-        with get_connection(db_path) as conn:
-            row = conn.execute(
-                "SELECT count FROM ai_usage WHERE usage_date = ?", (today,)
-            ).fetchone()
-            return int(row["count"]) if row else 0
-
-
-def consume_ai_quota(db_path: Path, daily_limit: int) -> tuple[bool, int]:
-    """Atomically check and increment today's AI usage count. Returns (allowed, remaining)."""
-    if daily_limit <= 0:
-        return False, 0
-
-    today = utc_today_str()
-    with db_lock:
-        with get_connection(db_path) as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO ai_usage (usage_date, count) VALUES (?, 0)",
-                (today,),
-            )
-            row = conn.execute(
-                "SELECT count FROM ai_usage WHERE usage_date = ?", (today,)
-            ).fetchone()
-            current = int(row["count"]) if row else 0
-            if current >= daily_limit:
-                return False, 0
-            new_count = current + 1
-            conn.execute(
-                "UPDATE ai_usage SET count = ? WHERE usage_date = ?",
-                (new_count, today),
-            )
-            return True, max(0, daily_limit - new_count)
-
-
 def get_ui_settings(db_path: Path) -> dict[str, Any]:
     result = dict(DEFAULT_UI_SETTINGS)
     with db_lock:
@@ -1593,13 +1504,6 @@ def list_projects(db_path: Path) -> list[dict[str, Any]]:
             return [_hydrate_project(conn, r) for r in rows]
 
 
-def get_project(db_path: Path, project_id: str) -> dict[str, Any] | None:
-    with db_lock:
-        with get_connection(db_path) as conn:
-            row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-            return _hydrate_project(conn, row) if row else None
-
-
 def create_project(db_path: Path, data: dict[str, Any]) -> dict[str, Any]:
     name = str(data.get("name") or "").strip()
     if not name:
@@ -1852,14 +1756,19 @@ def add_project_item(db_path: Path, project_id: str, data: dict[str, Any]) -> di
                     pcat = str(p_ok["category"] or "")
                     role = "mcu" if pcat == "Microcontrollers" else ("material" if pcat in ("Prototyping", "Tools") else "periph")
                 dup = conn.execute(
-                    "SELECT id, ref FROM project_items WHERE project_id = ? AND part_id = ? AND COALESCE(variant_id, '') = ?",
+                    "SELECT id, ref, label, project_notes FROM project_items WHERE project_id = ? AND part_id = ? AND COALESCE(variant_id, '') = ?",
                     (project_id, part_id, variant_id or ""),
                 ).fetchone()
                 if dup:
-                    new_ref = desired_ref or dup["ref"] or _generate_unique_ref(conn, project_id)
+                    if desired_ref and desired_ref != dup["ref"]:
+                        new_ref = _generate_unique_ref(conn, project_id, desired_ref)
+                    else:
+                        new_ref = dup["ref"] or _generate_unique_ref(conn, project_id)
+                    new_label = label if "label" in data else (dup["label"] or "")
+                    new_notes = notes if "project_notes" in data else (dup["project_notes"] or "")
                     conn.execute(
                         "UPDATE project_items SET ref = ?, role = ?, label = ?, quantity_needed = ?, project_notes = ?, updated_at = ? WHERE id = ?",
-                        (new_ref, role, label, qty, notes, now, dup["id"]),
+                        (new_ref, role, new_label, qty, new_notes, now, dup["id"]),
                     )
                     item_id = dup["id"]
                 else:
@@ -1882,14 +1791,19 @@ def add_project_item(db_path: Path, project_id: str, data: dict[str, Any]) -> di
                     scat = str(s_ok["category"] or "")
                     role = "mcu" if scat == "Microcontrollers" else ("material" if scat in ("Prototyping", "Tools") else "periph")
                 dup = conn.execute(
-                    "SELECT id, ref FROM project_items WHERE project_id = ? AND shopping_item_id = ? AND COALESCE(variant_id, '') = ?",
+                    "SELECT id, ref, label, project_notes FROM project_items WHERE project_id = ? AND shopping_item_id = ? AND COALESCE(variant_id, '') = ?",
                     (project_id, shop_id, variant_id or ""),
                 ).fetchone()
                 if dup:
-                    new_ref = desired_ref or dup["ref"] or _generate_unique_ref(conn, project_id)
+                    if desired_ref and desired_ref != dup["ref"]:
+                        new_ref = _generate_unique_ref(conn, project_id, desired_ref)
+                    else:
+                        new_ref = dup["ref"] or _generate_unique_ref(conn, project_id)
+                    new_label = label if "label" in data else (dup["label"] or "")
+                    new_notes = notes if "project_notes" in data else (dup["project_notes"] or "")
                     conn.execute(
                         "UPDATE project_items SET ref = ?, role = ?, label = ?, quantity_needed = ?, project_notes = ?, updated_at = ? WHERE id = ?",
-                        (new_ref, role, label, qty, notes, now, dup["id"]),
+                        (new_ref, role, new_label, qty, new_notes, now, dup["id"]),
                     )
                     item_id = dup["id"]
                 else:
@@ -1949,6 +1863,8 @@ def update_project_item(
                 ).fetchone()
                 if not v_ok:
                     raise ValueError(f"Variant not found in project: {filtered['variant_id']}")
+            if filtered.get("ref") and filtered["ref"] != existing["ref"]:
+                filtered["ref"] = _generate_unique_ref(conn, project_id, filtered["ref"])
             if filtered:
                 now = utc_now_iso()
                 filtered["updated_at"] = now
@@ -1994,6 +1910,10 @@ def set_project_nets(db_path: Path, project_id: str, nets: list[dict[str, Any]])
             if not proj:
                 return None
             conn.execute("DELETE FROM project_nets WHERE project_id = ?", (project_id,))
+            used_ids = {
+                r["id"]
+                for r in conn.execute("SELECT id FROM project_nets").fetchall()
+            }
             for idx, net in enumerate(nets[:60]):
                 if not isinstance(net, dict):
                     continue
@@ -2013,7 +1933,10 @@ def set_project_nets(db_path: Path, project_id: str, nets: list[dict[str, Any]])
                             rail = round(rv, 2)
                     except (TypeError, ValueError):
                         rail = None
-                net_id = str(net.get("id") or uuid.uuid4().hex).strip()[:64]
+                net_id = str(net.get("id") or "").strip()[:64]
+                if not net_id or net_id in used_ids:
+                    net_id = uuid.uuid4().hex
+                used_ids.add(net_id)
                 conn.execute(
                     """
                     INSERT INTO project_nets (
@@ -2039,66 +1962,6 @@ def set_project_nets(db_path: Path, project_id: str, nets: list[dict[str, Any]])
             return _hydrate_project(conn, row)
 
 
-def add_project_net(db_path: Path, project_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
-    conns = _normalize_net_connections(data.get("conns") if "conns" in data else data.get("connections"))
-    if len(conns) < 2:
-        raise ValueError("A wiring net needs at least 2 [ref, pin] connections")
-    kind = str(data.get("kind") or "sig").strip().lower()
-    if kind not in NET_KINDS:
-        kind = "sig"
-    name = str(data.get("name") or "").strip()[:120] or kind.upper()
-    rail_val = data.get("rail")
-    rail: float | None = None
-    if rail_val not in (None, ""):
-        rv = float(rail_val)
-        if math.isfinite(rv) and 0 < rv <= 60:
-            rail = round(rv, 2)
-    net_id = str(data.get("id") or uuid.uuid4().hex).strip()[:64]
-    now = utc_now_iso()
-    with db_lock:
-        with get_connection(db_path) as conn:
-            proj = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
-            if not proj:
-                return None
-            cnt = conn.execute("SELECT COUNT(*) AS c FROM project_nets WHERE project_id = ?", (project_id,)).fetchone()["c"]
-            conn.execute(
-                """
-                INSERT INTO project_nets (
-                    id, project_id, name, kind, rail, is_chain, is_wake, connections, sort_order, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    net_id,
-                    project_id,
-                    name,
-                    kind,
-                    rail,
-                    1 if bool(data.get("chain") or data.get("is_chain")) else 0,
-                    1 if bool(data.get("wake") or data.get("is_wake")) else 0,
-                    json.dumps(conns),
-                    cnt,
-                    now,
-                    now,
-                ),
-            )
-            conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (now, project_id))
-            row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-            return _hydrate_project(conn, row)
-
-
-def delete_project_net(db_path: Path, project_id: str, net_id: str) -> bool:
-    with db_lock:
-        with get_connection(db_path) as conn:
-            cur = conn.execute(
-                "DELETE FROM project_nets WHERE id = ? AND project_id = ?",
-                (net_id, project_id),
-            )
-            if cur.rowcount > 0:
-                conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (utc_now_iso(), project_id))
-                return True
-            return False
-
-
 def set_project_checks(db_path: Path, project_id: str, checks: list[dict[str, Any]]) -> dict[str, Any] | None:
     now = utc_now_iso()
     with db_lock:
@@ -2111,6 +1974,10 @@ def set_project_checks(db_path: Path, project_id: str, checks: list[dict[str, An
                 for r in conn.execute("SELECT id, is_done FROM project_checks WHERE project_id = ?", (project_id,)).fetchall()
             }
             conn.execute("DELETE FROM project_checks WHERE project_id = ?", (project_id,))
+            used_ids = {
+                r["id"]
+                for r in conn.execute("SELECT id FROM project_checks").fetchall()
+            }
             for idx, chk in enumerate(checks[:60]):
                 if not isinstance(chk, dict):
                     continue
@@ -2120,7 +1987,10 @@ def set_project_checks(db_path: Path, project_id: str, checks: list[dict[str, An
                 sev = str(chk.get("severity") or "check").strip().lower()
                 if sev not in CHECK_SEVERITIES:
                     sev = "check"
-                chk_id = str(chk.get("id") or uuid.uuid4().hex).strip()[:64]
+                chk_id = str(chk.get("id") or "").strip()[:64]
+                if not chk_id or chk_id in used_ids:
+                    chk_id = uuid.uuid4().hex
+                used_ids.add(chk_id)
                 done = bool(chk.get("is_done")) if "is_done" in chk else prev_done.get(chk_id, False)
                 conn.execute(
                     """
@@ -2189,19 +2059,6 @@ def update_project_check(
                 conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (now, project_id))
             row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
             return _hydrate_project(conn, row)
-
-
-def delete_project_check(db_path: Path, project_id: str, check_id: str) -> bool:
-    with db_lock:
-        with get_connection(db_path) as conn:
-            cur = conn.execute(
-                "DELETE FROM project_checks WHERE id = ? AND project_id = ?",
-                (check_id, project_id),
-            )
-            if cur.rowcount > 0:
-                conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (utc_now_iso(), project_id))
-                return True
-            return False
 
 
 def delete_project_item(db_path: Path, project_id: str, item_id: str) -> bool:
@@ -2742,6 +2599,16 @@ def import_parts_from_rows(db_path: Path, rows: list[dict[str, Any]]) -> int:
                     lst = None
 
                 specs_json = json.dumps(_normalize_specs(item.get("specs") or "{}"))
+                try:
+                    safe_source_url = _validate_http_url(str(item.get("source_url") or ""))
+                except ValueError:
+                    safe_source_url = ""
+                try:
+                    safe_pinout_url = _validate_http_url(str(item.get("pinout_url") or ""))
+                except ValueError:
+                    safe_pinout_url = ""
+                warn_text = str(item.get("warning") or "").strip()
+                care_json = json.dumps([{"severity": "check", "text": warn_text}] if warn_text else [])
                 existing = conn.execute("SELECT id FROM parts WHERE id = ?", (part_id,)).fetchone()
                 if existing:
                     conn.execute(
@@ -2749,7 +2616,7 @@ def import_parts_from_rows(db_path: Path, rows: list[dict[str, Any]]) -> int:
                         UPDATE parts SET
                             name=?, subtitle=?, category=?, quantity=?, low_stock_threshold=?,
                             location=?, in_use_project=?, what_it_does=?, visual_tell=?,
-                            warning=?, notes=?, source_url=?, pinout_url=?, specs=?, updated_at=?
+                            warning=?, care_notes=?, notes=?, source_url=?, pinout_url=?, specs=?, updated_at=?
                         WHERE id=?
                         """,
                         (
@@ -2762,10 +2629,11 @@ def import_parts_from_rows(db_path: Path, rows: list[dict[str, Any]]) -> int:
                             str(item.get("in_use_project") or "").strip(),
                             str(item.get("what_it_does") or "").strip(),
                             str(item.get("visual_tell") or "").strip(),
-                            str(item.get("warning") or "").strip(),
+                            warn_text,
+                            care_json,
                             str(item.get("notes") or "").strip(),
-                            str(item.get("source_url") or "").strip(),
-                            str(item.get("pinout_url") or "").strip(),
+                            safe_source_url,
+                            safe_pinout_url,
                             specs_json,
                             now,
                             part_id,
@@ -2776,10 +2644,10 @@ def import_parts_from_rows(db_path: Path, rows: list[dict[str, Any]]) -> int:
                         """
                         INSERT INTO parts (
                             id, name, subtitle, category, quantity, low_stock_threshold,
-                            location, in_use_project, what_it_does, visual_tell, warning,
+                            location, in_use_project, what_it_does, visual_tell, warning, care_notes,
                             notes, source_url, image_path, pinout_image_path, pinout_url,
                             specs, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?)
                         """,
                         (
                             part_id,
@@ -2792,10 +2660,11 @@ def import_parts_from_rows(db_path: Path, rows: list[dict[str, Any]]) -> int:
                             str(item.get("in_use_project") or "").strip(),
                             str(item.get("what_it_does") or "").strip(),
                             str(item.get("visual_tell") or "").strip(),
-                            str(item.get("warning") or "").strip(),
+                            warn_text,
+                            care_json,
                             str(item.get("notes") or "").strip(),
-                            str(item.get("source_url") or "").strip(),
-                            str(item.get("pinout_url") or "").strip(),
+                            safe_source_url,
+                            safe_pinout_url,
                             specs_json,
                             now,
                             now,
@@ -2975,16 +2844,6 @@ def upsert_retailer(db_path: Path, domain: str, data: dict[str, Any]) -> dict[st
                 )
             row = conn.execute("SELECT * FROM retailers WHERE domain = ?", (norm,)).fetchone()
             return dict(row)
-
-
-def delete_retailer(db_path: Path, domain: str) -> bool:
-    norm = _normalize_domain(domain)
-    if not norm:
-        return False
-    with db_lock:
-        with get_connection(db_path) as conn:
-            cur = conn.execute("DELETE FROM retailers WHERE domain = ?", (norm,))
-            return cur.rowcount > 0
 
 
 def parse_price(price_str: str) -> tuple[float | None, str]:
@@ -3380,16 +3239,6 @@ def optimize_shopping_carts(
 # MCP runtime settings, activity log, storage stats, and wipe
 # =============================================================================
 
-_MCP_SETTING_KEYS = {
-    "mcp_access",
-    "mcp_can_parts",
-    "mcp_can_projects",
-    "mcp_can_shopping",
-    "mcp_can_delete",
-    "mcp_api_token",
-    "mcp_last_request_at",
-}
-
 
 def get_mcp_runtime_settings(settings: Settings) -> dict[str, Any]:
     defaults: dict[str, Any] = {
@@ -3400,6 +3249,7 @@ def get_mcp_runtime_settings(settings: Settings) -> dict[str, Any]:
         "can_delete": False,
         "token": settings.mcp_api_token or "",
         "last_request_at": "",
+        "env_read_only": settings.mcp_read_only,
     }
     key_map = {
         "mcp_access": "access",
@@ -3433,12 +3283,18 @@ def get_mcp_runtime_settings(settings: Settings) -> dict[str, Any]:
                 (week_ago,),
             ).fetchone()["c"]
             defaults["weekly_requests"] = int(weekly_count)
+
+    # Hard ceiling: MCP_READ_ONLY=true in server environment can never be overridden by SQLite
+    if settings.mcp_read_only:
+        defaults["access"] = "ro"
     return defaults
 
 
 def update_mcp_runtime_settings(settings: Settings, updates: dict[str, Any]) -> dict[str, Any]:
     clean: dict[str, Any] = {}
     if "access" in updates and updates["access"] in ("rw", "ro"):
+        if settings.mcp_read_only and updates["access"] == "rw":
+            raise ValueError("MCP_READ_ONLY=true in server environment locks the assistant to read-only mode.")
         clean["mcp_access"] = updates["access"]
     for field, db_key in (
         ("can_parts", "mcp_can_parts"),
@@ -3505,6 +3361,14 @@ def list_mcp_activity(db_path: Path, limit: int = 25) -> list[dict[str, Any]]:
 
 
 GUEST_COOKIE_NAME = "pinbin_guest"
+_guest_pass_cache: dict[str, dict[str, Any]] = {}
+
+
+def invalidate_guest_pass_cache(db_path: Path | None = None) -> None:
+    if db_path is None:
+        _guest_pass_cache.clear()
+    else:
+        _guest_pass_cache.pop(str(db_path.resolve()), None)
 
 
 def _guest_session_digest(token: str) -> str:
@@ -3512,6 +3376,10 @@ def _guest_session_digest(token: str) -> str:
 
 
 def get_guest_pass_settings(db_path: Path) -> dict[str, Any]:
+    cache_key = str(db_path.resolve())
+    cached = _guest_pass_cache.get(cache_key)
+    if cached is not None:
+        return dict(cached)
     out: dict[str, Any] = {
         "enabled": False,
         "token": "",
@@ -3543,6 +3411,7 @@ def get_guest_pass_settings(db_path: Path) -> dict[str, Any]:
     out["created_at"] = str(out.get("created_at") or "")
     out["last_used_at"] = str(out.get("last_used_at") or "")
     out["path"] = f"/guest/pass/{out['token']}" if out["token"] else ""
+    _guest_pass_cache[cache_key] = dict(out)
     return out
 
 
@@ -3562,6 +3431,7 @@ def update_guest_pass_settings(db_path: Path, enabled: bool) -> dict[str, Any]:
                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                     (k, json.dumps(v)),
                 )
+        invalidate_guest_pass_cache(db_path)
     return get_guest_pass_settings(db_path)
 
 
@@ -3580,6 +3450,7 @@ def rotate_guest_pass_token(db_path: Path) -> dict[str, Any]:
                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                     (k, json.dumps(v)),
                 )
+        invalidate_guest_pass_cache(db_path)
     return get_guest_pass_settings(db_path)
 
 
@@ -3620,6 +3491,7 @@ def record_guest_pass_use(db_path: Path) -> None:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (json.dumps(now),),
             )
+        invalidate_guest_pass_cache(db_path)
 
 
 def record_backup_timestamp(db_path: Path) -> str:
@@ -3653,7 +3525,8 @@ def get_storage_stats(settings: Settings) -> dict[str, Any]:
 
 
 def wipe_all_data(settings: Settings) -> dict[str, Any]:
-    """Delete all parts, projects, shopping items, activity logs, and local images."""
+    """Delete all parts, projects, shopping items, retailers, activity logs, and local images."""
+    removed_images = 0
     with db_lock:
         with get_connection(settings.db_path) as conn:
             conn.execute("DELETE FROM project_checks")
@@ -3663,12 +3536,13 @@ def wipe_all_data(settings: Settings) -> dict[str, Any]:
             conn.execute("DELETE FROM projects")
             conn.execute("DELETE FROM shopping_item_offers")
             conn.execute("DELETE FROM shopping_items")
+            conn.execute("DELETE FROM retailers")
             conn.execute("DELETE FROM parts")
             conn.execute("DELETE FROM mcp_activity")
-    removed_images = 0
-    if settings.images_dir.is_dir():
-        for entry in list(settings.images_dir.iterdir()):
-            if entry.is_file() and not entry.is_symlink():
-                safe_delete_image(entry.name, settings.images_dir)
-                removed_images += 1
+        if settings.images_dir.is_dir():
+            for entry in list(settings.images_dir.iterdir()):
+                if entry.is_file() and not entry.is_symlink() and is_valid_image_filename(entry.name):
+                    safe_delete_image(entry.name, settings.images_dir)
+                    removed_images += 1
+        invalidate_guest_pass_cache(settings.db_path)
     return {"status": "ok", "removed_images": removed_images}

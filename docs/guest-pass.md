@@ -19,13 +19,13 @@ Guest Pass lets you share a private link so someone can browse your Pinbin workb
 If you host Pinbin behind Cloudflare Access, Cloudflare blocks `/guest` until you allow it through:
 
 1. Open **Cloudflare Zero Trust → Access → Applications**.
-2. Create a new **Self-hosted** application (or add a path) for your Pinbin hostname with the path **`guest`** (for example, `pinbin.yourdomain.com/guest`).
+2. Create a new **Self-hosted** application (or add a path) for your Pinbin hostname with the path **`/guest/*`** (entered as `guest` in Cloudflare's path box, e.g. `pinbin.yourdomain.com/guest`).
 3. Add a policy with Action set to **Bypass** and Include set to **Everyone**.
 4. Save the application.
 
-This only lets requests under `/guest` bypass Cloudflare Access. Your main app (`/`) and `/mcp` remain locked behind your login policy.
+This only lets requests under `/guest/*` bypass Cloudflare Access. Your main app (`/`) and `/mcp` remain locked behind your login policy.
 
-> **Do not worry about open access:** Pinbin checks its own secret guest key on every `/guest` request. Anyone without your link sees a locked page.
+> **Do not worry about open access:** Pinbin checks its own secret guest key on every `/guest/*` request. Anyone without your link sees a locked page.
 
 ---
 
@@ -35,7 +35,7 @@ This only lets requests under `/guest` bypass Cloudflare Access. Your main app (
 2. Turn **Guest pass** on.
 3. Click **Copy link** and send the link to your guest.
 
-When a guest opens the link (`/guest?key=...`), Pinbin verifies the key, saves a read-only session cookie for `/guest`, and redirects them to a clean `/guest/inventory` URL so the key does not stay in the address bar.
+When a guest opens the link (`/guest/pass/<token>`), Pinbin verifies the token, saves a read-only session cookie for `/guest`, and redirects them to a clean `/guest/inventory` URL so the token does not stay in the address bar.
 
 ---
 

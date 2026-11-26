@@ -8,6 +8,7 @@ import {
   sevGlyph,
   partById,
   appHref,
+  plainWarningText,
 } from '../state.js';
 import { warningsOfProject } from '../rules.js';
 import { renderPartInspector } from '../inspectors.js';
@@ -204,7 +205,7 @@ export function renderGlossaryView() {
                  ([pr, w]) =>
                    `<button type="button" class="hitrow" data-goto="${esc(pr.id)}|${esc(w.id)}">
                      <span class="sev ${esc(w.sev)}">${sevGlyph(w.sev)}</span>
-                     <span><b>${esc(String(w.t || '').replace(/<[^>]+>/g, ''))}</b><span class="faint">${esc(
+                     <span><b>${esc(plainWarningText(w.t))}</b><span class="faint">${esc(
                      pr.name
                    )}</span></span>
                    </button>`

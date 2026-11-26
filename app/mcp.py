@@ -39,7 +39,6 @@ from app.db import (
     delete_shopping_offer,
     get_mcp_runtime_settings,
     get_part,
-    get_project,
     get_shopping_item,
     list_glossary,
     list_parts,
@@ -468,7 +467,10 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                         "maxItems": MAX_BATCH_UPDATES,
                         "items": {
                             "type": "object",
-                            "properties": {"part_id": {"type": "string"}, **part_props},
+                            "properties": {
+                                "part_id": {"type": "string"},
+                                **{k: v for k, v in part_props.items() if k not in ("image_url", "pinout_image_url")},
+                            },
                             "required": ["part_id"],
                             "additionalProperties": False,
                         },
@@ -1019,6 +1021,10 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
     return read_tools + write_tools
 
 
+def _filter_tools_for_runtime(tools: list[dict[str, Any]], runtime: dict[str, Any]) -> list[dict[str, Any]]:
+    return [t for t in tools if _check_tool_permission(t["name"], runtime) is None]
+
+
 def _compute_inventory_summary(settings: Settings) -> dict[str, Any]:
     parts = list_parts(settings.db_path)
     shopping = list_shopping_items(settings.db_path)
@@ -1035,6 +1041,7 @@ def _compute_inventory_summary(settings: Settings) -> dict[str, Any]:
         if p.get("low_stock_threshold") is not None and int(p.get("quantity") or 0) <= int(p["low_stock_threshold"])
     )
     needs_photo_count = sum(1 for p in parts if not (p.get("image_path") or "").strip())
+    runtime = get_mcp_runtime_settings(settings)
 
     return {
         "total_parts": len(parts),
@@ -1049,7 +1056,7 @@ def _compute_inventory_summary(settings: Settings) -> dict[str, Any]:
         "active_projects": dict(sorted(project_counts.items())),
         "valid_categories": CATEGORIES,
         "valid_glossary_categories": GLOSSARY_CATEGORIES,
-        "read_only": settings.mcp_read_only,
+        "read_only": runtime.get("access") == "ro",
     }
 
 
@@ -1278,31 +1285,52 @@ _DELETE_TOOLS = {
     "delete_project_variant",
     "remove_project_item",
     "delete_shopping_item",
+    "remove_shopping_offer",
     "delete_glossary_term",
 }
 _GLOSSARY_WRITE_TOOLS = {"create_glossary_term", "update_glossary_term"}
+_ALL_WRITE_TOOLS = (
+    _PART_WRITE_TOOLS
+    | _PROJECT_WRITE_TOOLS
+    | _SHOPPING_WRITE_TOOLS
+    | _DELETE_TOOLS
+    | _GLOSSARY_WRITE_TOOLS
+)
+
+
+def _check_tool_permission(name: str, runtime: dict[str, Any]) -> str | None:
+    if name not in _ALL_WRITE_TOOLS:
+        return None
+    if runtime.get("access") == "ro":
+        return "Assistant is in read-only mode (Settings → Assistant)."
+    if name == "move_shopping_to_inventory":
+        if not runtime.get("can_shopping", True):
+            return "Managing shopping is turned off in Settings → Assistant."
+        if not runtime.get("can_parts", True):
+            return "Editing parts is turned off in Settings → Assistant."
+    if name in _DELETE_TOOLS and not runtime.get("can_delete", False):
+        return "Deleting items is turned off in Settings → Assistant."
+    if name in _PART_WRITE_TOOLS and not runtime.get("can_parts", True):
+        return "Editing parts is turned off in Settings → Assistant."
+    if name in _PROJECT_WRITE_TOOLS and not runtime.get("can_projects", True):
+        return "Editing projects is turned off in Settings → Assistant."
+    if name in _SHOPPING_WRITE_TOOLS and not runtime.get("can_shopping", True):
+        return "Managing shopping is turned off in Settings → Assistant."
+    if name in _GLOSSARY_WRITE_TOOLS and not (
+        runtime.get("can_parts", True)
+        or runtime.get("can_projects", True)
+        or runtime.get("can_shopping", True)
+    ):
+        return "Write permissions are turned off in Settings → Assistant."
+    return None
 
 
 async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> Any:
     runtime = get_mcp_runtime_settings(settings)
     is_read_only = runtime.get("access") == "ro"
-    write_tool_names = (
-        _PART_WRITE_TOOLS
-        | _PROJECT_WRITE_TOOLS
-        | _SHOPPING_WRITE_TOOLS
-        | _DELETE_TOOLS
-        | _GLOSSARY_WRITE_TOOLS
-    )
-    if is_read_only and name in write_tool_names:
-        raise McpToolError("Assistant is in read-only mode (Settings → Assistant).")
-    if name in _PART_WRITE_TOOLS and not runtime.get("can_parts", True):
-        raise McpToolError("Editing parts is turned off in Settings → Assistant.")
-    if name in _PROJECT_WRITE_TOOLS and not runtime.get("can_projects", True):
-        raise McpToolError("Editing projects is turned off in Settings → Assistant.")
-    if name in _SHOPPING_WRITE_TOOLS and not runtime.get("can_shopping", True):
-        raise McpToolError("Managing shopping is turned off in Settings → Assistant.")
-    if name in _DELETE_TOOLS and not runtime.get("can_delete", False):
-        raise McpToolError("Deleting items is turned off in Settings → Assistant.")
+    deny_reason = _check_tool_permission(name, runtime)
+    if deny_reason:
+        raise McpToolError(deny_reason)
 
     record_mcp_request(settings.db_path)
 
@@ -1418,11 +1446,18 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         data = {k: v for k, v in args.items() if k in PART_WRITABLE_FIELDS}
         data["name"] = part_name
         new_main_img = await _fetch_optional_image(settings, args.get("image_url", ""))
-        new_pin_img = await _fetch_optional_image(settings, args.get("pinout_image_url", ""))
+        try:
+            new_pin_img = await _fetch_optional_image(settings, args.get("pinout_image_url", ""))
+        except Exception:
+            if new_main_img:
+                safe_delete_image(new_main_img, settings.images_dir)
+            raise
         if new_main_img:
             data["image_path"] = new_main_img
         if new_pin_img:
             data["pinout_image_path"] = new_pin_img
+            if "pinout_svg" not in args:
+                data["pinout_svg"] = ""
         try:
             created = create_part(settings.db_path, data)
         except (ValueError, ImageError) as exc:
@@ -1443,11 +1478,18 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
             raise McpToolError(f"Part not found: {part_id}")
         updates = {k: v for k, v in args.items() if k in PART_WRITABLE_FIELDS}
         new_main_img = await _fetch_optional_image(settings, args.get("image_url", ""))
-        new_pin_img = await _fetch_optional_image(settings, args.get("pinout_image_url", ""))
+        try:
+            new_pin_img = await _fetch_optional_image(settings, args.get("pinout_image_url", ""))
+        except Exception:
+            if new_main_img:
+                safe_delete_image(new_main_img, settings.images_dir)
+            raise
         if new_main_img:
             updates["image_path"] = new_main_img
         if new_pin_img:
             updates["pinout_image_path"] = new_pin_img
+            if "pinout_svg" not in args:
+                updates["pinout_svg"] = ""
         try:
             updated = update_part(settings.db_path, part_id, updates)
         except (ValueError, ImageError) as exc:
@@ -1457,6 +1499,10 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
                 safe_delete_image(new_pin_img, settings.images_dir)
             raise McpToolError(str(exc)) from exc
         if updated is None:
+            if new_main_img:
+                safe_delete_image(new_main_img, settings.images_dir)
+            if new_pin_img:
+                safe_delete_image(new_pin_img, settings.images_dir)
             raise McpToolError(f"Part not found: {part_id}")
         if new_main_img and existing.get("image_path") and existing["image_path"] != new_main_img:
             safe_delete_image(existing["image_path"], settings.images_dir)
@@ -1510,7 +1556,7 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
 
     if name == "create_project":
         try:
-            created = create_project(settings.db_path, args)
+            created = create_project(settings.db_path, {k: v for k, v in args.items() if k != "id"})
         except ValueError as exc:
             raise McpToolError(str(exc)) from exc
         record_mcp_request(settings.db_path, name, created["name"], f"Created project {created['name']}")
@@ -1544,7 +1590,9 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         if not project_id:
             raise McpToolError("project_id is required")
         try:
-            created = create_project_variant(settings.db_path, project_id, args)
+            created = create_project_variant(
+                settings.db_path, project_id, {k: v for k, v in args.items() if k != "id"}
+            )
         except ValueError as exc:
             raise McpToolError(str(exc)) from exc
         if created is None:
@@ -1663,16 +1711,24 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         data["name"] = item_name
         if isinstance(args.get("offers"), list):
             data["offers"] = args["offers"]
+        saved_img = ""
         if args.get("image_url"):
             explicit_img = await _fetch_optional_image(settings, args["image_url"])
             if explicit_img:
+                saved_img = explicit_img
                 data["image_path"] = explicit_img
         fetch_meta = bool(args.get("fetch_metadata", True))
         if fetch_meta and data.get("url"):
             try:
-                scraped = await scrape_url(str(data["url"]), settings.images_dir, settings.max_upload_bytes)
+                scraped = await scrape_url(
+                    str(data["url"]),
+                    settings.images_dir,
+                    settings.max_upload_bytes,
+                    download_image=not bool(data.get("image_path")),
+                )
                 if not data.get("image_path") and scraped.get("image_path"):
-                    data["image_path"] = scraped["image_path"]
+                    saved_img = scraped["image_path"]
+                    data["image_path"] = saved_img
                 if not data.get("price") and scraped.get("price"):
                     data["price"] = scraped["price"]
                 if not data.get("retailer") and scraped.get("retailer"):
@@ -1681,7 +1737,12 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
                     data["in_stock"] = scraped["in_stock"]
             except ScrapeError:
                 pass
-        created = create_shopping_item(settings.db_path, data)
+        try:
+            created = create_shopping_item(settings.db_path, data)
+        except ValueError as exc:
+            if saved_img:
+                safe_delete_image(saved_img, settings.images_dir)
+            raise McpToolError(str(exc)) from exc
         record_mcp_request(settings.db_path, name, "Shopping", f"Added {created['name']} to shopping list")
         project_id = str(args.get("project_id") or "").strip()
         if project_id:
@@ -1722,7 +1783,12 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
                 updates["image_path"] = new_img
         if fetch_meta and target_url:
             try:
-                scraped = await scrape_url(target_url, settings.images_dir, settings.max_upload_bytes)
+                scraped = await scrape_url(
+                    target_url,
+                    settings.images_dir,
+                    settings.max_upload_bytes,
+                    download_image=not bool(new_img),
+                )
                 if not new_img and scraped.get("image_path"):
                     new_img = scraped["image_path"]
                     updates["image_path"] = new_img
@@ -1971,7 +2037,8 @@ async def _handle_single_rpc(settings: Settings, msg: Any) -> dict[str, Any] | N
 
     if method == "tools/list":
         runtime = get_mcp_runtime_settings(settings)
-        return _jsonrpc_result(req_id, {"tools": _build_tool_definitions(runtime.get("access") == "ro")})
+        tools = _filter_tools_for_runtime(_build_tool_definitions(runtime.get("access") == "ro"), runtime)
+        return _jsonrpc_result(req_id, {"tools": tools})
 
     if method == "tools/call":
         tool_name = str(params.get("name") or "").strip()
@@ -2029,9 +2096,16 @@ async def handle_mcp_post(request: Request, settings: Settings) -> Response:
     if auth_err is not None:
         return auth_err
 
-    raw_body = await request.body()
-    if len(raw_body) > MAX_MCP_BODY_BYTES:
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_MCP_BODY_BYTES:
         return JSONResponse(status_code=413, content=_jsonrpc_error(None, -32600, "Request body too large"))
+
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+        if len(chunks) > MAX_MCP_BODY_BYTES:
+            return JSONResponse(status_code=413, content=_jsonrpc_error(None, -32600, "Request body too large"))
+    raw_body = bytes(chunks)
     try:
         payload = json.loads(raw_body.decode("utf-8"))
     except Exception:

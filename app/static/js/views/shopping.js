@@ -178,7 +178,7 @@ export function renderShoppingView() {
                 const unit = unitPriceOf(it);
                 const lineTotal = unit !== null ? money(unit * (it.quantity || 1)) : '—';
                 const why = it.why_needed || it.notes || '';
-                return `<div class="lrow ${sel === it.id ? 'sel' : ''}" data-sel="item:${esc(it.id)}">
+                return `<div class="lrow ${sel === it.id ? 'sel' : ''}" data-sel="item:${esc(it.id)}" role="button" tabindex="0">
                   ${phPart(it)}
                   <div class="n">${esc(it.name)}<small>${esc(why)}</small></div>
                   <span class="c3 dim">${

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
 import re
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import segno
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -14,14 +17,12 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.auth import CloudflareAccessMiddleware, render_guest_locked_html
+from app.auth import CloudflareAccessMiddleware, is_allowed_guest_resource, render_guest_locked_html
 from app.backup import BackupError, create_backup_zip_bytes, restore_backup_zip_bytes
 from app.config import CATEGORIES, Settings, load_settings
 from app.db import (
     GUEST_COOKIE_NAME,
-    PROJECT_STATUSES,
     add_project_item,
-    add_project_net,
     add_shopping_offer,
     bulk_update_shopping_status_by_store,
     create_glossary_term,
@@ -32,18 +33,13 @@ from app.db import (
     delete_glossary_term,
     delete_part,
     delete_project,
-    delete_project_check,
     delete_project_item,
-    delete_project_net,
     delete_project_variant,
-    delete_retailer,
     delete_shopping_item,
     delete_shopping_offer,
-    get_ai_usage_today,
     get_guest_pass_settings,
     get_mcp_runtime_settings,
     get_part,
-    get_project,
     get_shopping_item,
     get_storage_stats,
     get_ui_settings,
@@ -79,12 +75,10 @@ from app.db import (
     update_shopping_offer,
     update_ui_settings,
     upsert_retailer,
-    upsert_suggested_glossary_terms,
     utc_today_str,
     verify_guest_pass_token,
     wipe_all_data,
 )
-from app.enricher import EnrichError, check_parts_compatibility_ai, enrich_part, explain_glossary_term
 from app.glossary_seed import GLOSSARY_CATEGORIES
 from app.images import (
     ImageError,
@@ -93,7 +87,7 @@ from app.images import (
     safe_delete_image,
 )
 from app.mcp import handle_mcp_post, verify_mcp_access
-from app.scraper import ScrapeError, find_image_candidates, scrape_url
+from app.scraper import ScrapeError, scrape_url
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -153,14 +147,6 @@ class ScrapeRequest(BaseModel):
     slot: str = "main"
 
 
-class EnrichRequest(BaseModel):
-    query: str = ""
-    scraped_title: str = ""
-    scraped_description: str = ""
-    fetch_image: bool = True
-    part_id: str | None = None
-
-
 class UiSettingsPatch(BaseModel):
     theme: str | None = None
     font: str | None = None
@@ -211,10 +197,6 @@ class GlossaryPatch(BaseModel):
     related_ids: list[str] | None = None
     bench_tool: str | None = None
     figure_key: str | None = None
-
-
-class GlossaryExplainRequest(BaseModel):
-    term: str = Field(..., min_length=1, max_length=120)
 
 
 class ProjectTeardownRequest(BaseModel):
@@ -384,10 +366,6 @@ class ShoppingItemPatch(BaseModel):
     why_needed: str | None = None
 
 
-class CompatibilityRequest(BaseModel):
-    part_ids: list[str] = Field(..., min_length=2, max_length=6)
-
-
 def create_app(custom_settings: Settings | None = None) -> FastAPI:
     settings = custom_settings or load_settings()
 
@@ -416,9 +394,11 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     _GEAR_LINK_RE = re.compile(r'<a[^>]*id="gearBtn"[^>]*>.*?</a>', re.DOTALL)
 
+    @lru_cache(maxsize=1)
     def _render_guest_shell_html() -> str:
         raw = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         raw = raw.replace('href="/manifest.webmanifest"', 'href="/guest/manifest.webmanifest"')
+        raw = raw.replace('href="/apple-touch-icon.png"', 'href="/guest/apple-touch-icon.png"')
         raw = raw.replace('href="/static/', 'href="/guest/static/')
         raw = raw.replace('src="/static/', 'src="/guest/static/')
         raw = raw.replace('href="/inventory"', 'href="/guest/inventory"')
@@ -485,15 +465,17 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
         record_guest_pass_use(settings.db_path)
         target = "/guest/inventory"
-        if (
-            next
-            and next.startswith("/guest/")
-            and not next.startswith("/guest/pass/")
-            and "//" not in next
-            and "\r" not in next
-            and "\n" not in next
-        ):
-            target = next
+        if next and "\\" not in next and ".." not in next and "//" not in next and "\r" not in next and "\n" not in next:
+            parsed_next = urlparse(next)
+            if (
+                not parsed_next.scheme
+                and not parsed_next.netloc
+                and parsed_next.path.startswith("/guest/")
+                and not parsed_next.path.startswith("/guest/pass/")
+                and parsed_next.path != "/guest/logout"
+                and is_allowed_guest_resource(parsed_next.path)
+            ):
+                target = next
 
         resp = RedirectResponse(url=target, status_code=302)
         resp.set_cookie(
@@ -625,15 +607,12 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     @application.get("/api/config")
     async def api_config() -> dict[str, Any]:
-        used = get_ai_usage_today(settings.db_path)
-        remaining = max(0, settings.ai_daily_limit - used) if settings.ai_enabled else 0
+        mcp_rt = get_mcp_runtime_settings(settings)
         return {
             "guest_mode": False,
-            "ai_enabled": settings.ai_enabled,
-            "ai_remaining_today": remaining,
             "local_dev_mode": settings.local_dev_mode,
             "mcp_enabled": settings.mcp_enabled,
-            "mcp_read_only": settings.mcp_read_only,
+            "mcp_read_only": mcp_rt.get("access") == "ro",
             "categories": CATEGORIES,
             "glossary_categories": GLOSSARY_CATEGORIES,
             "ui_settings": get_ui_settings(settings.db_path),
@@ -662,13 +641,6 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         if not delete_glossary_term(settings.db_path, term_id):
             raise HTTPException(status_code=404, detail="Glossary term not found")
         return {"status": "deleted", "id": term_id}
-
-    @application.post("/api/glossary/explain")
-    async def api_explain_glossary(payload: GlossaryExplainRequest) -> dict[str, str]:
-        try:
-            return await explain_glossary_term(settings, payload.term)
-        except EnrichError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     @application.get("/api/projects")
     async def api_list_projects() -> list[dict[str, Any]]:
@@ -765,22 +737,6 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Project not found")
         return updated
 
-    @application.post("/api/projects/{project_id}/nets", status_code=201)
-    async def api_add_project_net(project_id: str, payload: ProjectNetCreate) -> dict[str, Any]:
-        try:
-            updated = add_project_net(settings.db_path, project_id, payload.model_dump())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if updated is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-        return updated
-
-    @application.delete("/api/projects/{project_id}/nets/{net_id}")
-    async def api_delete_project_net(project_id: str, net_id: str) -> dict[str, str]:
-        if not delete_project_net(settings.db_path, project_id, net_id):
-            raise HTTPException(status_code=404, detail="Net not found")
-        return {"status": "deleted", "id": net_id}
-
     @application.put("/api/projects/{project_id}/checks")
     async def api_replace_project_checks(project_id: str, payload: ProjectChecksReplace) -> dict[str, Any]:
         updated = set_project_checks(settings.db_path, project_id, payload.checks)
@@ -802,12 +758,6 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Check not found")
         return updated
 
-    @application.delete("/api/projects/{project_id}/checks/{check_id}")
-    async def api_delete_project_check(project_id: str, check_id: str) -> dict[str, str]:
-        if not delete_project_check(settings.db_path, project_id, check_id):
-            raise HTTPException(status_code=404, detail="Check not found")
-        return {"status": "deleted", "id": check_id}
-
     @application.post("/api/projects/teardown")
     async def api_teardown_project(payload: ProjectTeardownRequest) -> dict[str, Any]:
         cleared = teardown_project(settings.db_path, payload.project)
@@ -823,11 +773,18 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         project_id = data.pop("project_id", None)
         variant_id = data.pop("variant_id", None)
         fetch_meta = bool(data.pop("fetch_metadata", False))
+        scraped_img = ""
         if fetch_meta and data.get("url"):
             try:
-                scraped = await scrape_url(data["url"], settings.images_dir, settings.max_upload_bytes)
+                scraped = await scrape_url(
+                    data["url"],
+                    settings.images_dir,
+                    settings.max_upload_bytes,
+                    download_image=not bool(data.get("image_path")),
+                )
                 if not data.get("image_path") and scraped.get("image_path"):
-                    data["image_path"] = scraped["image_path"]
+                    scraped_img = scraped["image_path"]
+                    data["image_path"] = scraped_img
                 if not data.get("price") and scraped.get("price"):
                     data["price"] = scraped["price"]
                 if not data.get("retailer") and scraped.get("retailer"):
@@ -836,7 +793,12 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                     data["in_stock"] = scraped["in_stock"]
             except ScrapeError:
                 pass
-        created = create_shopping_item(settings.db_path, data)
+        try:
+            created = create_shopping_item(settings.db_path, data)
+        except ValueError as exc:
+            if scraped_img:
+                safe_delete_image(scraped_img, settings.images_dir)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if project_id:
             try:
                 add_project_item(
@@ -856,46 +818,21 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
                 pass
         return created
 
-    @application.post("/api/shopping/{item_id}/fetch")
-    async def api_fetch_shopping_metadata(item_id: str) -> dict[str, Any]:
-        item = get_shopping_item(settings.db_path, item_id)
-        if item is None:
-            raise HTTPException(status_code=404, detail="Shopping item not found")
-        if not item.get("url"):
-            raise HTTPException(status_code=400, detail="Shopping item has no URL to fetch")
-        try:
-            scraped = await scrape_url(item["url"], settings.images_dir, settings.max_upload_bytes)
-        except ScrapeError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-        updates: dict[str, Any] = {}
-        old_img = item.get("image_path") or ""
-        new_img = scraped.get("image_path") or ""
-        if new_img:
-            updates["image_path"] = new_img
-        if scraped.get("price") and not item.get("price"):
-            updates["price"] = scraped["price"]
-        if scraped.get("retailer"):
-            updates["retailer"] = scraped["retailer"]
-        if scraped.get("in_stock"):
-            updates["in_stock"] = scraped["in_stock"]
-        try:
-            updated = update_shopping_item(settings.db_path, item_id, updates)
-        except Exception:
-            if new_img:
-                safe_delete_image(new_img, settings.images_dir)
-            raise
-        if new_img and old_img and old_img != new_img:
-            safe_delete_image(old_img, settings.images_dir)
-        return updated or item
-
     @application.patch("/api/shopping/{item_id}")
     async def api_patch_shopping(item_id: str, payload: ShoppingItemPatch) -> dict[str, Any]:
+        updates = payload.model_dump(exclude_unset=True)
+        existing = get_shopping_item(settings.db_path, item_id) if "image_path" in updates else None
         try:
-            updated = update_shopping_item(settings.db_path, item_id, payload.model_dump(exclude_unset=True))
+            updated = update_shopping_item(settings.db_path, item_id, updates)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if updated is None:
             raise HTTPException(status_code=404, detail="Shopping item not found")
+        if existing is not None:
+            old_img = existing.get("image_path") or ""
+            new_img = updated.get("image_path") or ""
+            if old_img and old_img != new_img:
+                safe_delete_image(old_img, settings.images_dir)
         return updated
 
     @application.delete("/api/shopping/{item_id}")
@@ -917,10 +854,16 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
     async def api_add_shopping_offer(item_id: str, payload: ShoppingOfferCreate) -> dict[str, Any]:
         data = payload.model_dump()
         fetch_meta = bool(data.pop("fetch_metadata", False))
+        existing_item = get_shopping_item(settings.db_path, item_id)
         scraped_img = ""
         if fetch_meta and data.get("url"):
             try:
-                scraped = await scrape_url(data["url"], settings.images_dir, settings.max_upload_bytes)
+                scraped = await scrape_url(
+                    data["url"],
+                    settings.images_dir,
+                    settings.max_upload_bytes,
+                    download_image=not bool(existing_item and existing_item.get("image_path")),
+                )
                 if not data.get("price") and scraped.get("price"):
                     data["price"] = scraped["price"]
                 if not data.get("retailer") and scraped.get("retailer"):
@@ -1002,26 +945,6 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @application.delete("/api/retailers/{domain}")
-    async def api_delete_retailer(domain: str) -> dict[str, str]:
-        if not delete_retailer(settings.db_path, domain):
-            raise HTTPException(status_code=404, detail="Retailer not found")
-        return {"status": "deleted", "domain": domain}
-
-    @application.post("/api/compatibility")
-    async def api_compatibility_check(payload: CompatibilityRequest) -> dict[str, Any]:
-        selected: list[dict[str, Any]] = []
-        for pid in payload.part_ids:
-            p = get_part(settings.db_path, pid)
-            if p is not None:
-                selected.append(p)
-        if len(selected) < 2:
-            raise HTTPException(status_code=400, detail="Select at least 2 valid parts")
-        try:
-            return await check_parts_compatibility_ai(settings, selected)
-        except EnrichError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-
     @application.get("/api/qr")
     async def api_qr_svg(text: str = Query(..., min_length=1, max_length=300)) -> Response:
         qr = segno.make(text, error="m")
@@ -1076,10 +999,6 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         imported = import_parts_from_rows(settings.db_path, rows)
         return {"status": "ok", "imported": imported}
 
-    @application.get("/api/settings")
-    async def api_get_settings() -> dict[str, Any]:
-        return get_ui_settings(settings.db_path)
-
     @application.patch("/api/settings")
     async def api_patch_settings(payload: UiSettingsPatch) -> dict[str, Any]:
         updates = payload.model_dump(exclude_unset=True)
@@ -1096,7 +1015,10 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     @application.patch("/api/mcp-settings")
     async def api_patch_mcp_settings(payload: McpSettingsPatch) -> dict[str, Any]:
-        rt = update_mcp_runtime_settings(settings, payload.model_dump(exclude_unset=True))
+        try:
+            rt = update_mcp_runtime_settings(settings, payload.model_dump(exclude_unset=True))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
             "enabled": settings.mcp_enabled,
             **rt,
@@ -1172,6 +1094,11 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
     @application.patch("/api/parts/{part_id}")
     async def api_patch_part(part_id: str, payload: PartPatch) -> dict[str, Any]:
         updates = payload.model_dump(exclude_unset=True)
+        existing = (
+            get_part(settings.db_path, part_id)
+            if ("image_path" in updates or "pinout_image_path" in updates)
+            else None
+        )
         try:
             updated = update_part(settings.db_path, part_id, updates)
         except (ValueError, ImageError) as exc:
@@ -1179,6 +1106,12 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=status, detail=str(exc)) from exc
         if updated is None:
             raise HTTPException(status_code=404, detail="Part not found")
+        if existing is not None:
+            for col in ("image_path", "pinout_image_path"):
+                old_fn = existing.get(col) or ""
+                new_fn = updated.get(col) or ""
+                if old_fn and old_fn != new_fn:
+                    safe_delete_image(old_fn, settings.images_dir)
         return updated
 
     @application.delete("/api/parts/{part_id}")
@@ -1206,16 +1139,24 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
         raw_bytes = await file.read(settings.max_upload_bytes + 1)
         try:
-            filename = process_and_save_image(raw_bytes, settings.images_dir, settings.max_upload_bytes)
+            filename = await asyncio.to_thread(
+                process_and_save_image, raw_bytes, settings.images_dir, settings.max_upload_bytes
+            )
         except ImageError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
         col = "image_path" if slot_clean == "main" else "pinout_image_path"
         old_filename = part.get(col, "")
-        updated = update_part(settings.db_path, part_id, {col: filename})
+        patch: dict[str, Any] = {col: filename}
+        if slot_clean == "pinout":
+            patch["pinout_svg"] = ""
+        updated = update_part(settings.db_path, part_id, patch)
+        if updated is None:
+            safe_delete_image(filename, settings.images_dir)
+            raise HTTPException(status_code=404, detail="Part not found")
         if old_filename and old_filename != filename:
             safe_delete_image(old_filename, settings.images_dir)
-        return updated  # type: ignore[return-value]
+        return updated
 
     @application.delete("/api/parts/{part_id}/photo")
     async def api_delete_photo(
@@ -1233,9 +1174,11 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         col = "image_path" if slot_clean == "main" else "pinout_image_path"
         old_filename = part.get(col, "")
         updated = update_part(settings.db_path, part_id, {col: ""})
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Part not found")
         if old_filename:
             safe_delete_image(old_filename, settings.images_dir)
-        return updated  # type: ignore[return-value]
+        return updated
 
     @application.post("/api/scrape")
     async def api_scrape(payload: ScrapeRequest) -> dict[str, Any]:
@@ -1253,46 +1196,19 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             if part is not None:
                 col = "image_path" if slot_clean == "main" else "pinout_image_path"
                 old_filename = part.get(col, "")
-                update_part(settings.db_path, payload.part_id, {col: result["image_path"]})
+                patch: dict[str, Any] = {col: result["image_path"]}
+                if slot_clean == "pinout":
+                    patch["pinout_svg"] = ""
+                update_part(settings.db_path, payload.part_id, patch)
                 if old_filename and old_filename != result["image_path"]:
                     safe_delete_image(old_filename, settings.images_dir)
 
         return result
 
-    @application.post("/api/enrich")
-    async def api_enrich(payload: EnrichRequest) -> JSONResponse:
-        try:
-            result = await enrich_part(
-                settings,
-                query=payload.query,
-                scraped_title=payload.scraped_title,
-                scraped_description=payload.scraped_description,
-            )
-        except EnrichError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-
-        image_search_query = result.pop("image_search_query", "") or result.get("name") or payload.query
-        product_urls = result.pop("product_urls", [])
-        suggested_terms = result.pop("suggested_glossary_terms", [])
-        added_terms = upsert_suggested_glossary_terms(settings.db_path, suggested_terms)
-
-        candidates: list[dict[str, str]] = []
-        if payload.fetch_image and (product_urls or image_search_query):
-            candidates = await find_image_candidates(
-                page_urls=product_urls,
-                fallback_query=image_search_query,
-                max_bytes=settings.max_upload_bytes,
-                limit=6,
-            )
-
-        result["image_candidates"] = candidates
-        result["added_glossary_terms"] = [t["term"] for t in added_terms]
-        return JSONResponse(status_code=200, content=result)
-
     @application.get("/api/backup")
     async def api_backup() -> Response:
-        zip_bytes = create_backup_zip_bytes(settings)
-        record_backup_timestamp(settings.db_path)
+        zip_bytes = await asyncio.to_thread(create_backup_zip_bytes, settings)
+        await asyncio.to_thread(record_backup_timestamp, settings.db_path)
         filename = f"pinbin-backup-{utc_today_str()}.zip"
         return Response(
             content=zip_bytes,
@@ -1307,13 +1223,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         if len(raw_bytes) > 250 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="Backup archive is too large")
         try:
-            if settings.db_path.exists():
-                snapshot = create_backup_zip_bytes(settings)
-                (settings.data_dir / "pre-restore-backup.zip").write_bytes(snapshot)
-        except Exception:
-            pass
-        try:
-            return restore_backup_zip_bytes(raw_bytes, settings)
+            return await asyncio.to_thread(restore_backup_zip_bytes, raw_bytes, settings)
         except BackupError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
