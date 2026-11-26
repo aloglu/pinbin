@@ -35,8 +35,10 @@
   flex-direction: column;
   transition: border-color .15s, opacity .3s;
 }
-.card:hover { border-color: var(--ink-3); }
 .card.sel { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+@media (hover: hover) and (pointer: fine) {
+  .card:hover { border-color: var(--ink-3); }
+}
 .card.buy { border: 1px dashed var(--ink-3); background: var(--raised); }
 .card.buy .ph { opacity: .55; }
 .card.used .n::before { content: "● "; color: var(--ink); font-size: 10px; vertical-align: 2px; }
@@ -107,8 +109,10 @@
   cursor: pointer;
   transition: background .15s, opacity .3s;
 }
-.prt:hover { background: var(--hover); }
 .prt.sel { background: var(--surface); box-shadow: inset 2px 0 0 var(--ink); }
+@media (hover: hover) and (pointer: fine) {
+  .prt:hover { background: var(--hover); }
+}
 .prt.dimmed { opacity: .4; }
 .prt .ph { width: 52px; height: 52px; }
 .prt .n { display: grid; gap: 2px; min-width: 0; }

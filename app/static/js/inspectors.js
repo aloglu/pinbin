@@ -111,8 +111,8 @@ export function renderPartInspector(id) {
   }
 
   return `<div class="insp-in">
-    <div class="insp-h" style="margin-bottom:0">
-      <span></span>
+    <div class="insp-h insp-h-bar">
+      <span class="insp-htitle">${esc(p.name)}</span>
       <button class="btn quiet close" type="button" data-act="clear" aria-label="Close">${sv('<path d="M18 6 6 18M6 6l12 12"/>')}</button>
     </div>
 
@@ -226,8 +226,8 @@ export function renderShoppingInspector(id) {
   const offers = it.offers || [];
 
   return `<div class="insp-in">
-    <div class="insp-h" style="margin-bottom:0">
-      <span></span>
+    <div class="insp-h insp-h-bar">
+      <span class="insp-htitle">${esc(it.name)}</span>
       <button class="btn quiet close" type="button" data-act="clear" aria-label="Close">${sv('<path d="M18 6 6 18M6 6l12 12"/>')}</button>
     </div>
 

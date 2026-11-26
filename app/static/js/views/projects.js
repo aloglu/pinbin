@@ -135,9 +135,10 @@ export function renderProjectsListView() {
 
   return `<div class="screen full"><div class="work">
     <div class="pagehead">
-      <h1>Projects</h1>
-      <span class="sub">${nActive} active · ${nArchived} archived</span>
-      <span style="flex:1"></span>
+      <div class="ph-title">
+        <h1>Projects</h1>
+        <span class="sub">${nActive} active · ${nArchived} archived</span>
+      </div>
       ${guest ? '' : `<a class="btn ink" href="${appHref('/projects/new')}">+ New project</a>`}
     </div>
 

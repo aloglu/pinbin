@@ -207,14 +207,15 @@ export function renderInventoryView() {
   return `<div class="screen full">
     <div class="work">
       <div class="pagehead">
-        <h1>Inventory</h1>
-        <span class="sub num">${state.parts.length} parts · ${binCount} bin${binCount === 1 ? '' : 's'}</span>
-        ${
-          f.binFilter
-            ? `<button type="button" class="tag f" aria-pressed="true" data-act="clearbin">Bin ${esc(f.binFilter)} ×</button>`
-            : ''
-        }
-        <span style="flex:1"></span>
+        <div class="ph-title">
+          <h1>Inventory</h1>
+          <span class="sub num">${state.parts.length} parts · ${binCount} bin${binCount === 1 ? '' : 's'}</span>
+          ${
+            f.binFilter
+              ? `<button type="button" class="tag f" aria-pressed="true" data-act="clearbin">Bin ${esc(f.binFilter)} ×</button>`
+              : ''
+          }
+        </div>
         ${guest ? '' : '<button class="btn ink" type="button" data-act="add">+ Add part</button>'}
       </div>
 

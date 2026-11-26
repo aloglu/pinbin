@@ -216,7 +216,9 @@
 }
 .setnext span:first-child { font-size: 12.5px; color: var(--ink-3); font-weight: var(--w-mid); }
 .setnext b { font-weight: var(--w-strong); }
-.setnext:hover { border-color: var(--ink-3); }
+@media (hover: hover) and (pointer: fine) {
+  .setnext:hover { border-color: var(--ink-3); }
+}
 
 @media (max-width: 980px) {
   .setgrid { grid-template-columns: minmax(0, 1fr); gap: 0; }

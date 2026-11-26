@@ -278,8 +278,10 @@ export function renderGlossaryView() {
   return `<div class="screen full">
     <div class="work">
       <div class="pagehead">
-        <h1>Glossary</h1>
-        <span class="sub">${allTerms.length} terms, in plain words</span>
+        <div class="ph-title">
+          <h1>Glossary</h1>
+          <span class="sub">${allTerms.length} terms, in plain words</span>
+        </div>
       </div>
 
       <div class="cattabs" role="group" aria-label="Show">

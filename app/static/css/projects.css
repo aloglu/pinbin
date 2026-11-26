@@ -13,7 +13,9 @@
   text-decoration: none;
   transition: border-color .15s;
 }
-.prow:hover { border-color: var(--ink-3); }
+@media (hover: hover) and (pointer: fine) {
+  .prow:hover { border-color: var(--ink-3); }
+}
 .prow .body { display: grid; gap: 6px; min-width: 0; }
 .prow .ttl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .prow h2 { font-size: 15px; }
@@ -214,7 +216,9 @@
   color: var(--ink);
 }
 .tray .item.own { border-style: solid; border-color: var(--line); }
-.tray .item:hover { border-color: var(--ink); }
+@media (hover: hover) and (pointer: fine) {
+  .tray .item:hover { border-color: var(--ink); }
+}
 .tray .item .ph { width: 22px; height: 22px; }
 
 .map-empty {
@@ -264,7 +268,9 @@
   text-align: left;
 }
 .nbr.buy { border-style: dashed; }
-.nbr:hover { border-color: var(--ink); }
+@media (hover: hover) and (pointer: fine) {
+  .nbr:hover { border-color: var(--ink); }
+}
 .nbr .ph { width: 26px; height: 26px; }
 .nbr small { display: block; font: 500 11.5px var(--mono); color: var(--ink-3); }
 .fwarn { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; font-size: 13px; cursor: pointer; }
@@ -313,8 +319,10 @@
   cursor: pointer;
   transition: background .12s var(--ease);
 }
-.lrow:hover { background: var(--hover); }
 .lrow.sel { background: var(--surface); box-shadow: inset 2px 0 0 var(--ink); }
+@media (hover: hover) and (pointer: fine) {
+  .lrow:hover { background: var(--hover); }
+}
 .lrow .ph { width: 32px; height: 32px; }
 .lrow .n { font-weight: var(--w-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lrow .n small { display: block; font-weight: var(--w-body); color: var(--ink-3); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

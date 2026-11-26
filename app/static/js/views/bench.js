@@ -884,8 +884,10 @@ export function renderBenchView() {
 
   return `<div class="screen full"><div class="work">
     <div class="pagehead">
-      <h1>Bench</h1>
-      <span class="sub">${isGuest() ? 'Boards, guides and calculators' : 'Boards, guides, calculators and bin labels'}</span>
+      <div class="ph-title">
+        <h1>Bench</h1>
+        <span class="sub">${isGuest() ? 'Boards, guides and calculators' : 'Boards, guides, calculators and bin labels'}</span>
+      </div>
     </div>
     ${secBarHtml('bench', secItems, id)}
     <div class="bench3">

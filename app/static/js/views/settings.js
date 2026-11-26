@@ -527,8 +527,10 @@ export function renderSettingsView() {
 
   return `<div class="screen full"><div class="work">
     <div class="pagehead">
-      <h1>Settings</h1>
-      <span class="sub">Changes save as you make them</span>
+      <div class="ph-title">
+        <h1>Settings</h1>
+        <span class="sub">Changes save as you make them</span>
+      </div>
     </div>
     ${secBarHtml('set', SETTINGS_SECTIONS, sec)}
     <div class="setgrid">

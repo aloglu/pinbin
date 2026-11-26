@@ -224,7 +224,7 @@ function updateFloatingInspector(swapAnim = false) {
   if (!sel || (!sel.startsWith('part:') && !sel.startsWith('item:'))) {
     if (existing) existing.remove();
     state.panelWasOpen = false;
-    lockScroll(false);
+    syncSheetState();
     return true;
   }
 
@@ -234,12 +234,14 @@ function updateFloatingInspector(swapAnim = false) {
   if (!content) {
     if (existing) existing.remove();
     state.panelWasOpen = false;
-    lockScroll(false);
+    syncSheetState();
     return true;
   }
 
   if (existing && existing.classList.contains('float')) {
-    existing.classList.remove('enter', 'leave');
+    existing.classList.remove('enter', 'leave', 'scrolled', 'dragging');
+    existing.style.transform = '';
+    existing.style.transition = '';
     existing.innerHTML = content;
     existing.scrollTop = 0;
     if (swapAnim) {
@@ -257,7 +259,8 @@ function updateFloatingInspector(swapAnim = false) {
   }
 
   state.panelWasOpen = true;
-  lockScroll(window.matchMedia('(max-width: 980px)').matches);
+  bindInspectorScroll();
+  syncSheetState();
   return true;
 }
 
@@ -276,14 +279,54 @@ function updateProjectSelection(pid, swapAnim = false) {
     state.sel && (state.sel.startsWith('node:') || state.sel.startsWith('net:') || state.sel.startsWith('warn:'))
   );
   aside.classList.toggle('open', hasSel);
+  aside.classList.remove('scrolled', 'dragging');
+  aside.style.transform = '';
+  aside.style.transition = '';
   aside.innerHTML = renderProjectInspector(proj);
   aside.scrollTop = 0;
   if (swapAnim) {
     const inner = aside.querySelector('.insp-in');
     if (inner) inner.classList.add('swap');
   }
-  lockScroll(window.matchMedia('(max-width: 980px)').matches && hasSel);
+  bindInspectorScroll();
+  syncSheetState();
   return true;
+}
+
+function bindInspectorScroll() {
+  const insp = document.getElementById('insp');
+  if (!insp) return;
+  const update = () => insp.classList.toggle('scrolled', insp.scrollTop > 12);
+  update();
+  if (!insp.dataset.scrollBound) {
+    insp.dataset.scrollBound = '1';
+    insp.addEventListener('scroll', update, { passive: true });
+  }
+}
+
+function syncSheetState() {
+  const open =
+    window.matchMedia('(max-width: 980px)').matches && Boolean(document.querySelector('.insp.open'));
+  lockScroll(open);
+  const bd = document.getElementById('sheetBackdrop');
+  if (bd) bd.hidden = !open;
+}
+
+function closeActiveSheet(immediate = false) {
+  if (document.querySelector('.insp.float')) {
+    if (immediate) {
+      state.panelClosing = false;
+      state.sel = null;
+      updateFloatingInspector(false);
+    } else {
+      closePanel(() => updateFloatingInspector(false));
+    }
+    return;
+  }
+  const r = route();
+  const pid = r.startsWith('p-') ? r.slice(2) : null;
+  state.sel = null;
+  if (!pid || !updateProjectSelection(pid, !immediate)) render();
 }
 
 function lockScroll(on) {
@@ -304,7 +347,7 @@ function lockScroll(on) {
 
 function placeholderScreen(title, stepNote) {
   return `<div class="screen full"><div class="work">
-    <div class="pagehead"><h1>${esc(title)}</h1></div>
+    <div class="pagehead"><div class="ph-title"><h1>${esc(title)}</h1></div></div>
     <p class="dim" style="max-width:60ch">${esc(stepNote)}</p>
     <p style="margin-top:14px"><a class="btn" href="${appHref('/inventory')}">← Back to Inventory</a></p>
   </div></div>`;
@@ -389,7 +432,8 @@ export function render() {
     applyMapFocus(curPid);
   }
   state.panelWasOpen = Boolean(document.querySelector('.insp.float'));
-  lockScroll(window.matchMedia('(max-width: 980px)').matches && Boolean(document.querySelector('.insp.open')));
+  bindInspectorScroll();
+  syncSheetState();
 
   sbStick();
   const tb = document.querySelector('.bar');
@@ -1633,24 +1677,14 @@ document.addEventListener('paste', (e) => {
   toast('Photo pasted');
 });
 
-// Tap outside phone bottom sheet or open section picker closes it cleanly
+// Tap outside open section picker closes it cleanly; mobile bottom sheet uses #sheetBackdrop + swipe-down
 {
   let down = null;
-  const sheetOpen = () =>
-    window.matchMedia('(max-width: 980px)').matches && Boolean(document.querySelector('.insp.open'));
   document.addEventListener(
     'pointerdown',
     (e) => {
       if (document.querySelector('.secbar.open') && !e.target.closest('.secbar')) {
-        down = [e.clientX, e.clientY, 'sb'];
-      } else if (
-        sheetOpen() &&
-        !e.target.closest('.insp') &&
-        !e.target.closest('#toastRoot') &&
-        !e.target.closest('#popRoot') &&
-        !e.target.closest('#lightboxRoot')
-      ) {
-        down = [e.clientX, e.clientY, 'sheet'];
+        down = [e.clientX, e.clientY];
       } else {
         down = null;
       }
@@ -1662,22 +1696,10 @@ document.addEventListener('paste', (e) => {
     (e) => {
       if (!down) return;
       const moved = Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 10;
-      const what = down[2];
       down = null;
       if (moved) return;
-      if (what === 'sb') {
-        if (!document.querySelector('.secbar.open')) return;
-        sbOpen(false);
-      } else {
-        if (!sheetOpen()) return;
-        if (document.querySelector('.insp.float')) closePanel(() => updateFloatingInspector(false));
-        else {
-          const r = route();
-          const pid = r.startsWith('p-') ? r.slice(2) : null;
-          state.sel = null;
-          if (!pid || !updateProjectSelection(pid, true)) render();
-        }
-      }
+      if (!document.querySelector('.secbar.open')) return;
+      sbOpen(false);
       const eat = (ev) => {
         ev.stopPropagation();
         ev.preventDefault();
@@ -1687,6 +1709,119 @@ document.addEventListener('paste', (e) => {
     },
     true
   );
+
+  // Transparent mobile backdrop absorbs outside taps without touching/hovering cards underneath
+  const backdrop = document.getElementById('sheetBackdrop');
+  if (backdrop) {
+    backdrop.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!window.matchMedia('(max-width: 980px)').matches) return;
+      if (document.querySelector('.insp.open')) closeActiveSheet(false);
+    });
+  }
+
+  // Swipe down on mobile bottom sheet header (or at scrollTop 0) to dismiss
+  let drag = null;
+  const isMobileSheet = () => window.matchMedia('(max-width: 980px)').matches;
+  document.addEventListener(
+    'touchstart',
+    (e) => {
+      if (!isMobileSheet() || e.touches.length !== 1) return;
+      const insp = e.target.closest && e.target.closest('.insp.open');
+      if (!insp) return;
+      const inHeader = Boolean(e.target.closest('.insp-h'));
+      if (!inHeader) {
+        if (insp.scrollTop > 0) return;
+        if (e.target.closest('input, textarea, select')) return;
+      }
+      const t = e.touches[0];
+      drag = {
+        insp,
+        startX: t.clientX,
+        startY: t.clientY,
+        lastY: t.clientY,
+        startT: Date.now(),
+        lastT: Date.now(),
+        active: false,
+        inHeader,
+      };
+    },
+    { passive: true }
+  );
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!drag) return;
+      const t = e.touches[0];
+      const dx = t.clientX - drag.startX;
+      const dy = t.clientY - drag.startY;
+      if (!drag.active) {
+        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+          drag = null;
+          return;
+        }
+        if (dy < -6) {
+          drag = null;
+          return;
+        }
+        if (dy > 8) {
+          if (!drag.inHeader && drag.insp.scrollTop > 0) {
+            drag = null;
+            return;
+          }
+          drag.active = true;
+          drag.insp.classList.remove('enter');
+          drag.insp.classList.add('dragging');
+        }
+      }
+      if (drag.active) {
+        e.preventDefault();
+        const offset = Math.max(0, dy);
+        drag.insp.style.transform = `translateY(${offset}px)`;
+        drag.lastY = t.clientY;
+        drag.lastT = Date.now();
+      }
+    },
+    { passive: false }
+  );
+  const finishDrag = () => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    if (!d.active) return;
+    const dy = Math.max(0, d.lastY - d.startY);
+    const dt = Math.max(1, d.lastT - d.startT);
+    const vy = dy / dt;
+    const h = d.insp.offsetHeight || 300;
+    const shouldClose = dy > 90 || dy > h * 0.28 || (dy > 32 && vy > 0.45);
+    d.insp.classList.remove('dragging');
+    if (shouldClose) {
+      d.insp.style.transition = 'transform .2s var(--ease)';
+      d.insp.style.transform = 'translateY(105%)';
+      let doneFlag = false;
+      const finish = () => {
+        if (doneFlag) return;
+        doneFlag = true;
+        d.insp.style.transition = '';
+        d.insp.style.transform = '';
+        closeActiveSheet(true);
+      };
+      d.insp.addEventListener('transitionend', finish, { once: true });
+      setTimeout(finish, 240);
+    } else {
+      d.insp.style.transition = 'transform .22s var(--ease)';
+      d.insp.style.transform = '';
+      const reset = () => {
+        d.insp.style.transition = '';
+      };
+      d.insp.addEventListener('transitionend', reset, { once: true });
+      setTimeout(reset, 240);
+    }
+  };
+  document.addEventListener('touchend', finishDrag, { passive: true });
+  document.addEventListener('touchcancel', finishDrag, { passive: true });
+  window.addEventListener('resize', syncSheetState);
 }
 
 // Keyboard shortcuts

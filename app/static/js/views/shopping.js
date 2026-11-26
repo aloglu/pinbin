@@ -206,11 +206,10 @@ export function renderShoppingView() {
   return `<div class="screen full">
     <div class="work">
       <div class="pagehead">
-        <div>
+        <div class="ph-title">
           <h1>Shopping</h1>
           <span class="sub">One section per store, because each store is one order</span>
         </div>
-        <span style="flex:1"></span>
         <div class="shop-head-acts">
           <span class="pstat">
             <span class="k">Still to order</span>

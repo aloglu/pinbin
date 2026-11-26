@@ -145,6 +145,7 @@ def render_guest_locked_html(
     }}
 
     * {{ box-sizing: border-box; }}
+    html {{ background: var(--bg); }}
     body {{
       margin: 0;
       min-height: 100dvh;
@@ -157,7 +158,8 @@ def render_guest_locked_html(
     }}
     .bar {{
       position: sticky;
-      top: env(safe-area-inset-top, 0px);
+      top: 0;
+      padding-top: env(safe-area-inset-top, 0px);
       background: var(--bg);
       border-bottom: 1px solid var(--line);
     }}
