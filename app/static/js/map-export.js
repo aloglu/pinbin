@@ -98,10 +98,13 @@ async function getEmbeddedFontCss() {
           ['IBM Plex Mono', '600', '/static/fonts/ibm-plex-mono-latin-600-normal.woff2', 'woff2'],
         ];
 
+  const assetBase =
+    location.pathname === '/guest' || location.pathname.startsWith('/guest/') ? '/guest' : '';
+
   const rules = await Promise.all(
     specs.map(async ([family, weight, url, fmt]) => {
       try {
-        const res = await fetch(url);
+        const res = await fetch(`${assetBase}${url}`);
         if (!res.ok) return '';
         const b64 = bytesToBase64(new Uint8Array(await res.arrayBuffer()));
         return `@font-face{font-family:'${family}';font-style:normal;font-weight:${weight};src:url('data:font/woff2;base64,${b64}') format('${fmt}');}`;

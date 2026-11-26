@@ -1,7 +1,8 @@
 // Thin JSON API client for Pinbin backend endpoints.
+import { apiUrl } from './state.js';
 
 async function request(url, opts = {}) {
-  const res = await fetch(url, opts);
+  const res = await fetch(apiUrl(url), opts);
   if (!res.ok) {
     let msg = `Request failed (${res.status})`;
     try {
@@ -85,9 +86,12 @@ export const api = {
   // Glossary
   listGlossary: () => request('/api/glossary'),
 
-  // MCP Settings & Data
+  // MCP Settings, Guest Pass & Data
   getMcpSettings: () => request('/api/mcp-settings'),
   patchMcpSettings: (patch) => request('/api/mcp-settings', jsonOpts('PATCH', patch)),
   rotateMcpToken: () => request('/api/mcp-settings/rotate-token', { method: 'POST' }),
+  getGuestPass: () => request('/api/guest-pass'),
+  patchGuestPass: (patch) => request('/api/guest-pass', jsonOpts('PATCH', patch)),
+  rotateGuestPass: () => request('/api/guest-pass/rotate', { method: 'POST' }),
   wipeAllData: (confirm) => request('/api/wipe', jsonOpts('POST', { confirm })),
 };

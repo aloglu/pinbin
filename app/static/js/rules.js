@@ -1,5 +1,5 @@
 // Built-in electrical compatibility rules and project readiness helpers.
-import { state, partById, shoppingById, esc, termButton, sevGlyph, parsePriceNumber, money, currencyLabel } from './state.js';
+import { state, partById, shoppingById, esc, termButton, sevGlyph, parsePriceNumber, money, currencyLabel, appHref } from './state.js';
 
 const boards = () => state.parts.filter((p) => p.category === 'Microcontrollers');
 
@@ -372,7 +372,7 @@ export function nextStepOfProject(proj) {
     return {
       t: `Order ${buys.length} part${buys.length === 1 ? '' : 's'}`,
       s: `${stores.size} store${stores.size === 1 ? '' : 's'}${sum > 0 ? ` · ${money(sum)} ${currencyLabel()}` : ''}`,
-      href: '#shopping',
+      href: appHref('/shopping'),
     };
   }
   const open = openChecksOfProject(proj);

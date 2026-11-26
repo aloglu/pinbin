@@ -13,6 +13,8 @@ import {
   projectById,
   currencyLabel,
   toast,
+  appHref,
+  navigate,
 } from '../state.js';
 import { secBarHtml } from '../secbar.js';
 import { mdLite } from './projects.js';
@@ -254,7 +256,7 @@ export function renderProjectEditView(projectId) {
   const isEdit = Boolean(d.id);
   const proj = isEdit ? projectById(d.id) : null;
   const n = dirtyProjectCount();
-  const backHref = isEdit ? `p-${d.id}` : 'projects';
+  const backHref = isEdit ? appHref(`/projects/${encodeURIComponent(d.id)}`) : appHref('/projects');
   const backLabel = isEdit && proj ? proj.name : 'Projects';
   const title = isEdit ? 'Edit project' : 'New project';
 
@@ -452,13 +454,13 @@ export function renderProjectEditView(projectId) {
 
   return `<div class="screen full"><div class="work edit">
     <div class="ehead noside">
-      <a class="eback" href="#${esc(backHref)}" data-leave="${esc(backHref)}" title="Back to ${esc(backLabel)}">← ${esc(backLabel)}</a>
+      <a class="eback" href="${esc(backHref)}" data-leave="${esc(backHref)}" title="Back to ${esc(backLabel)}">← ${esc(backLabel)}</a>
       <h1>${esc(title)}</h1>
     </div>
     ${secBarHtml('edit', navs, navs[0][0])}
     <div class="egrid noside">
       <nav class="enav" aria-label="Sections">
-        ${navs.map(([k, label]) => `<a href="#e-${esc(k)}" data-jump="e-${esc(k)}">${esc(label)}</a>`).join('')}
+        ${navs.map(([k, label]) => `<a href="${esc(location.pathname)}" data-jump="e-${esc(k)}">${esc(label)}</a>`).join('')}
       </nav>
       <div class="eform">${body}</div>
     </div>
@@ -473,7 +475,7 @@ export function renderProjectEditView(projectId) {
               ? `<span class="leaveq">Leave without saving?</span>
                  <button class="btn" type="button" data-stay>Keep editing</button>
                  <button class="btn dangerout" type="button" data-discard>Discard changes</button>`
-              : `<a class="btn" href="#${esc(backHref)}" data-leave="${esc(backHref)}">Cancel</a>
+              : `<a class="btn" href="${esc(backHref)}" data-leave="${esc(backHref)}">Cancel</a>
                  <button class="btn ink" type="button" data-psave ${n || !isEdit ? '' : 'disabled'}>${
                   isEdit ? 'Save changes' : 'Create project'
                 }</button>`
@@ -631,11 +633,9 @@ export async function saveProjectEdit(renderFn) {
 
     clearProjectDraft();
     state.sel = null;
-    location.hash = `p-${pid}`;
-    setTimeout(() => {
-      renderFn();
-      toast(isNew ? `${metaPayload.name} created` : 'Saved · checks updated');
-    }, 60);
+    navigate(`/projects/${encodeURIComponent(pid)}`);
+    renderFn();
+    toast(isNew ? `${metaPayload.name} created` : 'Saved · checks updated');
   } catch (err) {
     toast(err.message);
   }
@@ -651,10 +651,9 @@ export async function deleteProjectWithUndo(pid, renderFn) {
     if (state.lens === pid) state.lens = null;
     clearProjectDraft();
     state.sel = null;
-    location.hash = 'projects';
-    setTimeout(() => {
-      renderFn();
-      toast(`${snap.name} deleted`, async () => {
+    navigate('/projects');
+    renderFn();
+    toast(`${snap.name} deleted`, async () => {
         try {
           const restored = await api.createProject({
             name: snap.name,
@@ -688,7 +687,6 @@ export async function deleteProjectWithUndo(pid, renderFn) {
           toast(err.message);
         }
       });
-    }, 60);
   } catch (err) {
     toast(err.message);
   }

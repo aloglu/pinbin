@@ -15,6 +15,9 @@ import {
   money,
   currencyLabel,
   sevGlyph,
+  isGuest,
+  appHref,
+  apiUrl,
 } from './state.js';
 import { computeRelations, relHtml, careHtml, glossaryTermsFor, warningsOfProject } from './rules.js';
 
@@ -98,14 +101,17 @@ export function renderPartInspector(id) {
     !['Passives', 'Prototyping', 'Tools'].includes(p.category);
   const benchTool = benchToolForPart(p);
 
+  const guest = isGuest();
   let pinoutInner = '';
   if (p.pinout_svg) {
     pinoutInner = `<div class="pinimg">${p.pinout_svg}</div>`;
   } else if (p.pinout_image_path) {
-    const pSrc = `/images/${encodeURIComponent(p.pinout_image_path)}`;
+    const pSrc = apiUrl(`/images/${encodeURIComponent(p.pinout_image_path)}`);
     pinoutInner = `<div class="pinimg zoomable" data-lightbox="${pSrc}"><img src="${pSrc}" alt="${esc(p.name)} pinout" loading="lazy"></div>`;
   } else {
-    pinoutInner = `<div class="pinimg empty"><span>No pinout yet</span></div><p class="faint">Add the seller’s pinout image when you edit the part, or ask your assistant to find it.</p>`;
+    pinoutInner = guest
+      ? `<div class="pinimg empty"><span>No pinout yet</span></div>`
+      : `<div class="pinimg empty"><span>No pinout yet</span></div><p class="faint">Add the seller’s pinout image when you edit the part, or ask your assistant to find it.</p>`;
   }
 
   return `<div class="insp-in">
@@ -125,8 +131,8 @@ export function renderPartInspector(id) {
         ${p.location ? `<span class="bin">${esc(p.location)}</span>` : ''}
       </div>
       <div class="qtyrow">
-        <span class="dim">You own</span>
-        ${stepHtml('data-qty', p.id, p.quantity, 'You own')}
+        <span class="dim">${guest ? 'In stock' : 'You own'}</span>
+        ${guest ? `<span class="mono">×${p.quantity}</span>` : stepHtml('data-qty', p.id, p.quantity, 'You own')}
       </div>
     </div>
 
@@ -135,7 +141,9 @@ export function renderPartInspector(id) {
       ${
         p.what_it_does
           ? `<p>${esc(p.what_it_does)}</p>`
-          : `<p class="faint">Not written yet. <a href="#edit-part-${esc(id)}">Add it</a>, or ask your assistant.</p>`
+          : guest
+          ? '<p class="faint">Not written yet.</p>'
+          : `<p class="faint">Not written yet. <a href="${appHref(`/parts/${encodeURIComponent(id)}/edit`)}">Add it</a>, or ask your assistant.</p>`
       }
       ${p.visual_tell ? `<p class="dim" style="margin-top:6px"><span class="k">Spot it:</span> ${esc(p.visual_tell)}</p>` : ''}
     </div>
@@ -176,7 +184,7 @@ export function renderPartInspector(id) {
                 const ws = warningsOfProject(pr).filter(
                   (x) => (x.on.nodes || []).includes(q.ref) && x.sev !== 'ok' && !(x.src === 'assistant' && x.is_done)
                 );
-                return `<div class="rel"><span class="sev ok" style="background:var(--ink)">→</span><div><a href="#p-${esc(pr.id)}"><b>${esc(pr.name)}</b></a>${
+                return `<div class="rel"><span class="sev ok" style="background:var(--ink)">→</span><div><a href="${appHref(`/projects/${encodeURIComponent(pr.id)}`)}"><b>${esc(pr.name)}</b></a>${
                   pr.archived ? ' <span class="tag">archived</span>' : ''
                 }${q.project_notes ? `<p>${esc(q.project_notes)}</p>` : ''}${ws
                   .map(
@@ -197,7 +205,7 @@ export function renderPartInspector(id) {
     }
 
     <div class="sec" style="display:flex;gap:6px;flex-wrap:wrap">
-      <a class="btn" href="#edit-part-${esc(id)}">Edit part</a>
+      ${guest ? '' : `<a class="btn" href="${appHref(`/parts/${encodeURIComponent(id)}/edit`)}">Edit part</a>`}
       <button class="btn quiet" type="button" data-act="clear">Close</button>
     </div>
   </div>`;
@@ -216,6 +224,7 @@ export function renderShoppingInspector(id) {
       .filter((q) => q.shopping_item_id === id)
       .map((q) => [pr, q])
   );
+  const guest = isGuest();
   const unit = parsePriceNumber(it.price);
   const statusLabels = { order: 'to order', ordered: 'on the way', arrived: 'arrived' };
   const offers = it.offers || [];
@@ -234,7 +243,7 @@ export function renderShoppingInspector(id) {
       </div>
       <div class="qtyrow">
         <span class="dim">To buy</span>
-        ${stepHtml('data-buy', it.id, it.quantity, 'To buy')}
+        ${guest ? `<span class="mono">×${it.quantity}</span>` : stepHtml('data-buy', it.id, it.quantity, 'To buy')}
         ${unit !== null ? `<span class="faint num">${money(unit * it.quantity)} ${currencyLabel()}</span>` : ''}
       </div>
       <div class="chips">
@@ -259,7 +268,7 @@ export function renderShoppingInspector(id) {
                   }"><span>${esc(storeDisplayName(o.retailer || o.url))}${
                     o.is_selected ? ' <span class="tag">chosen</span>' : ''
                   }</span><span style="display:flex;gap:8px;align-items:center"><span class="mono">${esc(o.price || '—')}</span>${
-                    o.is_selected ? '' : `<button class="btn" type="button" data-pick="${esc(it.id)}:${esc(o.id)}">Use</button>`
+                    o.is_selected || guest ? '' : `<button class="btn" type="button" data-pick="${esc(it.id)}:${esc(o.id)}">Use</button>`
                   }</span></div>`
               )
               .join('')}
@@ -272,7 +281,7 @@ export function renderShoppingInspector(id) {
         ? `<div class="sec"><h3>For</h3>${uses
             .map(
               ([pr, q]) =>
-                `<p><a href="#p-${esc(pr.id)}"><b>${esc(pr.name)}</b></a>${
+                `<p><a href="${appHref(`/projects/${encodeURIComponent(pr.id)}`)}"><b>${esc(pr.name)}</b></a>${
                   q.project_notes ? ` <span class="faint">· ${esc(q.project_notes)}</span>` : ''
                 }</p>`
             )
@@ -282,12 +291,12 @@ export function renderShoppingInspector(id) {
 
     <div class="sec" style="display:flex;gap:6px;flex-wrap:wrap">
       ${
-        it.status === 'arrived'
+        !guest && it.status === 'arrived'
           ? `<button class="btn ink" type="button" data-move-inv="${esc(it.id)}">Move to inventory</button>`
           : ''
       }
-      <a class="btn" href="#edit-item-${esc(id)}">Edit item</a>
-      <a class="btn quiet" href="#shopping">Shopping →</a>
+      ${guest ? '' : `<a class="btn" href="${appHref(`/shopping/${encodeURIComponent(id)}/edit`)}">Edit item</a>`}
+      <a class="btn quiet" href="${appHref('/shopping')}">Shopping →</a>
       <button class="btn quiet" type="button" data-act="clear">Close</button>
     </div>
   </div>`;

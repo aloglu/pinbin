@@ -3,20 +3,22 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import segno
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.auth import CloudflareAccessMiddleware
+from app.auth import GUEST_LOCKED_HTML, CloudflareAccessMiddleware
 from app.backup import BackupError, create_backup_zip_bytes, restore_backup_zip_bytes
 from app.config import CATEGORIES, Settings, load_settings
 from app.db import (
+    GUEST_COOKIE_NAME,
     PROJECT_STATUSES,
     add_project_item,
     add_project_net,
@@ -38,6 +40,7 @@ from app.db import (
     delete_shopping_item,
     delete_shopping_offer,
     get_ai_usage_today,
+    get_guest_pass_settings,
     get_mcp_runtime_settings,
     get_part,
     get_project,
@@ -46,6 +49,7 @@ from app.db import (
     get_ui_settings,
     import_parts_from_rows,
     init_db,
+    issue_guest_session_cookie_value,
     list_glossary,
     list_mcp_activity,
     list_parts,
@@ -55,13 +59,16 @@ from app.db import (
     move_shopping_item_to_inventory,
     optimize_shopping_carts,
     record_backup_timestamp,
+    record_guest_pass_use,
     rename_bin,
+    rotate_guest_pass_token,
     rotate_mcp_token,
     seed_if_empty,
     set_project_checks,
     set_project_nets,
     teardown_project,
     update_glossary_term,
+    update_guest_pass_settings,
     update_mcp_runtime_settings,
     update_part,
     update_project,
@@ -74,6 +81,7 @@ from app.db import (
     upsert_retailer,
     upsert_suggested_glossary_terms,
     utc_today_str,
+    verify_guest_pass_token,
     wipe_all_data,
 )
 from app.enricher import EnrichError, check_parts_compatibility_ai, enrich_part, explain_glossary_term
@@ -173,6 +181,10 @@ class McpSettingsPatch(BaseModel):
     can_projects: bool | None = None
     can_shopping: bool | None = None
     can_delete: bool | None = None
+
+
+class GuestPassPatch(BaseModel):
+    enabled: bool
 
 
 class WipeRequest(BaseModel):
@@ -398,8 +410,20 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
     application.state.settings = settings
     application.add_middleware(CloudflareAccessMiddleware, settings=settings)
 
-    # Static assets
+    # Static assets (owner + isolated guest prefix)
     application.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    application.mount("/guest/static", StaticFiles(directory=str(STATIC_DIR)), name="guest_static")
+
+    _GEAR_LINK_RE = re.compile(r'<a[^>]*id="gearBtn"[^>]*>.*?</a>', re.DOTALL)
+
+    def _render_guest_shell_html() -> str:
+        raw = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        raw = raw.replace('href="/manifest.webmanifest"', 'href="/guest/manifest.webmanifest"')
+        raw = raw.replace('href="/static/', 'href="/guest/static/')
+        raw = raw.replace('src="/static/', 'src="/guest/static/')
+        raw = raw.replace('href="/inventory"', 'href="/guest/inventory"')
+        raw = _GEAR_LINK_RE.sub('<span class="tag guest-pill">Read-only</span>', raw)
+        return raw
 
     @application.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -422,15 +446,165 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     @application.get("/")
     @application.get("/inventory")
+    @application.get("/parts/new")
+    @application.get("/parts/{part_id}/edit")
     @application.get("/projects")
+    @application.get("/projects/new")
     @application.get("/projects/{project_id}")
+    @application.get("/projects/{project_id}/edit")
     @application.get("/shopping")
+    @application.get("/shopping/new")
+    @application.get("/shopping/{item_id}/edit")
     @application.get("/glossary")
     @application.get("/bench")
     @application.get("/bench/{subtab}")
     @application.get("/settings")
-    async def index(project_id: str | None = None, subtab: str | None = None) -> FileResponse:
+    async def index(
+        part_id: str | None = None,
+        project_id: str | None = None,
+        item_id: str | None = None,
+        subtab: str | None = None,
+    ) -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
+
+    # --- Isolated read-only Guest Pass routes (/guest/*) ---
+    @application.get("/guest/pass/{token}")
+    async def guest_pass_redeem(token: str, next: str | None = Query(default=None)) -> Response:
+        if not verify_guest_pass_token(settings.db_path, token):
+            resp = HTMLResponse(status_code=403, content=GUEST_LOCKED_HTML)
+            resp.delete_cookie(GUEST_COOKIE_NAME, path="/guest")
+            resp.headers["Cache-Control"] = "no-store"
+            resp.headers["Referrer-Policy"] = "no-referrer"
+            return resp
+
+        cookie_val = issue_guest_session_cookie_value(settings.db_path)
+        if not cookie_val:
+            resp = HTMLResponse(status_code=403, content=GUEST_LOCKED_HTML)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+
+        record_guest_pass_use(settings.db_path)
+        target = "/guest/inventory"
+        if (
+            next
+            and next.startswith("/guest/")
+            and not next.startswith("/guest/pass/")
+            and "//" not in next
+            and "\r" not in next
+            and "\n" not in next
+        ):
+            target = next
+
+        resp = RedirectResponse(url=target, status_code=302)
+        resp.set_cookie(
+            key=GUEST_COOKIE_NAME,
+            value=cookie_val,
+            max_age=60 * 60 * 24 * 30,
+            path="/guest",
+            httponly=True,
+            samesite="lax",
+            secure=not settings.local_dev_mode,
+        )
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        return resp
+
+    @application.get("/guest/logout")
+    async def guest_logout() -> Response:
+        resp = HTMLResponse(status_code=200, content=GUEST_LOCKED_HTML)
+        resp.delete_cookie(GUEST_COOKIE_NAME, path="/guest")
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @application.get("/guest/manifest.webmanifest")
+    async def guest_manifest() -> JSONResponse:
+        raw = json.loads((STATIC_DIR / "manifest.webmanifest").read_text(encoding="utf-8"))
+        raw["start_url"] = "/guest/inventory"
+        raw["scope"] = "/guest/"
+        for icon in raw.get("icons", []):
+            src = str(icon.get("src") or "")
+            if src.startswith("/static/"):
+                icon["src"] = f"/guest{src}"
+        return JSONResponse(content=raw, media_type="application/manifest+json")
+
+    @application.get("/guest/apple-touch-icon.png")
+    async def guest_apple_touch_icon() -> FileResponse:
+        return FileResponse(
+            STATIC_DIR / "brand" / "apple-touch-icon.png",
+            media_type="image/png",
+        )
+
+    @application.get("/guest")
+    @application.get("/guest/")
+    @application.get("/guest/inventory")
+    @application.get("/guest/projects")
+    @application.get("/guest/projects/{project_id}")
+    @application.get("/guest/shopping")
+    @application.get("/guest/glossary")
+    @application.get("/guest/bench")
+    @application.get("/guest/bench/{subtab}")
+    async def guest_index(project_id: str | None = None, subtab: str | None = None) -> HTMLResponse:
+        return HTMLResponse(
+            content=_render_guest_shell_html(),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.get("/guest/images/{filename}")
+    async def guest_serve_image(filename: str) -> FileResponse:
+        img_path = resolve_safe_image_path(filename, settings.images_dir)
+        if img_path is None:
+            raise HTTPException(status_code=404, detail="Image not found")
+        return FileResponse(
+            img_path,
+            media_type="image/webp",
+            headers={"Cache-Control": "private, max-age=3600"},
+        )
+
+    @application.get("/guest/api/config")
+    async def guest_api_config() -> dict[str, Any]:
+        ui = dict(get_ui_settings(settings.db_path))
+        ui.pop("last_backup_at", None)
+        return {
+            "guest_mode": True,
+            "categories": CATEGORIES,
+            "glossary_categories": GLOSSARY_CATEGORIES,
+            "ui_settings": ui,
+        }
+
+    @application.get("/guest/api/parts")
+    async def guest_api_list_parts(
+        q: str | None = Query(default=None),
+        category: str | None = Query(default=None),
+        location: str | None = Query(default=None),
+        needs_photo: bool = Query(default=False),
+        in_use: bool = Query(default=False),
+        low_stock: bool = Query(default=False),
+    ) -> list[dict[str, Any]]:
+        return list_parts(
+            settings.db_path,
+            q=q,
+            category=category,
+            location=location,
+            needs_photo=needs_photo,
+            in_use=in_use,
+            low_stock=low_stock,
+        )
+
+    @application.get("/guest/api/projects")
+    async def guest_api_list_projects() -> list[dict[str, Any]]:
+        return list_projects(settings.db_path)
+
+    @application.get("/guest/api/shopping")
+    async def guest_api_list_shopping() -> list[dict[str, Any]]:
+        return list_shopping_items(settings.db_path)
+
+    @application.get("/guest/api/retailers")
+    async def guest_api_list_retailers() -> list[dict[str, Any]]:
+        return list_retailers(settings.db_path)
+
+    @application.get("/guest/api/glossary")
+    async def guest_api_list_glossary() -> list[dict[str, Any]]:
+        return list_glossary(settings.db_path)
 
     @application.get("/images/{filename}")
     async def serve_image(filename: str) -> FileResponse:
@@ -448,6 +622,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         used = get_ai_usage_today(settings.db_path)
         remaining = max(0, settings.ai_daily_limit - used) if settings.ai_enabled else 0
         return {
+            "guest_mode": False,
             "ai_enabled": settings.ai_enabled,
             "ai_remaining_today": remaining,
             "local_dev_mode": settings.local_dev_mode,
@@ -930,6 +1105,18 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             **rt,
             "activity": list_mcp_activity(settings.db_path, limit=25),
         }
+
+    @application.get("/api/guest-pass")
+    async def api_get_guest_pass() -> dict[str, Any]:
+        return get_guest_pass_settings(settings.db_path)
+
+    @application.patch("/api/guest-pass")
+    async def api_patch_guest_pass(payload: GuestPassPatch) -> dict[str, Any]:
+        return update_guest_pass_settings(settings.db_path, payload.enabled)
+
+    @application.post("/api/guest-pass/rotate")
+    async def api_rotate_guest_pass() -> dict[str, Any]:
+        return rotate_guest_pass_token(settings.db_path)
 
     @application.post("/api/bins/rename")
     async def api_rename_bin(payload: BinRenameRequest) -> dict[str, Any]:

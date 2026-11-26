@@ -10,6 +10,8 @@ import {
   currencyLabel,
   storeDisplayName,
   toast,
+  isGuest,
+  appHref,
 } from '../state.js';
 import { renderShoppingInspector } from '../inspectors.js';
 
@@ -102,6 +104,7 @@ function renderOptimizerPanel() {
 }
 
 export function renderShoppingView() {
+  const guest = isGuest();
   const items = state.shopping || [];
   const cur = currencyLabel();
 
@@ -167,7 +170,7 @@ export function renderShoppingView() {
           }</span>
                 ${shipHint ? `<span class="ship-hint">${esc(shipHint)}</span>` : ''}
               </div>
-              <button class="btn" type="button" data-store-act="${esc(storeKey)}|${groupState}">${btnLabel}</button>
+              ${guest ? '' : `<button class="btn" type="button" data-store-act="${esc(storeKey)}|${groupState}">${btnLabel}</button>`}
             </div>
             ${list
               .map((it) => {
@@ -179,11 +182,13 @@ export function renderShoppingView() {
                   ${phPart(it)}
                   <div class="n">${esc(it.name)}<small>${esc(why)}</small></div>
                   <span class="c3 dim">${
-                    st === 'arrived'
+                    !guest && st === 'arrived'
                       ? `<button class="btn move-btn" type="button" data-move-inv="${esc(it.id)}">Move to inventory</button>`
                       : esc(statusLabels[st] || 'to order')
                   }</span>
-                  <span class="c4 r">${stepHtml('data-buy', it.id, it.quantity || 1, 'To buy')}</span>
+                  <span class="c4 r">${
+                    guest ? `<span class="mono">×${it.quantity || 1}</span>` : stepHtml('data-buy', it.id, it.quantity || 1, 'To buy')
+                  }</span>
                   <span class="r mono">${esc(lineTotal)}</span>
                 </div>`;
               })
@@ -191,9 +196,11 @@ export function renderShoppingView() {
           </section>`;
         })
         .join('')
+    : guest
+    ? `<div class="map-empty" style="margin-top:16px"><p>Nothing on the shopping list right now.</p></div>`
     : `<div class="map-empty" style="margin-top:16px">
         <p>Nothing on your shopping list right now. Add an item yourself, or ask your assistant to find parts for a project.</p>
-        <a class="btn ink" href="#new-item">+ Add item</a>
+        <a class="btn ink" href="${appHref('/shopping/new')}">+ Add item</a>
       </div>`;
 
   return `<div class="screen full">
@@ -210,17 +217,17 @@ export function renderShoppingView() {
             <b class="num">${money(stillToOrderTotal)} ${esc(cur)}</b>
           </span>
           ${
-            items.length > 1
+            !guest && items.length > 1
               ? `<button class="btn" type="button" data-opt-toggle aria-pressed="${Boolean(
                   state.shopOpt && state.shopOpt.open
                 )}">Consolidate stores</button>`
               : ''
           }
-          <a class="btn ink" href="#new-item">+ Add item</a>
+          ${guest ? '' : `<a class="btn ink" href="${appHref('/shopping/new')}">+ Add item</a>`}
         </div>
       </div>
 
-      ${renderOptimizerPanel()}
+      ${guest ? '' : renderOptimizerPanel()}
       ${storeSections}
     </div>
     ${

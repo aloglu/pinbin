@@ -13,6 +13,8 @@ import {
   projectById,
   storeDisplayName,
   toast,
+  isGuest,
+  appHref,
 } from '../state.js';
 import {
   resolveProjectItem,
@@ -120,6 +122,7 @@ function findMcuRef(proj) {
 
 /* =========================================================== Projects list */
 export function renderProjectsListView() {
+  const guest = isGuest();
   const tab = state.ptab || 'active';
   const all = state.projects || [];
   const tagsAll = [...new Set(all.flatMap((p) => p.tags || []))].sort();
@@ -134,7 +137,7 @@ export function renderProjectsListView() {
       <h1>Projects</h1>
       <span class="sub">${nActive} active · ${nArchived} archived</span>
       <span style="flex:1"></span>
-      <a class="btn ink" href="#new-proj">+ New project</a>
+      ${guest ? '' : `<a class="btn ink" href="${appHref('/projects/new')}">+ New project</a>`}
     </div>
 
     <div class="cattabs" role="group" aria-label="Show">
@@ -161,10 +164,11 @@ export function renderProjectsListView() {
                 const next = nextStepOfProject(p);
                 const open = openChecksOfProject(p);
                 const st = projectState(p);
+                const projUrl = appHref(`/projects/${encodeURIComponent(p.id)}`);
                 return `<div class="prow st-${st} ${p.archived ? 'arch' : ''}">
                   <div class="body">
                     <div class="ttl">
-                      <h2><a href="#p-${esc(p.id)}">${esc(p.name)}</a></h2>
+                      <h2><a href="${projUrl}">${esc(p.name)}</a></h2>
                       ${p.option ? `<span class="tag opt">${esc(p.option)}</span>` : ''}
                       ${statusBadge(st)}
                     </div>
@@ -180,10 +184,14 @@ export function renderProjectsListView() {
                           }</span>`
                     }
                     <div class="pacts2">
-                      <button class="btn quiet" type="button" data-archive="${esc(p.id)}">${
-                  p.archived ? 'Restore' : 'Archive'
-                }</button>
-                      <a class="btn" href="#p-${esc(p.id)}">Open →</a>
+                      ${
+                        guest
+                          ? ''
+                          : `<button class="btn quiet" type="button" data-archive="${esc(p.id)}">${
+                              p.archived ? 'Restore' : 'Archive'
+                            }</button>`
+                      }
+                      <a class="btn" href="${projUrl}">Open →</a>
                     </div>
                   </div>
                 </div>`;
@@ -191,7 +199,7 @@ export function renderProjectsListView() {
               .join('')
           : `<p class="faint">${
               tab === 'archived'
-                ? 'Nothing archived. Archive a finished or paused project to hide it from Inventory.'
+                ? 'Nothing archived.'
                 : state.tagf
                 ? 'No active projects match that tag.'
                 : 'No active projects yet.'
@@ -199,7 +207,11 @@ export function renderProjectsListView() {
       }
     </div>
 
-    <p class="faint pnote">Start one yourself with <b>New project</b>, or ask your assistant to plan it: it can pick parts, check your inventory, find stores and write the wiring list. You can change anything it writes.</p>
+    ${
+      guest
+        ? ''
+        : '<p class="faint pnote">Start one yourself with <b>New project</b>, or ask your assistant to plan it: it can pick parts, check your inventory, find stores and write the wiring list. You can change anything it writes.</p>'
+    }
   </div></div>`;
 }
 
@@ -847,11 +859,12 @@ export function applyMapFocus(pid) {
 
 /* =========================================================== One part (focus) view */
 function renderFocusView(proj) {
+  const guest = isGuest();
   const mcuRef = findMcuRef(proj);
   if (!mcuRef) {
-    return `<div class="map-empty"><p>Add parts to this project to explore connections one part at a time.</p><a class="btn" href="#edit-proj-${esc(
-      proj.id
-    )}">Edit project</a></div>`;
+    return `<div class="map-empty"><p>${
+      guest ? 'No parts in this project yet.' : 'Add parts to this project to explore connections one part at a time.'
+    }</p>${guest ? '' : `<a class="btn" href="${appHref(`/projects/${encodeURIComponent(proj.id)}/edit`)}">Edit project</a>`}</div>`;
   }
   const c = state.focusRef[proj.id] || mcuRef;
   const x = resolveProjectItem(proj, c) || resolveProjectItem(proj, mcuRef);
@@ -925,8 +938,10 @@ function renderFocusView(proj) {
               </div>`;
             })
             .join('')
-        : `<p class="faint">No wires linked to ${esc(x.displayName)} yet. <a href="#edit-proj-${esc(
-            proj.id
+        : guest
+        ? `<p class="faint">No wires linked to ${esc(x.displayName)} yet. Switch to the <b>Parts</b> tab to see every part in this project.</p>`
+        : `<p class="faint">No wires linked to ${esc(x.displayName)} yet. <a href="${appHref(
+            `/projects/${encodeURIComponent(proj.id)}/edit`
           )}">Add wiring</a> or switch to the <b>Parts</b> tab to see every part in this project.</p>`
     }
   </div>`;
@@ -934,11 +949,16 @@ function renderFocusView(proj) {
 
 /* =========================================================== Metro (Lines) view */
 function renderMetroView(proj) {
+  const guest = isGuest();
   const nets = proj.nets || [];
   if (!nets.length) {
     return `<div class="map-empty">
-      <p>No wiring lines yet. Add connections in <b>Edit project</b>, or ask your assistant to write the wiring list.</p>
-      <a class="btn" href="#edit-proj-${esc(proj.id)}">Edit wiring</a>
+      <p>${
+        guest
+          ? 'No wiring lines yet.'
+          : 'No wiring lines yet. Add connections in <b>Edit project</b>, or ask your assistant to write the wiring list.'
+      }</p>
+      ${guest ? '' : `<a class="btn" href="${appHref(`/projects/${encodeURIComponent(proj.id)}/edit`)}">Edit wiring</a>`}
     </div>`;
   }
   const ws = warningsOfProject(proj);
@@ -1005,11 +1025,12 @@ function renderMetroView(proj) {
 
 /* =========================================================== Parts list view */
 function renderPartsListView(proj) {
+  const guest = isGuest();
   const items = proj.items || [];
   if (!items.length) {
-    return `<div class="map-empty"><p>No parts in this project yet.</p><a class="btn" href="#edit-proj-${esc(
-      proj.id
-    )}">Add parts</a></div>`;
+    return `<div class="map-empty"><p>No parts in this project yet.</p>${
+      guest ? '' : `<a class="btn" href="${appHref(`/projects/${encodeURIComponent(proj.id)}/edit`)}">Add parts</a>`
+    }</div>`;
   }
   const ws = warningsOfProject(proj);
   const roleGroups = [
@@ -1033,9 +1054,14 @@ function renderPartsListView(proj) {
               ? `bin <span class="bin">${esc(x.src.location)}</span>`
               : 'owned'
             : esc(storeDisplayName(q.retailer || (x.src && x.src.retailer) || 'to buy'));
-          const qtyCtl = x.owned
-            ? stepHtml('data-qty', q.part_id, x.src ? x.src.quantity : q.owned_quantity || 0, 'You own')
-            : stepHtml('data-buy', q.shopping_item_id, x.src ? x.src.quantity : q.buy_quantity || 1, 'To buy');
+          const qtyVal = x.owned
+            ? x.src ? x.src.quantity : q.owned_quantity || 0
+            : x.src ? x.src.quantity : q.buy_quantity || 1;
+          const qtyCtl = guest
+            ? `<span class="mono">×${qtyVal}</span>`
+            : x.owned
+            ? stepHtml('data-qty', q.part_id, qtyVal, 'You own')
+            : stepHtml('data-buy', q.shopping_item_id, qtyVal, 'To buy');
 
           return `<div class="lrow ${state.sel === `node:${q.ref}` ? 'sel' : ''}" data-sel="node:${esc(q.ref)}">
             ${x.src ? phPart(x.src) : ph(glyphOfItem(x))}
@@ -1064,6 +1090,7 @@ const inspHead = (title, sub) =>
   )}</button></div>`;
 
 function warnBlock(proj, w) {
+  const guest = isGuest();
   const done = w.src === 'assistant' && w.is_done;
   return `<div class="warn ${done ? 'done' : ''}">
     <span class="sev ${done ? 'done' : esc(w.sev)}">${sevGlyph(w.sev, done)}</span>
@@ -1074,9 +1101,11 @@ function warnBlock(proj, w) {
         w.sev !== 'ok'
           ? `<div class="acts">${
               w.src === 'assistant'
-                ? `<label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input class="tick" type="checkbox" data-done="${esc(
-                    proj.id
-                  )}|${esc(w.id)}" ${done ? 'checked' : ''}><span>${done ? 'Checked' : 'Mark as checked'}</span></label>`
+                ? guest
+                  ? `<span class="faint">${done ? 'Checked' : 'Open check'}</span>`
+                  : `<label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input class="tick" type="checkbox" data-done="${esc(
+                      proj.id
+                    )}|${esc(w.id)}" ${done ? 'checked' : ''}><span>${done ? 'Checked' : 'Mark as checked'}</span></label>`
                 : '<span class="faint">Goes away when the wiring changes.</span>'
             }</div>`
           : ''
@@ -1086,6 +1115,7 @@ function warnBlock(proj, w) {
 }
 
 export function renderProjectInspector(proj) {
+  const guest = isGuest();
   const ws = warningsOfProject(proj);
   const sel = state.sel;
 
@@ -1118,16 +1148,18 @@ export function renderProjectInspector(proj) {
                   const done = w.src === 'assistant' && w.is_done;
                   return `<div class="check-row ${done ? 'done' : ''}" data-sel="warn:${esc(w.id)}">
                     ${
-                      w.src === 'assistant'
+                      w.src === 'assistant' && !guest
                         ? `<input class="tick" type="checkbox" data-done="${esc(proj.id)}|${esc(w.id)}" ${
                             done ? 'checked' : ''
                           } aria-label="Checked">`
-                        : `<span class="sev ${esc(w.sev)}">${sevGlyph(w.sev)}</span>`
+                        : `<span class="sev ${done ? 'done' : esc(w.sev)}">${sevGlyph(w.sev, done)}</span>`
                     }
                     <b>${w.t}</b>
                     ${
                       w.src === 'assistant'
-                        ? `<span class="sev ${esc(w.sev)}">${sevGlyph(w.sev)}</span>`
+                        ? guest
+                          ? `<span class="src">${done ? 'checked' : 'note'}</span>`
+                          : `<span class="sev ${done ? 'done' : esc(w.sev)}">${sevGlyph(w.sev, done)}</span>`
                         : '<span class="src">check</span>'
                     }
                   </div>`;
@@ -1151,7 +1183,11 @@ export function renderProjectInspector(proj) {
           : ''
       }
 
-      <div class="sec faint">The built-in checks run every time the wiring changes. The assistant’s notes need you to tick them.</div>
+      <div class="sec faint">${
+        guest
+          ? 'Built-in checks run automatically against the wiring.'
+          : 'The built-in checks run every time the wiring changes. The assistant’s notes need you to tick them.'
+      }</div>
     </div>`;
   }
 
@@ -1203,10 +1239,10 @@ export function renderProjectInspector(proj) {
         <button class="btn" type="button" data-act="clear">← Whole project</button>
         ${nets.length ? `<button class="btn" type="button" data-focus="${esc(id)}" data-view-to="focus">Show its connections</button>` : ''}
         ${
-          x.part_id
-            ? `<a class="btn quiet" href="#edit-part-${esc(x.part_id)}">Edit part</a>`
+          x.part_id && !guest
+            ? `<a class="btn quiet" href="${appHref(`/parts/${encodeURIComponent(x.part_id)}/edit`)}">Edit part</a>`
             : x.shopping_item_id
-            ? `<a class="btn quiet" href="#shopping">Shopping →</a>`
+            ? `<a class="btn quiet" href="${appHref('/shopping')}">Shopping →</a>`
             : ''
         }
       </div>
@@ -1270,10 +1306,11 @@ export function renderProjectInspector(proj) {
 
 /* =========================================================== Project Detail screen */
 export function renderProjectDetailView(pid) {
+  const guest = isGuest();
   const proj = projectById(pid);
   if (!proj) {
     return `<div class="screen full"><div class="work">
-      <a class="eback pback" href="#projects">← Projects</a>
+      <a class="eback pback" href="${appHref('/projects')}">← Projects</a>
       <h1>Project not found</h1>
       <p class="dim" style="margin-top:8px">That project may have been deleted.</p>
     </div></div>`;
@@ -1326,9 +1363,13 @@ export function renderProjectDetailView(pid) {
         </div>`;
     } else {
       body = `<div class="map-empty">
-        <p>No wiring connections yet. Add them in <b>Edit project</b>, or ask your assistant to write the wiring list — the diagram draws itself automatically.</p>
+        <p>${
+          guest
+            ? 'No wiring connections yet.'
+            : 'No wiring connections yet. Add them in <b>Edit project</b>, or ask your assistant to write the wiring list — the diagram draws itself automatically.'
+        }</p>
         <div class="chips">
-          <a class="btn ink" href="#edit-proj-${esc(pid)}">Add wiring</a>
+          ${guest ? '' : `<a class="btn ink" href="${appHref(`/projects/${encodeURIComponent(pid)}/edit`)}">Add wiring</a>`}
           <button class="btn" type="button" data-view="list">View parts (${items.length})</button>
         </div>
       </div>`;
@@ -1368,21 +1409,25 @@ export function renderProjectDetailView(pid) {
   return `<div class="screen">
     <div class="work">
       <div class="projhead">
-        <a class="eback pback" href="#projects">← Projects</a>
+        <a class="eback pback" href="${appHref('/projects')}">← Projects</a>
         <div class="row1">
           <h1>${esc(proj.name)}</h1>
           ${proj.option ? `<span class="tag opt">${esc(proj.option)}</span>` : ''}
           <span style="flex:1"></span>
-          <div class="pacts">
-            ${
-              proj.archived
-                ? ''
-                : `<a class="btn" href="#edit-proj-${esc(pid)}">Edit project</a>`
-            }
-            <button class="btn quiet" type="button" data-archive="${esc(pid)}">${
-    proj.archived ? 'Restore' : 'Archive'
-  }</button>
-          </div>
+          ${
+            guest
+              ? ''
+              : `<div class="pacts">
+                  ${
+                    proj.archived
+                      ? ''
+                      : `<a class="btn" href="${appHref(`/projects/${encodeURIComponent(pid)}/edit`)}">Edit project</a>`
+                  }
+                  <button class="btn quiet" type="button" data-archive="${esc(pid)}">${
+                    proj.archived ? 'Restore' : 'Archive'
+                  }</button>
+                </div>`
+          }
         </div>
         ${proj.description ? `<p class="desc">${esc(proj.description)}</p>` : ''}
         <div class="row2">
@@ -1397,9 +1442,9 @@ export function renderProjectDetailView(pid) {
         </div>
         ${
           proj.archived
-            ? `<div class="archived-note"><span>Archived. It is hidden from Inventory and Shopping.</span><button class="btn" type="button" data-archive="${esc(
-                pid
-              )}">Restore</button></div>`
+            ? `<div class="archived-note"><span>Archived. It is hidden from Inventory and Shopping.</span>${
+                guest ? '' : `<button class="btn" type="button" data-archive="${esc(pid)}">Restore</button>`
+              }</div>`
             : ''
         }
       </div>

@@ -50,11 +50,60 @@ export const SORTS = [
   ['care', 'Needs care first'],
 ];
 
+export const BASE =
+  typeof location !== 'undefined' && (location.pathname === '/guest' || location.pathname.startsWith('/guest/'))
+    ? '/guest'
+    : '';
+
+export const isGuest = () => Boolean(BASE || (state.config && state.config.guest_mode));
+
+export function appHref(path) {
+  const clean = String(path || '/inventory');
+  const norm = clean.startsWith('/') ? clean : `/${clean}`;
+  if (BASE && (norm === BASE || norm.startsWith(`${BASE}/`))) return norm;
+  return BASE ? `${BASE}${norm}` : norm;
+}
+
+export function apiUrl(path) {
+  const norm = String(path || '').startsWith('/') ? path : `/${path}`;
+  return BASE ? `${BASE}${norm}` : norm;
+}
+
+export function routeToPath(r) {
+  const key = String(r || 'inventory').replace(/^#/, '');
+  if (key.startsWith('/')) return appHref(key);
+  if (key === 'inventory' || key === '') return appHref('/inventory');
+  if (key === 'new-part') return appHref('/parts/new');
+  if (key.startsWith('edit-part-')) return appHref(`/parts/${encodeURIComponent(key.slice(10))}/edit`);
+  if (key === 'projects') return appHref('/projects');
+  if (key === 'new-proj') return appHref('/projects/new');
+  if (key.startsWith('p-')) return appHref(`/projects/${encodeURIComponent(key.slice(2))}`);
+  if (key.startsWith('edit-proj-')) return appHref(`/projects/${encodeURIComponent(key.slice(10))}/edit`);
+  if (key === 'shopping') return appHref('/shopping');
+  if (key === 'new-item') return appHref('/shopping/new');
+  if (key.startsWith('edit-item-')) return appHref(`/shopping/${encodeURIComponent(key.slice(10))}/edit`);
+  if (key === 'glossary') return appHref('/glossary');
+  if (key === 'bench') return appHref('/bench');
+  if (key === 'settings') return appHref('/settings');
+  return appHref('/inventory');
+}
+
+export function navigate(target, { replace = false } = {}) {
+  const url = routeToPath(target);
+  const current = location.pathname + location.search;
+  if (current !== url || location.hash) {
+    if (replace) history.replaceState(null, '', url);
+    else history.pushState(null, '', url);
+  }
+  window.dispatchEvent(new CustomEvent('pb:navigate'));
+}
+
 export const CURRENCY_SYMBOL = { TRY: 'TL', EUR: '€', USD: '$' };
 
 export const state = {
   loaded: false,
   config: {
+    guest_mode: false,
     local_dev_mode: false,
     mcp_enabled: false,
     mcp_read_only: false,
@@ -109,7 +158,9 @@ export const state = {
     loading: false,
     stats: null,
     mcp: null,
+    guest: null,
     tokenShown: false,
+    guestLinkShown: false,
     renaming: null,
     confirm: null,
     wipeText: '',
@@ -158,7 +209,7 @@ export function glyphFor(obj) {
 
 export function phPart(obj, cls = '', zoomable = false) {
   if (obj && obj.image_path) {
-    const src = `/images/${encodeURIComponent(obj.image_path)}`;
+    const src = apiUrl(`/images/${encodeURIComponent(obj.image_path)}`);
     return `<div class="ph ${cls}${zoomable ? ' zoomable' : ''}"${zoomable ? ` data-lightbox="${src}"` : ''}><img src="${src}" alt="${esc(obj.name || '')}" loading="lazy"></div>`;
   }
   return ph(glyphFor(obj || {}), cls);

@@ -17,6 +17,7 @@ export const SETTINGS_SECTIONS = [
   ['inventory', 'Inventory'],
   ['shopping', 'Shopping'],
   ['assistant', 'Assistant'],
+  ['guest', 'Guest pass'],
   ['checks', 'Safety checks'],
   ['data', 'Data and backup'],
   ['about', 'About'],
@@ -57,9 +58,10 @@ export async function loadSettingsExtras(renderFn) {
   if (state.set.loading) return;
   state.set.loading = true;
   try {
-    const [stats, mcp] = await Promise.all([api.getStats(), api.getMcpSettings()]);
+    const [stats, mcp, guest] = await Promise.all([api.getStats(), api.getMcpSettings(), api.getGuestPass()]);
     state.set.stats = stats;
     state.set.mcp = mcp;
+    state.set.guest = guest;
     state.set.loaded = true;
     renderFn();
   } catch (err) {
@@ -136,6 +138,16 @@ export function renderSettingsView() {
     images_count: 0,
     images_bytes: 0,
   };
+
+  const guestCfg = set.guest || {
+    enabled: false,
+    token: '',
+    created_at: '',
+    last_used_at: '',
+    path: '',
+  };
+  const guestUrl = guestCfg.token ? `${location.origin}/guest/pass/${guestCfg.token}` : '';
+  const maskedGuestUrl = guestCfg.token ? `${location.origin}/guest/pass/••••••••••••••••••••` : '';
 
   const curCurrencyPair = CURRENCIES.find(([c]) => c === (ui.currency || 'TRY')) || CURRENCIES[0];
 
@@ -375,6 +387,54 @@ export function renderSettingsView() {
       </div>
     </section>`,
 
+    guest: `<section class="sgroup" id="s-guest">
+      <h2>Guest pass</h2>
+      <div class="statusline">
+        <span class="status"><i style="background:${guestCfg.enabled ? 'var(--ok)' : 'var(--ink-3)'}"></i>${
+          guestCfg.enabled ? 'Active' : 'Off'
+        }</span>
+        <span class="dim">${
+          guestCfg.last_used_at ? `Last opened ${fmtWhen(guestCfg.last_used_at)}` : 'Not opened yet'
+        }${guestCfg.created_at ? ` · Link created ${ago(guestCfg.created_at) || fmtWhen(guestCfg.created_at)}` : ''}</span>
+      </div>
+      ${srow(
+        'Allow read-only guest access',
+        'People with the link can browse Inventory, Projects, Shopping, Glossary and Bench. All editing, Settings, backups and assistant controls are blocked on the server.',
+        swBtn('data-guest-tog', guestCfg.enabled, 'Allow read-only guest access')
+      )}
+      ${
+        guestCfg.enabled && guestUrl
+          ? `<div class="ssub">
+              <div class="sl">
+                <b>Guest link</b>
+                <span>Anyone with this link can view your workbench in read-only mode.</span>
+              </div>
+              <div class="guest-link-box">
+                <code>${set.guestLinkShown ? esc(guestUrl) : esc(maskedGuestUrl)}</code>
+                <div class="guest-link-acts">
+                  <button class="btn" type="button" data-guest-link-tog>${set.guestLinkShown ? 'Hide' : 'Show'}</button>
+                  <button class="btn" type="button" data-copy="${esc(guestUrl)}">Copy</button>
+                  <a class="btn" href="${esc(guestUrl)}" target="_blank" rel="noopener">Preview</a>
+                  <button class="btn" type="button" data-confirm="guest-rotate">New link</button>
+                </div>
+              </div>
+              ${confirmBox(
+                'guest-rotate',
+                'The old link stops working immediately and any open guest sessions are signed out.',
+                'Make a new link'
+              )}
+            </div>`
+          : ''
+      }
+      <p class="faint snote">${
+        state.config.local_dev_mode
+          ? 'In production behind Cloudflare Access, add one Bypass rule for <code>/guest/*</code> on this domain so guests can open the link without a Cloudflare login. Everything outside <code>/guest/*</code> stays locked.'
+          : 'Cloudflare Access setup: add one Bypass policy for <code>' +
+            esc(location.host) +
+            '/guest/*</code>. Guests only ever reach <code>/guest/*</code>, while your main app stays locked behind Cloudflare Access.'
+      }</p>
+    </section>`,
+
     checks: `<section class="sgroup" id="s-checks">
       <h2>Safety checks</h2>
       ${srow(
@@ -462,7 +522,7 @@ export function renderSettingsView() {
 
   const nav = `<nav class="setnav" aria-label="Settings sections">${SETTINGS_SECTIONS.map(
     ([k, label]) =>
-      `<a href="#settings" data-setsec="${esc(k)}" ${k === sec ? 'aria-current="true"' : ''}>${esc(label)}</a>`
+      `<a href="/settings" data-setsec="${esc(k)}" ${k === sec ? 'aria-current="true"' : ''}>${esc(label)}</a>`
   ).join('')}</nav>`;
 
   return `<div class="screen full"><div class="work">
@@ -554,6 +614,33 @@ export async function rotateMcpTokenNow(renderFn) {
     state.set.confirm = null;
     renderFn();
     toast('New access token created');
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+export async function toggleGuestPassNow(renderFn) {
+  const curEnabled = Boolean(state.set.guest && state.set.guest.enabled);
+  try {
+    const updated = await api.patchGuestPass({ enabled: !curEnabled });
+    state.set.guest = updated;
+    state.set.confirm = null;
+    if (updated.enabled) state.set.guestLinkShown = true;
+    renderFn();
+    toast(updated.enabled ? 'Guest pass enabled' : 'Guest pass turned off — guest sessions revoked');
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+export async function rotateGuestPassNow(renderFn) {
+  try {
+    const updated = await api.rotateGuestPass();
+    state.set.guest = updated;
+    state.set.guestLinkShown = true;
+    state.set.confirm = null;
+    renderFn();
+    toast('New guest link created — old links revoked');
   } catch (err) {
     toast(err.message);
   }

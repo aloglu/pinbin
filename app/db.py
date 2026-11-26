@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import itertools
 import json
 import math
@@ -3500,6 +3502,124 @@ def list_mcp_activity(db_path: Path, limit: int = 25) -> list[dict[str, Any]]:
                 (max(1, min(100, int(limit))),),
             ).fetchall()
             return [dict(r) for r in rows]
+
+
+GUEST_COOKIE_NAME = "pinbin_guest"
+
+
+def _guest_session_digest(token: str) -> str:
+    return hmac.new(token.encode("utf-8"), b"pinbin-guest-session-v1", hashlib.sha256).hexdigest()
+
+
+def get_guest_pass_settings(db_path: Path) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "enabled": False,
+        "token": "",
+        "created_at": "",
+        "last_used_at": "",
+    }
+    key_map = {
+        "guest_pass_enabled": "enabled",
+        "guest_pass_token": "token",
+        "guest_pass_created_at": "created_at",
+        "guest_pass_last_used_at": "last_used_at",
+    }
+    with db_lock:
+        with get_connection(db_path) as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM settings WHERE key LIKE 'guest_pass_%'"
+            ).fetchall()
+            for r in rows:
+                dest = key_map.get(r["key"])
+                if not dest:
+                    continue
+                try:
+                    val = json.loads(r["value"])
+                except Exception:
+                    val = r["value"]
+                out[dest] = val
+    out["enabled"] = bool(out.get("enabled"))
+    out["token"] = str(out.get("token") or "")
+    out["created_at"] = str(out.get("created_at") or "")
+    out["last_used_at"] = str(out.get("last_used_at") or "")
+    out["path"] = f"/guest/pass/{out['token']}" if out["token"] else ""
+    return out
+
+
+def update_guest_pass_settings(db_path: Path, enabled: bool) -> dict[str, Any]:
+    now = utc_now_iso()
+    with db_lock:
+        current = get_guest_pass_settings(db_path)
+        updates: dict[str, Any] = {"guest_pass_enabled": bool(enabled)}
+        if enabled and not current["token"]:
+            updates["guest_pass_token"] = f"pb_guest_{secrets.token_hex(16)}"
+            updates["guest_pass_created_at"] = now
+            updates["guest_pass_last_used_at"] = ""
+        with get_connection(db_path) as conn:
+            for k, v in updates.items():
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (k, json.dumps(v)),
+                )
+    return get_guest_pass_settings(db_path)
+
+
+def rotate_guest_pass_token(db_path: Path) -> dict[str, Any]:
+    new_token = f"pb_guest_{secrets.token_hex(16)}"
+    now = utc_now_iso()
+    with db_lock:
+        with get_connection(db_path) as conn:
+            for k, v in (
+                ("guest_pass_token", new_token),
+                ("guest_pass_created_at", now),
+                ("guest_pass_last_used_at", ""),
+            ):
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (k, json.dumps(v)),
+                )
+    return get_guest_pass_settings(db_path)
+
+
+def verify_guest_pass_token(db_path: Path, candidate: str) -> bool:
+    cand = (candidate or "").strip()
+    if not cand:
+        return False
+    cfg = get_guest_pass_settings(db_path)
+    if not cfg["enabled"] or not cfg["token"]:
+        return False
+    return hmac.compare_digest(cfg["token"], cand)
+
+
+def issue_guest_session_cookie_value(db_path: Path) -> str | None:
+    cfg = get_guest_pass_settings(db_path)
+    if not cfg["enabled"] or not cfg["token"]:
+        return None
+    return _guest_session_digest(cfg["token"])
+
+
+def verify_guest_session_cookie(db_path: Path, cookie_val: str) -> bool:
+    val = (cookie_val or "").strip()
+    if not val:
+        return False
+    cfg = get_guest_pass_settings(db_path)
+    if not cfg["enabled"] or not cfg["token"]:
+        return False
+    expected = _guest_session_digest(cfg["token"])
+    return hmac.compare_digest(expected, val)
+
+
+def record_guest_pass_use(db_path: Path) -> None:
+    now = utc_now_iso()
+    with db_lock:
+        with get_connection(db_path) as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('guest_pass_last_used_at', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (json.dumps(now),),
+            )
 
 
 def record_backup_timestamp(db_path: Path) -> str:

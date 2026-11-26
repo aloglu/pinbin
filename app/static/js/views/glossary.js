@@ -7,6 +7,7 @@ import {
   phPart,
   sevGlyph,
   partById,
+  appHref,
 } from '../state.js';
 import { warningsOfProject } from '../rules.js';
 import { renderPartInspector } from '../inspectors.js';
@@ -261,7 +262,7 @@ export function renderGlossaryView() {
     return `<div class="screen full">
       <div class="work gl-one">
         <div class="ehead">
-          <a class="eback" href="#glossary" data-gback>← Glossary</a>
+          <a class="eback" href="${appHref('/glossary')}" data-gback>← Glossary</a>
         </div>
         ${detailHtml}
       </div>

@@ -15,6 +15,8 @@ import {
   parsePriceNumber,
   currencyLabel,
   toast,
+  appHref,
+  navigate,
 } from '../state.js';
 import { computeRelations, relHtml, careHtml } from '../rules.js';
 import { secBarHtml } from '../secbar.js';
@@ -426,13 +428,13 @@ export function renderItemEditView(itemId) {
 
   return `<div class="screen full"><div class="work edit">
     <div class="ehead">
-      <a class="eback" href="#shopping" data-leave="shopping" title="Back to Shopping">← Shopping</a>
+      <a class="eback" href="${appHref('/shopping')}" data-leave="/shopping" title="Back to Shopping">← Shopping</a>
       <h1>${esc(title)}</h1>
     </div>
     ${secBarHtml('edit', navs, navs[0][0])}
     <div class="egrid">
       <nav class="enav" aria-label="Sections">
-        ${navs.map(([k, label]) => `<a href="#e-${esc(k)}" data-jump="e-${esc(k)}">${esc(label)}</a>`).join('')}
+        ${navs.map(([k, label]) => `<a href="${esc(location.pathname)}" data-jump="e-${esc(k)}">${esc(label)}</a>`).join('')}
       </nav>
       <div class="eform">${body}</div>
       <aside class="eside">${renderItemSidebar()}</aside>
@@ -448,7 +450,7 @@ export function renderItemEditView(itemId) {
               ? `<span class="leaveq">Leave without saving?</span>
                  <button class="btn" type="button" data-stay>Keep editing</button>
                  <button class="btn dangerout" type="button" data-discard>Discard changes</button>`
-              : `<a class="btn" href="#shopping" data-leave="shopping">Cancel</a>
+              : `<a class="btn" href="${appHref('/shopping')}" data-leave="/shopping">Cancel</a>
                  <button class="btn ink" type="button" data-isave ${n || !isEdit ? '' : 'disabled'}>${
                   isEdit ? 'Save changes' : 'Add item'
                 }</button>`
@@ -606,12 +608,10 @@ export async function saveItemEdit(renderFn) {
 
     const savedId = saved.id;
     clearItemDraft();
-    location.hash = 'shopping';
-    setTimeout(() => {
-      state.sel = `item:${savedId}`;
-      renderFn();
-      toast(isNew ? `${payload.name} added to Shopping` : 'Saved');
-    }, 60);
+    navigate('/shopping');
+    state.sel = `item:${savedId}`;
+    renderFn();
+    toast(isNew ? `${payload.name} added to Shopping` : 'Saved');
   } catch (err) {
     toast(err.message);
   }
@@ -627,10 +627,9 @@ export async function removeItemWithUndo(itemId, renderFn) {
     state.projects = await api.listProjects();
     clearItemDraft();
     state.sel = null;
-    location.hash = 'shopping';
-    setTimeout(() => {
-      renderFn();
-      toast(`${snap.name} removed`, async () => {
+    navigate('/shopping');
+    renderFn();
+    toast(`${snap.name} removed`, async () => {
         try {
           await api.createShoppingItem({
             name: snap.name,
@@ -659,7 +658,6 @@ export async function removeItemWithUndo(itemId, renderFn) {
           toast(err.message);
         }
       });
-    }, 60);
   } catch (err) {
     toast(err.message);
   }

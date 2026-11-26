@@ -13,6 +13,8 @@ import {
   ago,
   sevGlyph,
   projectById,
+  isGuest,
+  appHref,
 } from '../state.js';
 import { projectUseMap, openChecksOfProject } from '../rules.js';
 import { renderPartInspector } from '../inspectors.js';
@@ -73,6 +75,7 @@ function flagHtml(warns) {
 }
 
 export function renderInventoryView() {
+  const guest = isGuest();
   const f = state.inv;
   const q = (f.q || '').trim().toLowerCase();
   const view = f.view || 'grid';
@@ -142,7 +145,7 @@ export function renderInventoryView() {
         <span class="faint">Added ${esc(ago(p.created_at))}</span>
       </div>
       <div class="c-bin">${p.location ? `<span class="bin">${esc(p.location)}</span>` : '<span class="faint">no bin</span>'}</div>
-      <div class="c-qty">${stepHtml('data-qty', p.id, p.quantity, 'Quantity')}</div>
+      <div class="c-qty">${guest ? `<span class="mono">×${p.quantity}</span>` : stepHtml('data-qty', p.id, p.quantity, 'Quantity')}</div>
     </div>`;
   };
 
@@ -192,7 +195,7 @@ export function renderInventoryView() {
       openCnt ? ` · ${openCnt} open check${openCnt === 1 ? '' : 's'}` : ''
     }</span>
       <span style="flex:1"></span>
-      <a class="btn" href="#p-${esc(lensProj.id)}">Open project</a>
+      <a class="btn" href="${appHref(`/projects/${encodeURIComponent(lensProj.id)}`)}">Open project</a>
       <button class="btn" type="button" data-lens="${esc(lensProj.id)}">Show all parts</button>
     </div>`;
   }
@@ -212,7 +215,7 @@ export function renderInventoryView() {
             : ''
         }
         <span style="flex:1"></span>
-        <button class="btn ink" type="button" data-act="add">+ Add part</button>
+        ${guest ? '' : '<button class="btn ink" type="button" data-act="add">+ Add part</button>'}
       </div>
 
       <nav class="cattabs" aria-label="Category">

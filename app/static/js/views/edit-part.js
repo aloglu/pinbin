@@ -14,6 +14,8 @@ import {
   menuHtml,
   partById,
   toast,
+  appHref,
+  navigate,
 } from '../state.js';
 import { computeRelations, relHtml, careHtml } from '../rules.js';
 import { secBarHtml } from '../secbar.js';
@@ -218,7 +220,7 @@ function dupHint(d) {
     (p) => p.name.toLowerCase().includes(q) || q.includes(p.name.toLowerCase().split(' (')[0])
   );
   if (!hit) return '';
-  return `You already have <b>${esc(hit.name)}</b>${hit.location ? ` in bin ${esc(hit.location)}` : ''}. <a href="#edit-part-${esc(hit.id)}">Edit that one instead</a>`;
+  return `You already have <b>${esc(hit.name)}</b>${hit.location ? ` in bin ${esc(hit.location)}` : ''}. <a href="${appHref(`/parts/${encodeURIComponent(hit.id)}/edit`)}">Edit that one instead</a>`;
 }
 
 function previewObj(d) {
@@ -550,13 +552,13 @@ export function renderPartEditView(partId) {
 
   return `<div class="screen full"><div class="work edit">
     <div class="ehead">
-      <a class="eback" href="#inventory" data-leave="inventory" title="Back to Inventory">← Inventory</a>
+      <a class="eback" href="${appHref('/inventory')}" data-leave="/inventory" title="Back to Inventory">← Inventory</a>
       <h1>${esc(title)}</h1>
     </div>
     ${secBarHtml('edit', navs, navs[0][0])}
     <div class="egrid">
       <nav class="enav" aria-label="Sections">
-        ${navs.map(([k, label]) => `<a href="#e-${esc(k)}" data-jump="e-${esc(k)}">${esc(label)}</a>`).join('')}
+        ${navs.map(([k, label]) => `<a href="${esc(location.pathname)}" data-jump="e-${esc(k)}">${esc(label)}</a>`).join('')}
       </nav>
       <div class="eform">${body}</div>
       <aside class="eside">${renderEditSidebar()}</aside>
@@ -572,7 +574,7 @@ export function renderPartEditView(partId) {
               ? `<span class="leaveq">Leave without saving?</span>
                  <button class="btn" type="button" data-stay>Keep editing</button>
                  <button class="btn dangerout" type="button" data-discard>Discard changes</button>`
-              : `<a class="btn" href="#inventory" data-leave="inventory">Cancel</a>
+              : `<a class="btn" href="${appHref('/inventory')}" data-leave="/inventory">Cancel</a>
                  <button class="btn ink" type="button" data-esave ${n || !isEdit ? '' : 'disabled'}>${
                   isEdit ? 'Save changes' : 'Add part'
                 }</button>`
@@ -731,13 +733,10 @@ export async function savePartEdit(renderFn) {
     }
 
     clearPartDraft();
+    navigate('/inventory');
     state.sel = `part:${saved.id}`;
-    location.hash = 'inventory';
-    setTimeout(() => {
-      state.sel = `part:${saved.id}`;
-      renderFn();
-      toast(isNew ? `${saved.name} added` : 'Saved');
-    }, 60);
+    renderFn();
+    toast(isNew ? `${saved.name} added` : 'Saved');
   } catch (err) {
     toast(err.message);
   }
@@ -752,10 +751,9 @@ export async function removePartWithUndo(partId, renderFn) {
     state.parts = state.parts.filter((p) => p.id !== partId);
     state.projects = await api.listProjects();
     clearPartDraft();
-    location.hash = 'inventory';
-    setTimeout(() => {
-      renderFn();
-      toast(`${snapshot.name} removed`, async () => {
+    navigate('/inventory');
+    renderFn();
+    toast(`${snapshot.name} removed`, async () => {
         try {
           const restored = await api.createPart({
             name: snapshot.name,
@@ -780,7 +778,6 @@ export async function removePartWithUndo(partId, renderFn) {
           toast(err.message);
         }
       });
-    }, 60);
   } catch (err) {
     toast(err.message);
   }

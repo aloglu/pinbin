@@ -1,5 +1,5 @@
 // Bench screen: interactive board pinouts, breadboard, resistor bands, multimeter dial, calculators, and bin QR labels.
-import { state, esc, partById } from '../state.js';
+import { state, esc, partById, isGuest } from '../state.js';
 import { secBarHtml } from '../secbar.js';
 
 const PK = {
@@ -247,12 +247,14 @@ function buildToolCatalog() {
   catalog.ohm = { t: 'Ohm’s law', g: 'Calculators', d: 'Enter two of volts, amps and ohms; get the third.' };
   catalog.batt = { t: 'Battery life', g: 'Calculators', d: 'How long a battery lasts at a given current.' };
 
-  // Labels (kept per user decision)
-  catalog.qr = {
-    t: 'Bin QR labels',
-    g: 'Labels',
-    d: 'Print QR labels for your storage bins. Scanning one opens Inventory filtered to that bin.',
-  };
+  // Labels (owner-only workshop QR sticker printing)
+  if (!isGuest()) {
+    catalog.qr = {
+      t: 'Bin QR labels',
+      g: 'Labels',
+      d: 'Print QR labels for your storage bins. Scanning one opens Inventory filtered to that bin.',
+    };
+  }
 
   return catalog;
 }
@@ -873,7 +875,7 @@ export function renderBenchView() {
   return `<div class="screen full"><div class="work">
     <div class="pagehead">
       <h1>Bench</h1>
-      <span class="sub">Boards, guides, calculators and bin labels</span>
+      <span class="sub">${isGuest() ? 'Boards, guides and calculators' : 'Boards, guides, calculators and bin labels'}</span>
     </div>
     ${secBarHtml('bench', secItems, id)}
     <div class="bench3">

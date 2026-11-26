@@ -1,6 +1,10 @@
 // Main Pinbin application shell, routing, theme/font syncing, and event handling.
 import { api } from './api.js';
 import {
+  BASE,
+  isGuest,
+  appHref,
+  navigate,
   state,
   esc,
   sv,
@@ -69,19 +73,47 @@ import {
   saveRetailerShipping,
   patchMcpSetting,
   rotateMcpTokenNow,
+  toggleGuestPassNow,
+  rotateGuestPassNow,
   uploadRestoreZip,
   uploadImportCsv,
   wipeEverythingNow,
 } from './views/settings.js';
 
 function route() {
-  const hash = location.hash.slice(1);
-  if (hash) return hash;
-  const path = location.pathname.replace(/^\/+|\/+$/g, '');
-  if (!path || path === 'inventory') return 'inventory';
-  if (path.startsWith('projects/')) return `p-${path.slice(9)}`;
-  if (['projects', 'shopping', 'glossary', 'bench', 'settings'].includes(path)) return path;
-  return 'inventory';
+  let raw = location.pathname || '/';
+  if (BASE && (raw === BASE || raw.startsWith(`${BASE}/`))) {
+    raw = raw.slice(BASE.length) || '/';
+  }
+  const segs = raw.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+  let r = 'inventory';
+  if (!segs.length || segs[0] === 'inventory') {
+    r = 'inventory';
+  } else if (segs[0] === 'parts') {
+    if (segs[1] === 'new') r = 'new-part';
+    else if (segs[1] && segs[2] === 'edit') r = `edit-part-${decodeURIComponent(segs[1])}`;
+  } else if (segs[0] === 'projects') {
+    if (!segs[1]) r = 'projects';
+    else if (segs[1] === 'new') r = 'new-proj';
+    else if (segs[2] === 'edit') r = `edit-proj-${decodeURIComponent(segs[1])}`;
+    else r = `p-${decodeURIComponent(segs[1])}`;
+  } else if (segs[0] === 'shopping') {
+    if (!segs[1]) r = 'shopping';
+    else if (segs[1] === 'new') r = 'new-item';
+    else if (segs[1] && segs[2] === 'edit') r = `edit-item-${decodeURIComponent(segs[1])}`;
+  } else if (segs[0] === 'glossary') {
+    r = 'glossary';
+  } else if (segs[0] === 'bench') {
+    r = 'bench';
+  } else if (segs[0] === 'settings') {
+    r = 'settings';
+  }
+
+  if (isGuest()) {
+    const allowed = r === 'inventory' || r === 'projects' || r.startsWith('p-') || r === 'shopping' || r === 'glossary' || r === 'bench';
+    if (!allowed) return 'inventory';
+  }
+  return r;
 }
 
 function applyAppearance() {
@@ -132,7 +164,7 @@ function renderNav() {
       navEl.innerHTML = links
         .map(
           ([k, t, c]) =>
-            `<a href="#${k}" data-nav="${k}">${t}${c !== '' ? `<span class="c">${c}</span>` : ''}</a>`
+            `<a href="${appHref(`/${k}`)}" data-nav="${k}">${t}${c !== '' ? `<span class="c">${c}</span>` : ''}</a>`
         )
         .join('');
     }
@@ -144,6 +176,20 @@ function renderNav() {
       const badge = a.querySelector('.c');
       if (badge && String(badge.textContent) !== String(c)) badge.textContent = String(c);
     });
+  }
+
+  const markEl = document.querySelector('.mark');
+  if (markEl) markEl.setAttribute('href', appHref('/inventory'));
+
+  if (isGuest()) {
+    const rightEl = document.querySelector('.bar .right');
+    if (rightEl) {
+      const gear = rightEl.querySelector('#gearBtn');
+      if (gear) gear.remove();
+      if (!rightEl.querySelector('.guest-pill')) {
+        rightEl.innerHTML = '<span class="tag guest-pill">Read-only</span>';
+      }
+    }
   }
 }
 
@@ -260,7 +306,7 @@ function placeholderScreen(title, stepNote) {
   return `<div class="screen full"><div class="work">
     <div class="pagehead"><h1>${esc(title)}</h1></div>
     <p class="dim" style="max-width:60ch">${esc(stepNote)}</p>
-    <p style="margin-top:14px"><a class="btn" href="#inventory">← Back to Inventory</a></p>
+    <p style="margin-top:14px"><a class="btn" href="${appHref('/inventory')}">← Back to Inventory</a></p>
   </div></div>`;
 }
 
@@ -392,6 +438,7 @@ async function loadAllData() {
 async function persistUiSetting(patch) {
   Object.assign(state.config.ui_settings, patch);
   applyAppearance();
+  if (isGuest()) return;
   try {
     const updated = await api.patchSettings(patch);
     state.config.ui_settings = { ...state.config.ui_settings, ...updated };
@@ -401,6 +448,7 @@ async function persistUiSetting(patch) {
 }
 
 async function stepPartQty(id, delta) {
+  if (isGuest()) return;
   const p = partById(id);
   if (!p) return;
   const prev = p.quantity;
@@ -426,6 +474,7 @@ async function stepPartQty(id, delta) {
 }
 
 async function stepShoppingQty(id, delta) {
+  if (isGuest()) return;
   const it = shoppingById(id);
   if (!it) return;
   const prev = it.quantity;
@@ -444,6 +493,7 @@ async function stepShoppingQty(id, delta) {
 }
 
 async function selectOffer(itemId, offerId) {
+  if (isGuest()) return;
   try {
     const updated = await api.patchShoppingOffer(itemId, offerId, { is_selected: true });
     const idx = state.shopping.findIndex((s) => s.id === itemId);
@@ -455,6 +505,7 @@ async function selectOffer(itemId, offerId) {
 }
 
 async function moveToInventory(itemId) {
+  if (isGuest()) return;
   try {
     const createdPart = await api.moveShoppingToInventory(itemId);
     state.shopping = state.shopping.filter((s) => s.id !== itemId);
@@ -539,14 +590,17 @@ document.addEventListener('click', (e) => {
 
   // Edit Part interactions & unsaved leave guard
   if (state.partDraft && document.querySelector('.edit')) {
-    const lk = tgt.closest('a[href^="#"]');
-    if (lk && !lk.dataset.jump && dirtyPartCount() > 0) {
-      e.preventDefault();
-      state.leaveTo = lk.getAttribute('href').slice(1);
-      render();
-      const sb = document.querySelector('.savebar');
-      if (sb) sb.scrollIntoView({ block: 'end' });
-      return;
+    const lk = tgt.closest('a[href]');
+    if (lk && !lk.dataset.jump && !lk.hasAttribute('download') && lk.target !== '_blank' && dirtyPartCount() > 0) {
+      const u = new URL(lk.getAttribute('href'), location.origin);
+      if (u.origin === location.origin) {
+        e.preventDefault();
+        state.leaveTo = u.pathname + u.search;
+        render();
+        const sb = document.querySelector('.savebar');
+        if (sb) sb.scrollIntoView({ block: 'end' });
+        return;
+      }
     }
     if (tgt.closest('[data-stay]')) {
       state.leaveTo = null;
@@ -554,9 +608,9 @@ document.addEventListener('click', (e) => {
       return;
     }
     if (tgt.closest('[data-discard]')) {
-      const to = state.leaveTo || 'inventory';
+      const to = state.leaveTo || '/inventory';
       clearPartDraft();
-      location.hash = to;
+      navigate(to);
       return;
     }
     if (tgt.closest('[data-esave]')) {
@@ -626,14 +680,17 @@ document.addEventListener('click', (e) => {
 
   // Edit Project interactions & unsaved leave guard
   if (state.projDraft && document.querySelector('.edit')) {
-    const lk = tgt.closest('a[href^="#"]');
-    if (lk && !lk.dataset.jump && dirtyProjectCount() > 0) {
-      e.preventDefault();
-      state.leaveTo = lk.getAttribute('href').slice(1);
-      render();
-      const sb = document.querySelector('.savebar');
-      if (sb) sb.scrollIntoView({ block: 'end' });
-      return;
+    const lk = tgt.closest('a[href]');
+    if (lk && !lk.dataset.jump && !lk.hasAttribute('download') && lk.target !== '_blank' && dirtyProjectCount() > 0) {
+      const u = new URL(lk.getAttribute('href'), location.origin);
+      if (u.origin === location.origin) {
+        e.preventDefault();
+        state.leaveTo = u.pathname + u.search;
+        render();
+        const sb = document.querySelector('.savebar');
+        if (sb) sb.scrollIntoView({ block: 'end' });
+        return;
+      }
     }
     if (tgt.closest('[data-stay]')) {
       state.leaveTo = null;
@@ -641,9 +698,9 @@ document.addEventListener('click', (e) => {
       return;
     }
     if (tgt.closest('[data-discard]')) {
-      const to = state.leaveTo || (state.projDraft.id ? `p-${state.projDraft.id}` : 'projects');
+      const to = state.leaveTo || (state.projDraft.id ? `/projects/${encodeURIComponent(state.projDraft.id)}` : '/projects');
       clearProjectDraft();
-      location.hash = to;
+      navigate(to);
       return;
     }
     if (tgt.closest('[data-psave]')) {
@@ -698,14 +755,17 @@ document.addEventListener('click', (e) => {
 
   // Edit Shopping Item interactions & unsaved leave guard
   if (state.itemDraft && document.querySelector('.edit')) {
-    const lk = tgt.closest('a[href^="#"]');
-    if (lk && !lk.dataset.jump && dirtyItemCount() > 0) {
-      e.preventDefault();
-      state.leaveTo = lk.getAttribute('href').slice(1);
-      render();
-      const sb = document.querySelector('.savebar');
-      if (sb) sb.scrollIntoView({ block: 'end' });
-      return;
+    const lk = tgt.closest('a[href]');
+    if (lk && !lk.dataset.jump && !lk.hasAttribute('download') && lk.target !== '_blank' && dirtyItemCount() > 0) {
+      const u = new URL(lk.getAttribute('href'), location.origin);
+      if (u.origin === location.origin) {
+        e.preventDefault();
+        state.leaveTo = u.pathname + u.search;
+        render();
+        const sb = document.querySelector('.savebar');
+        if (sb) sb.scrollIntoView({ block: 'end' });
+        return;
+      }
     }
     if (tgt.closest('[data-stay]')) {
       state.leaveTo = null;
@@ -713,9 +773,9 @@ document.addEventListener('click', (e) => {
       return;
     }
     if (tgt.closest('[data-discard]')) {
-      const to = state.leaveTo || 'shopping';
+      const to = state.leaveTo || '/shopping';
       clearItemDraft();
-      location.hash = to;
+      navigate(to);
       return;
     }
     if (tgt.closest('[data-isave]')) {
@@ -781,14 +841,52 @@ document.addEventListener('click', (e) => {
     }
   }
 
+  // Internal SPA navigation for clean URLs
+  const spaLink = tgt.closest('a[href]');
+  if (
+    spaLink &&
+    !e.metaKey &&
+    !e.ctrlKey &&
+    !e.shiftKey &&
+    !e.altKey &&
+    e.button === 0 &&
+    !spaLink.hasAttribute('download') &&
+    spaLink.target !== '_blank' &&
+    !spaLink.dataset.jump &&
+    !spaLink.dataset.setsec &&
+    !spaLink.dataset.gback
+  ) {
+    const hrefAttr = spaLink.getAttribute('href') || '';
+    if (hrefAttr.startsWith('/')) {
+      const u = new URL(hrefAttr, location.origin);
+      const p = u.pathname;
+      const bypass =
+        p.startsWith('/api/') ||
+        p.startsWith('/guest/api/') ||
+        p.startsWith('/guest/pass/') ||
+        p === '/guest/logout' ||
+        p.startsWith('/images/') ||
+        p.startsWith('/guest/images/') ||
+        p.startsWith('/static/') ||
+        p.startsWith('/guest/static/');
+      if (!bypass && u.origin === location.origin) {
+        e.preventDefault();
+        navigate(p + u.search);
+        return;
+      }
+    }
+  }
+
   // Shopping screen actions (store order button + store consolidation helper)
   const storeAct = tgt.closest('[data-store-act]');
   if (storeAct) {
+    if (isGuest()) return;
     const [storeKey, curState] = storeAct.dataset.storeAct.split('|');
     advanceStoreStatus(storeKey, curState, render);
     return;
   }
   if (tgt.closest('[data-opt-toggle]')) {
+    if (isGuest()) return;
     state.shopOpt.open = !state.shopOpt.open;
     if (state.shopOpt.open) {
       runStoreOptimizer(state.shopOpt.mode, false, render);
@@ -799,10 +897,12 @@ document.addEventListener('click', (e) => {
   }
   const optMode = tgt.closest('[data-opt-mode]');
   if (optMode) {
+    if (isGuest()) return;
     runStoreOptimizer(optMode.dataset.optMode, false, render);
     return;
   }
   if (tgt.closest('[data-opt-apply]')) {
+    if (isGuest()) return;
     runStoreOptimizer(state.shopOpt.mode, true, render);
     return;
   }
@@ -829,6 +929,7 @@ document.addEventListener('click', (e) => {
   }
   const archBtn = tgt.closest('[data-archive]');
   if (archBtn) {
+    if (isGuest()) return;
     toggleProjectArchive(archBtn.dataset.archive, render);
     return;
   }
@@ -1060,12 +1161,13 @@ document.addEventListener('click', (e) => {
     }
     if (act === 'clearbin') {
       state.inv.binFilter = '';
-      if (location.search) history.replaceState(null, '', location.pathname + location.hash);
+      if (location.search) history.replaceState(null, '', location.pathname);
       render();
       return;
     }
     if (act === 'add') {
-      location.hash = 'new-part';
+      if (isGuest()) return;
+      navigate('/parts/new');
       return;
     }
     if (act === 'undo') {
@@ -1107,11 +1209,9 @@ document.addEventListener('click', (e) => {
   const gto = tgt.closest('[data-goto]');
   if (gto) {
     const [pid, wid] = gto.dataset.goto.split('|');
-    location.hash = `p-${pid}`;
-    setTimeout(() => {
-      state.sel = `warn:${wid}`;
-      render();
-    }, 60);
+    navigate(`/projects/${encodeURIComponent(pid)}`);
+    state.sel = `warn:${wid}`;
+    render();
     return;
   }
   const op = tgt.closest('[data-openpart]');
@@ -1131,7 +1231,7 @@ document.addEventListener('click', (e) => {
   if (goTool) {
     state.bench.tool = goTool.dataset.gotool;
     state.bench.pin = '';
-    location.hash = 'bench';
+    navigate('/bench');
     return;
   }
 
@@ -1271,6 +1371,15 @@ document.addEventListener('click', (e) => {
     render();
     return;
   }
+  if (tgt.closest('[data-guest-tog]')) {
+    toggleGuestPassNow(render);
+    return;
+  }
+  if (tgt.closest('[data-guest-link-tog]')) {
+    state.set.guestLinkShown = !state.set.guestLinkShown;
+    render();
+    return;
+  }
   const confOpen = tgt.closest('[data-confirm]');
   if (confOpen) {
     const id = confOpen.dataset.confirm;
@@ -1293,6 +1402,7 @@ document.addEventListener('click', (e) => {
   if (confDo) {
     const id = confDo.dataset.confirmDo;
     if (id === 'token') rotateMcpTokenNow(render);
+    else if (id === 'guest-rotate') rotateGuestPassNow(render);
     else if (id === 'restore') {
       const inp = document.getElementById('restoreZipInput');
       if (inp) inp.click();
@@ -1463,6 +1573,7 @@ document.addEventListener('change', (e) => {
     return;
   }
   if (e.target.matches('input[data-done]')) {
+    if (isGuest()) return;
     const [pid, cid] = e.target.dataset.done.split('|');
     toggleProjectCheck(pid, cid, e.target.checked, render);
     return;
@@ -1646,7 +1757,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-window.addEventListener('hashchange', () => {
+function onRouteChange() {
   const r = route();
   if (r !== 'new-part' && !r.startsWith('edit-part-')) {
     clearPartDraft();
@@ -1674,7 +1785,10 @@ window.addEventListener('hashchange', () => {
   state.hot = null;
   render();
   window.scrollTo(0, 0);
-});
+}
+
+window.addEventListener('popstate', onRouteChange);
+window.addEventListener('pb:navigate', onRouteChange);
 
 window.addEventListener('resize', () => {
   const tb = document.querySelector('.bar');

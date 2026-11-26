@@ -152,6 +152,7 @@ code {
 .nav .c { font: 500 11.5px var(--mono); color: var(--ink-3); }
 .bar .right { margin-left: auto; display: flex; gap: 4px; align-items: center; }
 #gearBtn { width: 32px; height: 32px; padding: 0; justify-content: center; }
+.guest-pill { white-space: nowrap; user-select: none; }
 
 @media (max-width: 720px) {
   .bar-in { gap: 8px; }
