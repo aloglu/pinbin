@@ -11,6 +11,8 @@ import {
   partById,
   shoppingById,
   projectById,
+  projectHref,
+  projectSlug,
   currencyLabel,
   toast,
   appHref,
@@ -256,7 +258,7 @@ export function renderProjectEditView(projectId) {
   const isEdit = Boolean(d.id);
   const proj = isEdit ? projectById(d.id) : null;
   const n = dirtyProjectCount();
-  const backHref = isEdit ? appHref(`/projects/${encodeURIComponent(d.id)}`) : appHref('/projects');
+  const backHref = isEdit ? projectHref(d.id) : appHref('/projects');
   const backLabel = isEdit && proj ? proj.name : 'Projects';
   const title = isEdit ? 'Edit project' : 'New project';
 
@@ -640,7 +642,7 @@ export async function saveProjectEdit(renderFn) {
 
     clearProjectDraft();
     state.sel = null;
-    navigate(`/projects/${encodeURIComponent(pid)}`);
+    navigate(`/projects/${encodeURIComponent(projectSlug(pid))}`);
     renderFn();
     toast(isNew ? `${metaPayload.name} created` : 'Saved · checks updated');
   } catch (err) {
@@ -651,6 +653,9 @@ export async function saveProjectEdit(renderFn) {
 export async function deleteProjectWithUndo(pid, renderFn) {
   const existing = projectById(pid);
   if (!existing) return;
+  if (!window.confirm(`Delete project "${existing.name}"?\n\nIts wiring, checks, and code will be removed (you can briefly Undo).`)) {
+    return;
+  }
   const snap = clone(existing);
   try {
     await api.deleteProject(pid);
@@ -686,6 +691,12 @@ export async function deleteProjectWithUndo(pid, renderFn) {
           }
           if ((snap.checks || []).length) {
             await api.replaceProjectChecks(restored.id, snap.checks);
+          }
+          if (snap.code_source || snap.code_language) {
+            await api.saveProjectCode(restored.id, {
+              code_source: snap.code_source || '',
+              code_language: snap.code_language || null,
+            });
           }
           state.projects = await api.listProjects();
           renderFn();

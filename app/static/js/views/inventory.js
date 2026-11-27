@@ -13,6 +13,7 @@ import {
   ago,
   sevGlyph,
   projectById,
+  projectHref,
   isGuest,
   appHref,
 } from '../state.js';
@@ -228,7 +229,7 @@ export function renderInventoryView() {
       openCnt ? ` · ${openCnt} open check${openCnt === 1 ? '' : 's'}` : ''
     }</span>
       <span style="flex:1"></span>
-      <a class="btn" href="${appHref(`/projects/${encodeURIComponent(lensProj.id)}`)}">Open project</a>
+      <a class="btn" href="${projectHref(lensProj)}">Open project</a>
       <button class="btn" type="button" data-lens="${esc(lensProj.id)}">Show all parts</button>
     </div>`;
   }

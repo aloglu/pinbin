@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import segno
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -412,6 +413,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
 
     application.state.settings = settings
     application.add_middleware(CloudflareAccessMiddleware, settings=settings)
+    application.add_middleware(GZipMiddleware, minimum_size=500)
 
     def _delete_image_if_unreferenced(filename: str) -> None:
         if filename and not is_image_referenced(settings.db_path, filename):
@@ -625,6 +627,17 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
     async def guest_api_list_glossary() -> list[dict[str, Any]]:
         return list_glossary(settings.db_path)
 
+    @application.get("/guest/api/bootstrap")
+    async def guest_api_bootstrap() -> dict[str, Any]:
+        return {
+            "config": await guest_api_config(),
+            "parts": list_parts(settings.db_path),
+            "projects": list_projects(settings.db_path),
+            "shopping": list_shopping_items(settings.db_path),
+            "retailers": list_retailers(settings.db_path),
+            "glossary": list_glossary(settings.db_path),
+        }
+
     @application.get("/images/{filename}")
     async def serve_image(filename: str) -> FileResponse:
         img_path = resolve_safe_image_path(filename, settings.images_dir)
@@ -647,6 +660,17 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
             "categories": CATEGORIES,
             "glossary_categories": GLOSSARY_CATEGORIES,
             "ui_settings": get_ui_settings(settings.db_path),
+        }
+
+    @application.get("/api/bootstrap")
+    async def api_bootstrap() -> dict[str, Any]:
+        return {
+            "config": await api_config(),
+            "parts": list_parts(settings.db_path),
+            "projects": list_projects(settings.db_path),
+            "shopping": list_shopping_items(settings.db_path),
+            "retailers": list_retailers(settings.db_path),
+            "glossary": list_glossary(settings.db_path),
         }
 
     @application.get("/api/glossary")
@@ -947,11 +971,12 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         return updated
 
     @application.delete("/api/shopping/{item_id}")
-    async def api_delete_shopping(item_id: str) -> dict[str, str]:
+    async def api_delete_shopping(item_id: str, keep_images: bool = Query(default=False)) -> dict[str, str]:
         deleted = delete_shopping_item(settings.db_path, item_id)
         if deleted is None:
             raise HTTPException(status_code=404, detail="Shopping item not found")
-        _delete_image_if_unreferenced(deleted.get("image_path", ""))
+        if not keep_images:
+            _delete_image_if_unreferenced(deleted.get("image_path", ""))
         return {"status": "deleted", "id": item_id}
 
     @application.post("/api/shopping/{item_id}/move-to-inventory")
@@ -1239,12 +1264,13 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         return updated
 
     @application.delete("/api/parts/{part_id}")
-    async def api_delete_part(part_id: str) -> dict[str, str]:
+    async def api_delete_part(part_id: str, keep_images: bool = Query(default=False)) -> dict[str, str]:
         deleted = delete_part(settings.db_path, part_id)
         if deleted is None:
             raise HTTPException(status_code=404, detail="Part not found")
-        _delete_image_if_unreferenced(deleted.get("image_path", ""))
-        _delete_image_if_unreferenced(deleted.get("pinout_image_path", ""))
+        if not keep_images:
+            _delete_image_if_unreferenced(deleted.get("image_path", ""))
+            _delete_image_if_unreferenced(deleted.get("pinout_image_path", ""))
         return {"status": "deleted", "id": part_id}
 
     @application.post("/api/parts/{part_id}/photo")

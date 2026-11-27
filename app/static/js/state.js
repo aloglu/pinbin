@@ -77,8 +77,8 @@ export function routeToPath(r) {
   if (key.startsWith('edit-part-')) return appHref(`/parts/${encodeURIComponent(key.slice(10))}/edit`);
   if (key === 'projects') return appHref('/projects');
   if (key === 'new-proj') return appHref('/projects/new');
-  if (key.startsWith('p-')) return appHref(`/projects/${encodeURIComponent(key.slice(2))}`);
-  if (key.startsWith('edit-proj-')) return appHref(`/projects/${encodeURIComponent(key.slice(10))}/edit`);
+  if (key.startsWith('p-')) return appHref(`/projects/${encodeURIComponent(projectSlug(key.slice(2)))}`);
+  if (key.startsWith('edit-proj-')) return appHref(`/projects/${encodeURIComponent(projectSlug(key.slice(10)))}/edit`);
   if (key === 'shopping') return appHref('/shopping');
   if (key === 'new-item') return appHref('/shopping/new');
   if (key.startsWith('edit-item-')) return appHref(`/shopping/${encodeURIComponent(key.slice(10))}/edit`);
@@ -306,8 +306,23 @@ export function shoppingById(id) {
   return state.shopping.find((s) => s.id === id) || null;
 }
 
-export function projectById(id) {
-  return state.projects.find((p) => p.id === id) || null;
+export function projectById(idOrSlug) {
+  const key = String(idOrSlug || '');
+  if (!key) return null;
+  return state.projects.find((p) => p.id === key || p.slug === key) || null;
+}
+
+export function projectSlug(projOrId) {
+  if (!projOrId) return '';
+  if (typeof projOrId === 'object') return projOrId.slug || projOrId.id || '';
+  const found = projectById(projOrId);
+  return found ? found.slug || found.id : String(projOrId);
+}
+
+export function projectHref(projOrId, suffix = '') {
+  const slug = projectSlug(projOrId);
+  const tail = suffix ? (suffix.startsWith('/') ? suffix : `/${suffix}`) : '';
+  return appHref(`/projects/${encodeURIComponent(slug)}${tail}`);
 }
 
 export function storeDisplayName(domainOrName) {
@@ -328,15 +343,81 @@ export function termButton(termId, label) {
 }
 
 let toastTimer = null;
+
+export function dismissToast() {
+  const root = document.getElementById('toastRoot');
+  clearTimeout(toastTimer);
+  toastTimer = null;
+  if (root) {
+    root.innerHTML = '';
+    root._undo = null;
+  }
+}
+
 export function toast(msg, undoFn = null) {
   const root = document.getElementById('toastRoot');
   if (!root) return;
   clearTimeout(toastTimer);
   root.innerHTML = `<div class="toast" role="status">${esc(msg)}${undoFn ? '<button type="button" data-act="undo">Undo</button>' : ''}</div>`;
   root._undo = undoFn;
+
+  const el = root.firstElementChild;
+  if (el) {
+    // Desktop: left-click or right-click anywhere outside action buttons dismisses
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      dismissToast();
+    });
+    el.addEventListener('contextmenu', (e) => {
+      if (e.target.closest('button')) return;
+      e.preventDefault();
+      dismissToast();
+    });
+    // Mobile: 4-way swipe (left, right, up, down) dismisses
+    let startX = 0;
+    let startY = 0;
+    let dragging = false;
+    el.addEventListener(
+      'touchstart',
+      (e) => {
+        if (e.target.closest('button') || e.touches.length !== 1) return;
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        dragging = true;
+        el.style.transition = 'none';
+      },
+      { passive: true }
+    );
+    el.addEventListener(
+      'touchmove',
+      (e) => {
+        if (!dragging || e.touches.length !== 1) return;
+        const dx = e.touches[0].clientX - startX;
+        const dy = e.touches[0].clientY - startY;
+        el.style.transform = `translate(calc(-50% + ${dx}px), ${dy}px)`;
+        const dist = Math.hypot(dx, dy);
+        el.style.opacity = String(Math.max(0.2, 1 - dist / 120));
+      },
+      { passive: true }
+    );
+    el.addEventListener('touchend', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      const t = e.changedTouches[0];
+      const dx = t ? t.clientX - startX : 0;
+      const dy = t ? t.clientY - startY : 0;
+      if (Math.hypot(dx, dy) >= 36) {
+        dismissToast();
+      } else {
+        el.style.transition = 'transform .15s ease, opacity .15s ease';
+        el.style.transform = '';
+        el.style.opacity = '';
+      }
+    });
+  }
+
   toastTimer = setTimeout(() => {
-    root.innerHTML = '';
-    root._undo = null;
+    dismissToast();
   }, 6000);
 }
 

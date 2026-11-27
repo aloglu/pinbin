@@ -60,13 +60,14 @@ _GUEST_ALLOWED_EXACT = {
     "/guest/manifest.webmanifest",
     "/guest/apple-touch-icon.png",
     "/guest/api/config",
+    "/guest/api/bootstrap",
     "/guest/api/parts",
     "/guest/api/projects",
     "/guest/api/shopping",
     "/guest/api/retailers",
     "/guest/api/glossary",
 }
-_GUEST_PROJECT_DETAIL_RE = re.compile(r"^/guest/projects/([^/]+)(?:/(?:map|focus|metro|parts|list|code|notes))?$")
+_GUEST_PROJECT_DETAIL_RE = re.compile(r"^/guest/projects/([^/]+)(?:/(?:map|one-part|focus|lines|metro|parts|list|code|notes))?$")
 _GUEST_PROJECT_CODE_API_RE = re.compile(r"^/guest/api/projects/([^/]+)/(?:code|wokwi|wokwi\.zip)$")
 _GUEST_BENCH_SUBTAB_RE = re.compile(r"^/guest/bench/([^/]+)$")
 
@@ -396,7 +397,12 @@ def _apply_security_headers(response: Response, path: str, *, is_locked_page: bo
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Content-Security-Policy", _locked_page_csp() if is_locked_page else _APP_CSP)
-    if path.startswith("/static/js/") or path.startswith("/guest/static/js/"):
+    if (
+        path.startswith("/static/js/")
+        or path.startswith("/guest/static/js/")
+        or path.startswith("/static/css/")
+        or path.startswith("/guest/static/css/")
+    ):
         response.headers["Cache-Control"] = "no-cache"
     return response
 

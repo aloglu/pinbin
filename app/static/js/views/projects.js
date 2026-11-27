@@ -12,6 +12,7 @@ import {
   menuHtml,
   sevGlyph,
   projectById,
+  projectHref,
   storeDisplayName,
   toast,
   isGuest,
@@ -170,7 +171,7 @@ export function renderProjectsListView() {
                 const next = nextStepOfProject(p);
                 const open = openChecksOfProject(p);
                 const st = projectState(p);
-                const projUrl = appHref(`/projects/${encodeURIComponent(p.id)}`);
+                const projUrl = projectHref(p);
                 return `<div class="prow st-${st} ${p.archived ? 'arch' : ''}">
                   <div class="body">
                     <div class="ttl">
@@ -871,7 +872,7 @@ function renderFocusView(proj) {
   if (!mcuRef) {
     return `<div class="map-empty"><p>${
       guest ? 'No parts in this project yet.' : 'Add parts to this project to explore connections one part at a time.'
-    }</p>${guest ? '' : `<a class="btn" href="${appHref(`/projects/${encodeURIComponent(proj.id)}/edit`)}">Edit project</a>`}</div>`;
+    }</p>${guest ? '' : `<a class="btn" href="${projectHref(proj, 'edit')}">Edit project</a>`}</div>`;
   }
   const c = state.focusRef[proj.id] || mcuRef;
   const x = resolveProjectItem(proj, c) || resolveProjectItem(proj, mcuRef);
@@ -1374,13 +1375,12 @@ export function renderProjectDetailView(pid) {
   const items = proj.items || [];
   const ownedCount = items.filter((x) => x.part_id).length;
 
-  const hasCode = Boolean((proj.code_source || '').trim());
   const tabs = [
     ['map', 'Map'],
     ['focus', 'One part'],
     ['metro', 'Lines'],
     ['list', 'Parts'],
-    ['code', hasCode ? 'Code ●' : 'Code'],
+    ['code', 'Code'],
     ['notes', 'Notes'],
   ];
 
@@ -1420,7 +1420,7 @@ export function renderProjectDetailView(pid) {
             : 'No wiring connections yet. Add them in <b>Edit project</b>, or ask your assistant to write the wiring list — the diagram draws itself automatically.'
         }</p>
         <div class="chips">
-          ${guest ? '' : `<a class="btn ink" href="${appHref(`/projects/${encodeURIComponent(pid)}/edit`)}">Add wiring</a>`}
+          ${guest ? '' : `<a class="btn ink" href="${projectHref(proj, 'edit')}">Add wiring</a>`}
           <button class="btn" type="button" data-view="list">View parts (${items.length})</button>
         </div>
       </div>`;
@@ -1475,7 +1475,7 @@ export function renderProjectDetailView(pid) {
                   ${
                     proj.archived
                       ? ''
-                      : `<a class="btn" href="${appHref(`/projects/${encodeURIComponent(pid)}/edit`)}">Edit project</a>`
+                      : `<a class="btn" href="${projectHref(proj, 'edit')}">Edit project</a>`
                   }
                   <button class="btn quiet" type="button" data-archive="${esc(pid)}">${
                     proj.archived ? 'Restore' : 'Archive'

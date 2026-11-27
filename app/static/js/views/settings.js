@@ -607,6 +607,7 @@ export async function patchMcpSetting(patch, renderFn) {
     const updated = await api.patchMcpSettings(patch);
     state.set.mcp = updated;
     renderFn();
+    toast('Assistant settings saved');
   } catch (err) {
     toast(err.message);
   }

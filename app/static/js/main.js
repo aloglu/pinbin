@@ -12,6 +12,8 @@ import {
   partById,
   shoppingById,
   projectById,
+  projectSlug,
+  projectHref,
   toast,
   loadedImgSrcs,
 } from './state.js';
@@ -52,6 +54,8 @@ import {
   toggleWokwiExportAction,
   closeWokwiExportAction,
   copyWokwiDiagramAction,
+  copyWokwiSketchAction,
+  copyWokwiLibrariesAction,
   simPlayPauseAction,
   simStepAction,
   simResetAction,
@@ -104,7 +108,9 @@ import {
 
 const PROJ_TAB_FROM_URL = {
   map: 'map',
+  'one-part': 'focus',
   focus: 'focus',
+  lines: 'metro',
   metro: 'metro',
   parts: 'list',
   list: 'list',
@@ -113,8 +119,8 @@ const PROJ_TAB_FROM_URL = {
 };
 const PROJ_TAB_TO_URL = {
   map: 'map',
-  focus: 'focus',
-  metro: 'metro',
+  focus: 'one-part',
+  metro: 'lines',
   list: 'parts',
   code: 'code',
   notes: 'notes',
@@ -122,7 +128,7 @@ const PROJ_TAB_TO_URL = {
 
 function syncProjectTabUrl(pid, viewKey, replace = false) {
   const slug = PROJ_TAB_TO_URL[viewKey] || 'map';
-  const target = appHref(`/projects/${encodeURIComponent(pid)}/${slug}`);
+  const target = projectHref(pid, slug);
   if (location.pathname !== target) {
     if (replace) history.replaceState(null, '', target);
     else history.pushState(null, '', target);
@@ -144,12 +150,17 @@ function route() {
   } else if (segs[0] === 'projects') {
     if (!segs[1]) r = 'projects';
     else if (segs[1] === 'new') r = 'new-proj';
-    else if (segs[2] === 'edit') r = `edit-proj-${decodeURIComponent(segs[1])}`;
     else {
-      const pid = decodeURIComponent(segs[1]);
-      r = `p-${pid}`;
-      if (segs[2] && PROJ_TAB_FROM_URL[segs[2]]) {
-        state.projView[pid] = PROJ_TAB_FROM_URL[segs[2]];
+      const rawSeg = decodeURIComponent(segs[1]);
+      const resolved = projectById(rawSeg);
+      const pid = resolved ? resolved.id : rawSeg;
+      if (segs[2] === 'edit') {
+        r = `edit-proj-${pid}`;
+      } else {
+        r = `p-${pid}`;
+        if (segs[2] && PROJ_TAB_FROM_URL[segs[2]]) {
+          state.projView[pid] = PROJ_TAB_FROM_URL[segs[2]];
+        }
       }
     }
   } else if (segs[0] === 'shopping') {
@@ -565,22 +576,15 @@ export function render() {
 }
 
 async function loadAllData() {
-  const [config, parts, projects, shopping, retailers, glossary] = await Promise.all([
-    api.getConfig(),
-    api.listParts(),
-    api.listProjects(),
-    api.listShopping(),
-    api.listRetailers(),
-    api.listGlossary(),
-  ]);
-  state.config = config;
-  state.parts = parts;
-  state.projects = projects;
-  state.shopping = shopping;
-  state.retailers = retailers;
-  state.glossary = glossary;
-  state.inv.sort = normalizeSort(config.ui_settings?.sort_by || 'recent');
-  state.inv.view = config.ui_settings?.view_mode === 'list' ? 'list' : 'grid';
+  const boot = await api.getBootstrap();
+  state.config = boot.config;
+  state.parts = boot.parts || [];
+  state.projects = boot.projects || [];
+  state.shopping = boot.shopping || [];
+  state.retailers = boot.retailers || [];
+  state.glossary = boot.glossary || [];
+  state.inv.sort = normalizeSort(boot.config?.ui_settings?.sort_by || 'recent');
+  state.inv.view = boot.config?.ui_settings?.view_mode === 'list' ? 'list' : 'grid';
 
   // Support /?bin=<BinName> deep link from printed QR labels
   const params = new URLSearchParams(location.search);
@@ -599,6 +603,9 @@ async function persistUiSetting(patch) {
   try {
     const updated = await api.patchSettings(patch);
     state.config.ui_settings = { ...state.config.ui_settings, ...updated };
+    if (route() === 'settings') {
+      toast('Settings saved');
+    }
   } catch (err) {
     toast(err.message);
   }
@@ -964,7 +971,7 @@ document.addEventListener('click', (e) => {
       return;
     }
     if (tgt.closest('[data-discard]')) {
-      const to = state.leaveTo || (state.projDraft.id ? `/projects/${encodeURIComponent(state.projDraft.id)}` : '/projects');
+      const to = state.leaveTo || (state.projDraft.id ? `/projects/${encodeURIComponent(projectSlug(state.projDraft.id))}` : '/projects');
       clearProjectDraft();
       navigate(to);
       return;
@@ -1229,6 +1236,8 @@ document.addEventListener('click', (e) => {
       else if (act === 'wokwi') toggleWokwiExportAction(pid);
       else if (act === 'wokwi-close') closeWokwiExportAction(pid);
       else if (act === 'wokwi-copy') copyWokwiDiagramAction(pid);
+      else if (act === 'wokwi-sketch') copyWokwiSketchAction(pid);
+      else if (act === 'wokwi-libs') copyWokwiLibrariesAction(pid);
     }
     return;
   }
@@ -1630,7 +1639,7 @@ document.addEventListener('click', (e) => {
   const gto = tgt.closest('[data-goto]');
   if (gto) {
     const [pid, wid] = gto.dataset.goto.split('|');
-    navigate(`/projects/${encodeURIComponent(pid)}`);
+    navigate(`/projects/${encodeURIComponent(projectSlug(pid))}`);
     state.sel = `warn:${wid}`;
     render();
     return;

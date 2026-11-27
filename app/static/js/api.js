@@ -24,6 +24,7 @@ const jsonOpts = (method, body) => ({
 
 export const api = {
   getConfig: () => request('/api/config'),
+  getBootstrap: () => request('/api/bootstrap'),
   getStats: () => request('/api/stats'),
   patchSettings: (patch) => request('/api/settings', jsonOpts('PATCH', patch)),
 
@@ -31,7 +32,8 @@ export const api = {
   listParts: () => request('/api/parts'),
   createPart: (data) => request('/api/parts', jsonOpts('POST', data)),
   patchPart: (id, patch) => request(`/api/parts/${encodeURIComponent(id)}`, jsonOpts('PATCH', patch)),
-  deletePart: (id) => request(`/api/parts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  deletePart: (id, keepImages = false) =>
+    request(`/api/parts/${encodeURIComponent(id)}${keepImages ? '?keep_images=1' : ''}`, { method: 'DELETE' }),
   uploadPartPhoto: (id, file, slot = 'main') => {
     const fd = new FormData();
     fd.append('file', file);
@@ -79,7 +81,8 @@ export const api = {
   listShopping: () => request('/api/shopping'),
   createShoppingItem: (data) => request('/api/shopping', jsonOpts('POST', data)),
   patchShoppingItem: (id, patch) => request(`/api/shopping/${encodeURIComponent(id)}`, jsonOpts('PATCH', patch)),
-  deleteShoppingItem: (id) => request(`/api/shopping/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  deleteShoppingItem: (id, keepImages = false) =>
+    request(`/api/shopping/${encodeURIComponent(id)}${keepImages ? '?keep_images=1' : ''}`, { method: 'DELETE' }),
   moveShoppingToInventory: (id) =>
     request(`/api/shopping/${encodeURIComponent(id)}/move-to-inventory`, { method: 'POST' }),
   addShoppingOffer: (id, data) =>

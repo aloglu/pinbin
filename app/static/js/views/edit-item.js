@@ -616,9 +616,12 @@ export async function saveItemEdit(renderFn) {
 export async function removeItemWithUndo(itemId, renderFn) {
   const existing = shoppingById(itemId);
   if (!existing) return;
+  if (!window.confirm(`Delete "${existing.name}" from Shopping?\n\nYou can still bring it back briefly with Undo.`)) {
+    return;
+  }
   const snap = clone(existing);
   try {
-    await api.deleteShoppingItem(itemId);
+    await api.deleteShoppingItem(itemId, true);
     state.shopping = state.shopping.filter((s) => s.id !== itemId);
     state.projects = await api.listProjects();
     clearItemDraft();
@@ -637,6 +640,10 @@ export async function removeItemWithUndo(itemId, renderFn) {
             retailer: snap.retailer || '',
             price: snap.price || '',
             url: snap.url || '',
+            tag: snap.tag || '',
+            in_stock: snap.in_stock || '',
+            image_path: snap.image_path || '',
+            specs: snap.specs || {},
             electrical_facts: snap.electrical_facts || {},
             care_notes: snap.care_notes || [],
             offers: (snap.offers || []).map((o) => ({
@@ -645,6 +652,7 @@ export async function removeItemWithUndo(itemId, renderFn) {
               url: o.url,
               is_selected: o.is_selected,
               in_stock: o.in_stock || 'in_stock',
+              notes: o.notes || '',
             })),
           });
           state.shopping = await api.listShopping();

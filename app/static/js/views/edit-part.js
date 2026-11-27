@@ -800,39 +800,47 @@ export async function savePartEdit(renderFn) {
 export async function removePartWithUndo(partId, renderFn) {
   const existing = partById(partId);
   if (!existing) return;
+  if (!window.confirm(`Delete "${existing.name}" from Inventory?\n\nYou can still bring it back briefly with Undo.`)) {
+    return;
+  }
   const snapshot = clone(existing);
   try {
-    await api.deletePart(partId);
+    await api.deletePart(partId, true);
     state.parts = state.parts.filter((p) => p.id !== partId);
     state.projects = await api.listProjects();
     clearPartDraft();
     navigate('/inventory');
     renderFn();
     toast(`${snapshot.name} removed`, async () => {
-        try {
-          const restored = await api.createPart({
-            name: snapshot.name,
-            subtitle: snapshot.subtitle,
-            category: snapshot.category,
-            quantity: snapshot.quantity,
-            location: snapshot.location,
-            what_it_does: snapshot.what_it_does,
-            visual_tell: snapshot.visual_tell,
-            notes: snapshot.notes,
-            source_url: snapshot.source_url,
-            pinout_url: snapshot.pinout_url,
-            pinout_svg: snapshot.pinout_svg,
-            specs: snapshot.specs,
-            electrical_facts: snapshot.electrical_facts,
-            care_notes: snapshot.care_notes,
-          });
-          state.parts.unshift(restored);
-          renderFn();
-          toast(`${restored.name} restored`);
-        } catch (err) {
-          toast(err.message);
-        }
-      });
+      try {
+        const restored = await api.createPart({
+          name: snapshot.name,
+          subtitle: snapshot.subtitle || '',
+          category: snapshot.category || 'Sensors',
+          quantity: snapshot.quantity ?? 1,
+          low_stock_threshold: snapshot.low_stock_threshold ?? null,
+          location: snapshot.location || '',
+          in_use_project: snapshot.in_use_project || '',
+          what_it_does: snapshot.what_it_does || '',
+          visual_tell: snapshot.visual_tell || '',
+          warning: snapshot.warning || '',
+          notes: snapshot.notes || '',
+          source_url: snapshot.source_url || '',
+          image_path: snapshot.image_path || '',
+          pinout_image_path: snapshot.pinout_image_path || '',
+          pinout_url: snapshot.pinout_url || '',
+          pinout_svg: snapshot.pinout_svg || '',
+          specs: snapshot.specs || {},
+          electrical_facts: snapshot.electrical_facts || {},
+          care_notes: snapshot.care_notes || [],
+        });
+        state.parts.unshift(restored);
+        renderFn();
+        toast(`${restored.name} restored`);
+      } catch (err) {
+        toast(err.message);
+      }
+    });
   } catch (err) {
     toast(err.message);
   }

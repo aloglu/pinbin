@@ -69,6 +69,17 @@ NET_COLORS: dict[str, str] = {
 }
 
 
+WOKWI_LIBRARIES_BY_TYPE: dict[str, list[str]] = {
+    "board-ssd1306": ["Adafruit SSD1306", "Adafruit GFX Library"],
+    "wokwi-lcd1602": ["LiquidCrystal I2C"],
+    "wokwi-dht22": ["DHT sensor library"],
+    "wokwi-neopixel": ["Adafruit NeoPixel"],
+    "wokwi-servo": ["Servo"],
+    "wokwi-ds1307": ["RTClib"],
+    "wokwi-mpu6050": ["MPU6050"],
+}
+
+
 def _slug_id(raw: str, fallback: str) -> str:
     s = re.sub(r"[^A-Za-z0-9_-]+", "_", (raw or "").strip()).strip("_")
     return (s or fallback)[:24]
@@ -513,6 +524,14 @@ def export_wokwi_project(
         used_starter = True
 
     code_filename = "main.py" if lang == "micropython" else "sketch.ino"
+    libraries: list[str] = []
+    if lang == "arduino":
+        for mp in mapped_parts:
+            for lib in WOKWI_LIBRARIES_BY_TYPE.get(mp["wokwi_type"], []):
+                if lib not in libraries:
+                    libraries.append(lib)
+    libraries_txt = ("\n".join(libraries) + "\n") if libraries else ""
+
     wokwi_new_url = (
         board_info["new_url_micropython"] if lang == "micropython" else board_info["new_url_arduino"]
     )
@@ -530,7 +549,13 @@ def export_wokwi_project(
         f"1. Open a new Wokwi project for your board: {wokwi_new_url}",
         "2. Click the 'diagram.json' tab in Wokwi and replace its contents with diagram.json from this bundle.",
         f"3. Paste {code_filename} into the code tab ({code_filename}).",
-        "4. Press the green Play button to simulate!",
+    ]
+    if libraries:
+        readme_lines.append(f"4. In Wokwi's Library Manager (or libraries.txt), add: {', '.join(libraries)}.")
+        readme_lines.append("5. Press the green Play button to simulate!")
+    else:
+        readme_lines.append("4. Press the green Play button to simulate!")
+    readme_lines += [
         "",
         f"Mapped parts ({len(mapped_parts)}): " + ", ".join(f"{p['name']} ({p['wokwi_type']})" for p in mapped_parts),
     ]
@@ -553,6 +578,8 @@ def export_wokwi_project(
         "code_filename": code_filename,
         "code_source": code_source,
         "used_starter_code": used_starter,
+        "libraries": libraries,
+        "libraries_txt": libraries_txt,
         "diagram": diagram,
         "diagram_json": diagram_json,
         "wokwi_toml": wokwi_toml,
@@ -569,6 +596,8 @@ def build_wokwi_zip_bytes(bundle: dict[str, Any]) -> bytes:
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("diagram.json", bundle["diagram_json"])
         zf.writestr(bundle["code_filename"], bundle["code_source"])
+        if bundle.get("libraries_txt"):
+            zf.writestr("libraries.txt", bundle["libraries_txt"])
         zf.writestr("wokwi.toml", bundle["wokwi_toml"])
         zf.writestr("README.txt", bundle["readme"])
     return buf.getvalue()

@@ -1,6 +1,6 @@
 // Project Code tab: split-screen Wiring Map + Firmware Editor + Live Simulator.
 import { api } from '../api.js';
-import { state, esc, sv, sevGlyph, projectById, toast, isGuest, appHref, apiUrl } from '../state.js';
+import { state, esc, sv, sevGlyph, projectById, projectHref, toast, isGuest, apiUrl } from '../state.js';
 import { PinbinSimulator, buildSimTopology } from '../sim-engine.js';
 
 const codeDrafts = new Map();
@@ -340,7 +340,38 @@ export function copyWokwiDiagramAction(pid) {
   );
 }
 
-export function jumpToCodeLine(lineNo) {
+export function copyWokwiSketchAction(pid) {
+  const proj = projectById(pid);
+  if (!proj) return;
+  const d = getCodeDraft(proj);
+  const src = d.source.trim() ? d.source : d.wokwiBundle?.code_source || '';
+  const fname = d.wokwiBundle?.code_filename || (d.language === 'micropython' ? 'main.py' : 'sketch.ino');
+  if (!src.trim()) {
+    toast('No sketch code to copy yet');
+    return;
+  }
+  navigator.clipboard?.writeText(src).then(
+    () => toast(`${fname} copied to clipboard`),
+    () => toast(`Could not copy ${fname}`)
+  );
+}
+
+export function copyWokwiLibrariesAction(pid) {
+  const proj = projectById(pid);
+  if (!proj) return;
+  const d = getCodeDraft(proj);
+  const txt = d.wokwiBundle?.libraries_txt || '';
+  if (!txt.trim()) {
+    toast('No extra libraries needed');
+    return;
+  }
+  navigator.clipboard?.writeText(txt).then(
+    () => toast('libraries.txt copied to clipboard'),
+    () => toast('Could not copy libraries.txt')
+  );
+}
+
+export function jumpToCodeLine(lineNo, pid = null) {
   const ta = document.getElementById('code-editor');
   if (!ta || !lineNo || lineNo < 1) return;
   const lines = ta.value.split('\n');
@@ -354,20 +385,92 @@ export function jumpToCodeLine(lineNo) {
   const lineH = 20;
   ta.scrollTop = Math.max(0, (clamped - 4) * lineH);
   syncCodeGutter(ta);
+  const targetPid = pid || ta.closest('[data-code-pid]')?.dataset.codePid;
+  if (targetPid) {
+    const proj = projectById(targetPid);
+    if (proj) {
+      const d = getCodeDraft(proj);
+      d.activeLine = clamped;
+      refreshSimUi(targetPid);
+    }
+  }
 }
 
 export function syncCodeGutter(ta) {
   const gutter = document.getElementById('code-gutter');
-  if (!ta || !gutter) return;
-  const count = Math.max(1, ta.value.split('\n').length);
-  const existing = Number(gutter.dataset.lines || 0);
-  if (existing !== count) {
-    let html = '';
-    for (let i = 1; i <= count; i++) html += `<span>${i}</span>`;
-    gutter.innerHTML = html;
-    gutter.dataset.lines = String(count);
+  const hl = document.getElementById('code-hl');
+  if (!ta) return;
+  if (gutter) {
+    const count = Math.max(1, ta.value.split('\n').length);
+    const existing = Number(gutter.dataset.lines || 0);
+    if (existing !== count) {
+      let html = '';
+      for (let i = 1; i <= count; i++) html += `<span>${i}</span>`;
+      gutter.innerHTML = html;
+      gutter.dataset.lines = String(count);
+    }
+    gutter.scrollTop = ta.scrollTop;
   }
-  gutter.scrollTop = ta.scrollTop;
+  if (hl) {
+    hl.scrollTop = ta.scrollTop;
+    hl.scrollLeft = ta.scrollLeft;
+  }
+}
+
+const ARDUINO_KW = new Set([
+  'void', 'int', 'uint8_t', 'int8_t', 'uint16_t', 'uint32_t', 'byte', 'bool', 'boolean',
+  'float', 'double', 'long', 'short', 'unsigned', 'char', 'String', 'const', 'constexpr',
+  'static', 'auto', 'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'default',
+  'break', 'continue', 'return', 'true', 'false', 'struct', 'class',
+]);
+const PY_KW = new Set([
+  'import', 'from', 'as', 'def', 'class', 'if', 'elif', 'else', 'for', 'in', 'while',
+  'break', 'continue', 'pass', 'return', 'True', 'False', 'None', 'and', 'or', 'not',
+  'try', 'except', 'finally', 'with', 'global', 'lambda',
+]);
+const HW_API = new Set([
+  'pinMode', 'digitalWrite', 'digitalRead', 'analogRead', 'analogWrite', 'ledcWrite',
+  'ledcAttach', 'tone', 'noTone', 'delay', 'millis', 'Serial', 'Wire', 'SPI', 'Servo',
+  'Pin', 'PWM', 'ADC', 'I2C', 'SoftI2C', 'UART', 'NeoPixel', 'time', 'print',
+  'HIGH', 'LOW', 'INPUT', 'OUTPUT', 'INPUT_PULLUP', 'LED_BUILTIN', 'OUT', 'IN', 'PULL_UP',
+]);
+
+export function highlightCode(src, lang) {
+  const text = String(src || '');
+  if (!text) return '\n';
+  const isPy = lang === 'micropython';
+  const kwSet = isPy ? PY_KW : ARDUINO_KW;
+  const re = isPy
+    ? /(#[^\n]*|"""[\s\S]*?"""|'''[\s\S]*?'''|f?"(?:\\.|[^"\\\n])*"|f?'(?:\\.|[^'\\\n])*'|\b0x[0-9a-fA-F]+\b|\b\d+(?:_\d+)*(?:\.\d+)?\b|\b[A-Za-z_]\w*\b)/g
+    : /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|^\s*#\s*(?:include|define|ifdef|ifndef|endif|pragma)\b|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\b0x[0-9a-fA-F]+\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b)/gm;
+
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out += esc(text.slice(last, m.index));
+    const tok = m[0];
+    let cls = '';
+    if (isPy ? tok.startsWith('#') : (tok.startsWith('//') || tok.startsWith('/*'))) {
+      cls = 'hl-com';
+    } else if (!isPy && /^\s*#/.test(tok)) {
+      cls = 'hl-pre';
+    } else if (tok[0] === '"' || tok[0] === "'" || (isPy && (tok.startsWith('f"') || tok.startsWith("f'")))) {
+      cls = 'hl-str';
+    } else if (/^(?:0x[0-9a-fA-F]+|\d)/.test(tok)) {
+      cls = 'hl-num';
+    } else if (kwSet.has(tok)) {
+      cls = 'hl-kw';
+    } else if (HW_API.has(tok)) {
+      cls = 'hl-api';
+    } else if (/^(?:PIN_[A-Z0-9_]+|GPIO\d+|GP\d+)$/.test(tok)) {
+      cls = 'hl-pin';
+    }
+    out += cls ? `<span class="${cls}">${esc(tok)}</span>` : esc(tok);
+    last = re.lastIndex;
+  }
+  if (last < text.length) out += esc(text.slice(last));
+  return out.endsWith('\n') ? `${out} ` : `${out}\n`;
 }
 
 function statusPillHtml(d) {
@@ -504,11 +607,19 @@ function wokwiPanelHtml(proj, d) {
     <div class="wokwi-acts">
       <a class="btn ink" href="${esc(zipHref)}" download>Download Wokwi .zip</a>
       <button type="button" class="btn" data-code-act="wokwi-copy">Copy diagram.json</button>
+      <button type="button" class="btn" data-code-act="wokwi-sketch">Copy ${esc(b.code_filename)}</button>
+      ${
+        (b.libraries || []).length
+          ? '<button type="button" class="btn" data-code-act="wokwi-libs">Copy libraries.txt</button>'
+          : ''
+      }
       <a class="btn quiet" href="${esc(b.wokwi_new_url)}" target="_blank" rel="noopener noreferrer">Open Wokwi ↗</a>
     </div>
-    <p class="dim wokwi-steps">On Wokwi: open the link above, replace <code>diagram.json</code> with the exported file, paste <code>${esc(
+    <p class="dim wokwi-steps">On Wokwi: open the link above, replace <code>diagram.json</code>, paste <code>${esc(
       b.code_filename
-    )}</code>, and hit Play.</p>
+    )}</code>${
+      (b.libraries || []).length ? `, add libraries (<code>${esc(b.libraries.join(', '))}</code>)` : ''
+    }, and hit Play.</p>
     <div class="wokwi-meta">
       <span class="k">mapped (${(b.mapped_parts || []).length})</span>
       <div class="wokwi-chips">${(b.mapped_parts || [])
@@ -673,6 +784,102 @@ function simSerialHtml(proj) {
   </div>`;
 }
 
+function explainLinePlainEnglish(lineText, lineNo, d) {
+  const s = String(lineText || '').trim();
+  if (!s) return 'Blank line (spacing to keep the code easy to read).';
+  if (s.startsWith('//') || s.startsWith('#')) {
+    const comment = s.replace(/^(?:\/\/|#)\s*/, '').trim();
+    return comment ? `Note: ${comment}` : 'Comment line (ignored by the board).';
+  }
+  const refs = (d?.analysis?.references || []).filter((r) => r.line === lineNo);
+  const pinMap = d?.analysis?.pin_map || [];
+  const describePin = (ref) => {
+    if (!ref) return '';
+    const pm = pinMap.find((p) => p.pin === ref.pin);
+    const target = pm?.connected_nodes?.map((n) => n.name).join(', ');
+    return target ? `${ref.pin} (${target})` : ref.pin;
+  };
+  const targetPin = refs.length ? describePin(refs[0]) : '';
+
+  if (/^#\s*define\b/.test(s) || (/^[A-Z0-9_]+\s*=\s*\d+/.test(s) && s.startsWith('PIN_'))) {
+    return targetPin
+      ? `Names ${targetPin} so the rest of the code is easier to read.`
+      : 'Gives a friendly name to a pin number or constant.';
+  }
+  if (/\bpinMode\b/.test(s) || /\bPin\s*\([^)]*Pin\.(OUT|IN)/.test(s)) {
+    const isOut = /OUTPUT|Pin\.OUT/.test(s);
+    const isPullup = /INPUT_PULLUP|PULL_UP/.test(s);
+    if (isOut) return `Configures ${targetPin || 'this pin'} as an OUTPUT so the board can drive it ON or OFF.`;
+    if (isPullup) return `Configures ${targetPin || 'this pin'} as an INPUT with an internal pull-up resistor (reads LOW when a button connects it to GND).`;
+    return `Configures ${targetPin || 'this pin'} as an INPUT so the board can read signals from it.`;
+  }
+  if (/\bdigitalWrite\b|\.(?:on|off|toggle)\s*\(|\.value\s*\(\s*[^)\s]/.test(s)) {
+    const isHigh = /\bHIGH\b|\(\s*1\s*\)|\.on\s*\(/.test(s);
+    const isLow = /\bLOW\b|\(\s*0\s*\)|\.off\s*\(/.test(s);
+    if (isHigh) return `Turns ${targetPin || 'this pin'} ON (HIGH) — watch the wire light up on the map.`;
+    if (isLow) return `Turns ${targetPin || 'this pin'} OFF (LOW).`;
+    return `Updates the ON/OFF output on ${targetPin || 'this pin'} — watch the wire change on the map.`;
+  }
+  if (/\bdigitalRead\b|\.value\s*\(\s*\)/.test(s)) {
+    return `Reads whether ${targetPin || 'this pin'} is currently HIGH or LOW (try clicking its button/switch under Live bench controls).`;
+  }
+  if (/\banalogRead\b|\.read(?:_u16)?\s*\(\s*\)/.test(s)) {
+    return `Reads the current analog level from ${targetPin || 'this sensor'} (drag its slider under Live bench controls to test changes).`;
+  }
+  if (/\banalogWrite\b|\bledcWrite\b|\.duty(?:_u16)?\s*\(/.test(s)) {
+    return `Sets a PWM brightness/speed level on ${targetPin || 'this pin'}.`;
+  }
+  if (/\bWire\d?\.begin\b|\bI2C\s*\(/.test(s)) {
+    return 'Starts the I2C bus so the board can talk to I2C displays or sensors over two shared wires.';
+  }
+  if (/\bSPI\d?\.begin\b|\bSPI\s*\(/.test(s)) {
+    return 'Starts the SPI bus for fast communication with screens or SPI modules.';
+  }
+  if (/\bSerial\.println?\b|\bprint\s*\(/.test(s)) {
+    return 'Prints a message to the Serial Monitor (bottom-left) so you can see what the board is reading or doing.';
+  }
+  if (/\bdelay\s*\(|\btime\.sleep/.test(s)) {
+    return 'Pauses briefly so changes are easy to see before the next step runs.';
+  }
+  if (/^(?:if|elif|else\s+if)\b/.test(s)) {
+    return 'Checks a condition to decide which branch of code to run next.';
+  }
+  if (/^(?:while|for)\b/.test(s)) {
+    return 'Starts a loop that repeats the indented block of instructions.';
+  }
+  if (/\bSerial\.begin\b/.test(s)) {
+    return 'Opens the USB Serial connection so the board can send text logs to the Serial Monitor.';
+  }
+  return `Runs: ${s}`;
+}
+
+function simExplainHtml(proj, d, snap) {
+  const cur = snap?.currentLine || d.activeLine || 0;
+  if (cur > 0 && d.source) {
+    const lines = d.source.split('\n');
+    const lineText = lines[cur - 1] || '';
+    const msg = explainLinePlainEnglish(lineText, cur, d);
+    const isLive = Boolean(snap?.currentLine);
+    return `<div class="code-explain ${isLive ? 'live' : ''}">
+      <span class="mono tag">Line ${cur}</span>
+      <span>${esc(msg)}</span>
+    </div>`;
+  }
+  const pinMap = d?.analysis?.pin_map || [];
+  if (!d.source.trim()) {
+    return `<div class="code-explain">
+      <span>Click <b>Generate starter</b> to build code from your wiring map, then click any line or press <b>⏭ Step</b> to learn what it does in plain English.</span>
+    </div>`;
+  }
+  const targets = [...new Set(pinMap.flatMap((p) => (p.connected_nodes || []).map((n) => n.name)))];
+  const summary = targets.length
+    ? `This sketch connects to <b>${esc(targets.slice(0, 4).join(', '))}${targets.length > 4 ? ` +${targets.length - 4} more` : ''}</b>.`
+    : 'Click any line in the code editor to read what it does in plain English.';
+  return `<div class="code-explain">
+    <span>${summary} Click any line in the editor—or press <b>⏭ Step</b>—for a plain-English explanation.</span>
+  </div>`;
+}
+
 export function refreshSimUi(pid) {
   const proj = projectById(pid);
   if (!proj) return;
@@ -823,13 +1030,39 @@ export function refreshSimUi(pid) {
     });
   }
 
-  // Highlight currently executing line in the code gutter
+  // Highlight currently executing line in the code gutter and follow it in the editor
   const gutter = document.getElementById('code-gutter');
+  const ta = document.getElementById('code-editor');
+  const cur = snap?.currentLine || 0;
   if (gutter) {
-    const cur = snap?.currentLine || 0;
     const spans = gutter.children;
     for (let i = 0; i < spans.length; i++) {
       spans[i].classList.toggle('sim-cur', cur > 0 && i + 1 === cur);
+    }
+    if (ta && cur > 0 && Number(gutter.dataset.curLine || 0) !== cur) {
+      gutter.dataset.curLine = String(cur);
+      const lineH = 20;
+      const targetTop = (cur - 1) * lineH;
+      const viewTop = ta.scrollTop;
+      const viewBottom = viewTop + ta.clientHeight;
+      if (targetTop < viewTop + lineH || targetTop > viewBottom - lineH * 2) {
+        ta.scrollTop = Math.max(0, targetTop - Math.floor(ta.clientHeight / 2) + lineH);
+        syncCodeGutter(ta);
+      }
+    } else if (cur === 0) {
+      gutter.dataset.curLine = '0';
+    }
+  }
+
+  // Update plain-English line walkthrough banner
+  const explainSlot = document.getElementById('sim-explain-slot');
+  if (explainSlot) {
+    const d = getCodeDraft(proj);
+    const shownLine = cur || d.activeLine || 0;
+    const key = `${shownLine}|${Boolean(cur)}|${d.source.length}|${d.analysis?.matched_pin_count || 0}`;
+    if (explainSlot.dataset.key !== key) {
+      explainSlot.dataset.key = key;
+      explainSlot.innerHTML = simExplainHtml(proj, d, snap);
     }
   }
 }
@@ -843,9 +1076,8 @@ export function renderProjectCodeView(proj, renderMapSvgFn) {
   let gutterHtml = '';
   for (let i = 1; i <= lines; i++) gutterHtml += `<span>${i}</span>`;
 
-  const mapPane = hasNets
+  const mapBody = hasNets
     ? `<div class="code-map-pane">
-        <div id="sim-bar-slot">${simBarHtml(proj)}</div>
         <div class="mapwrap" id="mapwrap">
           <div class="zoom">
             <button class="btn" type="button" data-zoom="out" aria-label="Zoom out">−</button>
@@ -859,14 +1091,13 @@ export function renderProjectCodeView(proj, renderMapSvgFn) {
         <div id="sim-serial-slot">${simSerialHtml(proj)}</div>
       </div>`
     : `<div class="code-map-pane">
-        <div id="sim-bar-slot">${simBarHtml(proj)}</div>
         <div class="map-empty">
           <p>${
             guest
               ? 'No wiring connections yet.'
               : 'No wiring connections yet. Add wires in <b>Edit project</b> so Pinbin can generate pin definitions and animate live signals on the map.'
           }</p>
-          ${guest ? '' : `<a class="btn ink" href="${appHref(`/projects/${encodeURIComponent(proj.id)}/edit`)}">Add wiring</a>`}
+          ${guest ? '' : `<a class="btn ink" href="${projectHref(proj, 'edit')}">Add wiring</a>`}
         </div>
         <div id="sim-serial-slot">${simSerialHtml(proj)}</div>
       </div>`;
@@ -874,56 +1105,62 @@ export function renderProjectCodeView(proj, renderMapSvgFn) {
   const copyIcon = sv('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>');
 
   return `<div class="code-lab" data-code-pid="${esc(proj.id)}">
-    ${mapPane}
-    <div class="code-pane">
-      <div class="code-bar">
-        <div class="code-lang" role="group" aria-label="Firmware language">
-          <button type="button" class="btn ${d.language === 'arduino' ? 'ink' : 'quiet'}" data-code-lang="arduino" ${
-            guest ? 'disabled' : ''
-          }>Arduino C++</button>
-          <button type="button" class="btn ${d.language === 'micropython' ? 'ink' : 'quiet'}" data-code-lang="micropython" ${
-            guest ? 'disabled' : ''
-          }>MicroPython</button>
-        </div>
-        <span id="code-status-pill">${statusPillHtml(d)}</span>
-        <span style="flex:1"></span>
-        <div class="code-acts">
-          ${
-            guest
-              ? ''
-              : `<button type="button" class="btn" data-code-act="generate" title="Generate starter pin definitions from your wiring map">Generate starter</button>`
-          }
-          <button type="button" class="btn quiet" data-code-act="copy" title="Copy code">${copyIcon}Copy</button>
-          <button type="button" class="btn quiet" data-code-act="wokwi" title="Export diagram.json and code bundle for Wokwi">Wokwi ↗</button>
-          ${
-            guest
-              ? ''
-              : `<button type="button" id="code-save-btn" class="btn ${dirty ? 'ink' : ''}" data-code-act="save" ${
-                  d.saving || !dirty ? 'disabled' : ''
-                }>${d.saving ? 'Saving…' : dirty ? 'Save*' : 'Saved'}</button>`
-          }
-        </div>
+    <div id="sim-bar-slot" class="code-lab-bar-l">${simBarHtml(proj)}</div>
+    <div class="code-bar code-lab-bar-r">
+      <div class="code-lang" role="group" aria-label="Firmware language">
+        <button type="button" class="btn ${d.language === 'arduino' ? 'ink' : 'quiet'}" data-code-lang="arduino" ${
+          guest ? 'disabled' : ''
+        }>Arduino C++</button>
+        <button type="button" class="btn ${d.language === 'micropython' ? 'ink' : 'quiet'}" data-code-lang="micropython" ${
+          guest ? 'disabled' : ''
+        }>MicroPython</button>
       </div>
+      <span id="code-status-pill">${statusPillHtml(d)}</span>
+      <span style="flex:1"></span>
+      <div class="code-acts">
+        ${
+          guest
+            ? ''
+            : `<button type="button" class="btn" data-code-act="generate" title="Generate starter pin definitions from your wiring map">Generate starter</button>`
+        }
+        <button type="button" class="btn quiet" data-code-act="copy" title="Copy code to clipboard">${copyIcon}Copy code</button>
+        <button type="button" class="btn quiet" data-code-act="wokwi" title="Open Wokwi export panel (diagram.json, sketch, and libraries)">Wokwi export</button>
+        ${
+          guest
+            ? ''
+            : `<button type="button" id="code-save-btn" class="btn ${dirty ? 'ink' : ''}" data-code-act="save" ${
+                d.saving || !dirty ? 'disabled' : ''
+              }>${d.saving ? 'Saving…' : dirty ? 'Save*' : 'Saved'}</button>`
+        }
+      </div>
+    </div>
 
+    ${mapBody}
+
+    <div class="code-pane">
+      <div id="sim-explain-slot">${simExplainHtml(proj, d, activeSim && activeSimPid === proj.id ? activeSim.getSnapshot() : null)}</div>
       <div id="code-wokwi-slot">${wokwiPanelHtml(proj, d)}</div>
       <div id="code-selbar-slot">${selectionBannerHtml(proj, d)}</div>
 
       <div class="code-editor-wrap">
         <div class="code-gutter" id="code-gutter" data-lines="${lines}" aria-hidden="true">${gutterHtml}</div>
-        <textarea
-          id="code-editor"
-          class="code-ta"
-          spellcheck="false"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="off"
-          ${guest ? 'readonly' : ''}
-          placeholder="${
-            guest
-              ? 'No firmware code saved for this project yet.'
-              : 'Paste or write your Arduino / MicroPython code here, or click “Generate starter” to build it from your wiring map…'
-          }"
-        >${esc(d.source)}</textarea>
+        <div class="code-ed-stack">
+          <pre class="code-hl" id="code-hl" aria-hidden="true">${highlightCode(d.source, d.language)}</pre>
+          <textarea
+            id="code-editor"
+            class="code-ta"
+            spellcheck="false"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            ${guest ? 'readonly' : ''}
+            placeholder="${
+              guest
+                ? 'No firmware code saved for this project yet.'
+                : 'Paste or write your Arduino / MicroPython code here, or click “Generate starter” to build it from your wiring map…'
+            }"
+          >${esc(d.source)}</textarea>
+        </div>
       </div>
 
       <div id="code-pins-slot">${wiredPinsStripHtml(d)}</div>
@@ -939,14 +1176,45 @@ export function bindProjectCodeEditor(pid, renderFn) {
   const d = getCodeDraft(proj);
 
   ta.addEventListener('scroll', () => {
-    const gutter = document.getElementById('code-gutter');
-    if (gutter) gutter.scrollTop = ta.scrollTop;
+    syncCodeGutter(ta);
+  });
+
+  const handleCursorLine = () => {
+    const pos = ta.selectionStart || 0;
+    const lineNo = ta.value.slice(0, pos).split('\n').length;
+    if (d.activeLine !== lineNo) {
+      d.activeLine = lineNo;
+      refreshSimUi(pid);
+      // If this line references a wired pin, highlight its wire on the left map
+      const ref = (d.analysis?.references || []).find((r) => r.line === lineNo && r.net_id);
+      if (ref && state.sel !== `net:${ref.net_id}`) {
+        state.sel = `net:${ref.net_id}`;
+        const map = document.getElementById('map');
+        if (map) {
+          map.querySelectorAll('[data-sel]').forEach((g) => {
+            g.classList.toggle('sel', g.dataset.sel === state.sel);
+            if (g.dataset.sel.startsWith('net:')) g.classList.toggle('hot', g.dataset.sel === state.sel);
+          });
+        }
+      }
+    }
+  };
+  ta.addEventListener('click', handleCursorLine);
+  ta.addEventListener('keyup', (e) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+      handleCursorLine();
+    }
   });
 
   if (!isGuest()) {
+    const refreshHighlight = () => {
+      const hl = document.getElementById('code-hl');
+      if (hl) hl.innerHTML = highlightCode(ta.value, d.language);
+      syncCodeGutter(ta);
+    };
     ta.addEventListener('input', () => {
       d.source = ta.value;
-      syncCodeGutter(ta);
+      refreshHighlight();
       updateCodeLivePanels(proj);
       scheduleCodeAnalyze(proj, renderFn);
     });
@@ -964,7 +1232,7 @@ export function bindProjectCodeEditor(pid, renderFn) {
         ta.value = ta.value.slice(0, start) + indent + ta.value.slice(end);
         ta.selectionStart = ta.selectionEnd = start + indent.length;
         d.source = ta.value;
-        syncCodeGutter(ta);
+        refreshHighlight();
         updateCodeLivePanels(proj);
         scheduleCodeAnalyze(proj, renderFn);
       }

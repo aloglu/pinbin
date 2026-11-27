@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS shopping_items (
 
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
+    slug TEXT DEFAULT '',
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     option_label TEXT DEFAULT '',
@@ -328,6 +329,7 @@ def init_db(settings: Settings) -> None:
             _ensure_cols(
                 "projects",
                 [
+                    ("slug", "TEXT DEFAULT ''"),
                     ("option_label", "TEXT DEFAULT ''"),
                     ("tags", "TEXT DEFAULT '[]'"),
                     ("code_language", "TEXT DEFAULT ''"),
@@ -357,6 +359,7 @@ def init_db(settings: Settings) -> None:
             _migrate_shopping_item_offers(conn)
             _migrate_parts_care_and_facts(conn)
             _migrate_projects_redesign(conn)
+            _migrate_project_slugs(conn)
             _seed_glossary_if_empty(conn)
 
 
@@ -475,6 +478,46 @@ def _migrate_parts_care_and_facts(conn: sqlite3.Connection) -> None:
         if updates:
             set_sql = ", ".join(f"{k} = ?" for k in updates)
             conn.execute(f"UPDATE parts SET {set_sql} WHERE id = ?", list(updates.values()) + [r["id"]])
+
+
+def _slugify_project_name(name: str) -> str:
+    raw = re.sub(r"[^a-z0-9]+", "-", str(name or "").strip().lower()).strip("-")
+    if not raw or raw in ("new", "edit", "teardown"):
+        raw = f"{raw or 'project'}-build"
+    return raw[:64]
+
+
+def _make_unique_project_slug(conn: sqlite3.Connection, name: str, exclude_id: str | None = None) -> str:
+    base = _slugify_project_name(name)
+    cand = base
+    n = 2
+    while True:
+        if exclude_id:
+            row = conn.execute(
+                "SELECT 1 FROM projects WHERE LOWER(slug) = LOWER(?) AND id != ? LIMIT 1",
+                (cand, exclude_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT 1 FROM projects WHERE LOWER(slug) = LOWER(?) LIMIT 1",
+                (cand,),
+            ).fetchone()
+        if not row:
+            return cand
+        cand = f"{base[:58]}-{n}"
+        n += 1
+
+
+def _migrate_project_slugs(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        "SELECT id, name, slug FROM projects ORDER BY created_at ASC, rowid ASC"
+    ).fetchall()
+    for r in rows:
+        cur = str(r["slug"] or "").strip()
+        if cur:
+            continue
+        slug = _make_unique_project_slug(conn, str(r["name"] or ""), exclude_id=str(r["id"]))
+        conn.execute("UPDATE projects SET slug = ? WHERE id = ?", (slug, r["id"]))
 
 
 def _migrate_projects_redesign(conn: sqlite3.Connection) -> None:
@@ -1387,6 +1430,7 @@ def _sync_project_in_use_flags(conn: sqlite3.Connection, project_id: str) -> Non
 def _hydrate_project(conn: sqlite3.Connection, proj_row: sqlite3.Row) -> dict[str, Any]:
     proj = _row_to_dict(proj_row)
     pid = proj["id"]
+    proj["slug"] = str(proj.get("slug") or "").strip() or pid
     proj["option"] = str(proj.get("option_label") or "").strip()
     proj["archived"] = proj.get("status") == "archived"
     lang = str(proj.get("code_language") or "").strip().lower()
@@ -1618,13 +1662,15 @@ def create_project(db_path: Path, data: dict[str, Any]) -> dict[str, Any]:
     now = utc_now_iso()
     with db_lock:
         with get_connection(db_path) as conn:
+            slug = _make_unique_project_slug(conn, name, exclude_id=proj_id)
             conn.execute(
                 """
-                INSERT INTO projects (id, name, description, option_label, tags, status, notes, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO projects (id, slug, name, description, option_label, tags, status, notes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     proj_id,
+                    slug,
                     name[:160],
                     str(data.get("description") or "").strip(),
                     option_val,
@@ -1667,6 +1713,8 @@ def update_project(db_path: Path, project_id: str, updates: dict[str, Any]) -> d
                 return None
             old_name = str(existing["name"]).strip()
             if filtered:
+                if "name" in filtered and filtered["name"].lower() != old_name.lower():
+                    filtered["slug"] = _make_unique_project_slug(conn, filtered["name"], exclude_id=project_id)
                 filtered["updated_at"] = utc_now_iso()
                 set_clause = ", ".join(f"{k} = ?" for k in filtered.keys())
                 conn.execute(

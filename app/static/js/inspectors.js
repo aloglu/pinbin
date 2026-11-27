@@ -9,6 +9,7 @@ import {
   stepHtml,
   partById,
   shoppingById,
+  projectHref,
   storeDisplayName,
   termButton,
   parsePriceNumber,
@@ -209,7 +210,7 @@ export function renderPartInspector(id) {
                 const ws = warningsOfProject(pr).filter(
                   (x) => (x.on.nodes || []).includes(q.ref) && x.sev !== 'ok' && !(x.src === 'assistant' && x.is_done)
                 );
-                return `<div class="rel"><span class="sev ok" style="background:var(--ink)">→</span><div><a href="${appHref(`/projects/${encodeURIComponent(pr.id)}`)}"><b>${esc(pr.name)}</b></a>${
+                return `<div class="rel"><span class="sev ok" style="background:var(--ink)">→</span><div><a href="${projectHref(pr)}"><b>${esc(pr.name)}</b></a>${
                   pr.archived ? ' <span class="tag">archived</span>' : ''
                 }${q.project_notes ? `<p>${esc(q.project_notes)}</p>` : ''}${ws
                   .map(
@@ -306,7 +307,7 @@ export function renderShoppingInspector(id) {
         ? `<div class="sec"><h3>For</h3>${uses
             .map(
               ([pr, q]) =>
-                `<p><a href="${appHref(`/projects/${encodeURIComponent(pr.id)}`)}"><b>${esc(pr.name)}</b></a>${
+                `<p><a href="${projectHref(pr)}"><b>${esc(pr.name)}</b></a>${
                   q.project_notes ? ` <span class="faint">· ${esc(q.project_notes)}</span>` : ''
                 }</p>`
             )

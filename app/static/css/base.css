@@ -775,6 +775,9 @@ code {
   font-weight: var(--w-mid);
   line-height: 1.35;
   max-width: min(460px, calc(100% - 32px));
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
   animation: toastin .18s var(--ease);
 }
 .toast button {
