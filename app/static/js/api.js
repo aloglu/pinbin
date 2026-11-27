@@ -63,6 +63,17 @@ export const api = {
     request(`/api/projects/${encodeURIComponent(pid)}/checks`, jsonOpts('PUT', { checks })),
   patchProjectCheck: (pid, cid, patch) =>
     request(`/api/projects/${encodeURIComponent(pid)}/checks/${encodeURIComponent(cid)}`, jsonOpts('PATCH', patch)),
+  getProjectCode: (pid) => request(`/api/projects/${encodeURIComponent(pid)}/code`),
+  saveProjectCode: (pid, data) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/code`, jsonOpts('PUT', data)),
+  analyzeProjectCode: (pid, data) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/code/analyze`, jsonOpts('POST', data)),
+  generateProjectCode: (pid, data) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/code/generate`, jsonOpts('POST', data)),
+  getProjectWokwi: (pid, language = '') =>
+    request(
+      `/api/projects/${encodeURIComponent(pid)}/wokwi${language ? `?language=${encodeURIComponent(language)}` : ''}`
+    ),
 
   // Shopping & Retailers
   listShopping: () => request('/api/shopping'),

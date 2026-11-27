@@ -101,6 +101,9 @@ CREATE TABLE IF NOT EXISTS projects (
     tags TEXT DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'planning',
     notes TEXT DEFAULT '',
+    code_language TEXT DEFAULT '',
+    code_source TEXT DEFAULT '',
+    code_updated_at TEXT DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -194,6 +197,8 @@ CREATE TABLE IF NOT EXISTS retailers (
 """
 
 PROJECT_STATUSES = ("planning", "active", "completed", "archived")
+CODE_LANGUAGES = ("arduino", "micropython")
+MAX_PROJECT_CODE_CHARS = 200_000
 SHOPPING_STATUSES = ("order", "ordered", "arrived")
 PROJECT_ITEM_ROLES = ("power", "mcu", "periph", "material")
 NET_KINDS = ("bat", "v5", "v33", "i2c", "spi", "sig")
@@ -325,6 +330,9 @@ def init_db(settings: Settings) -> None:
                 [
                     ("option_label", "TEXT DEFAULT ''"),
                     ("tags", "TEXT DEFAULT '[]'"),
+                    ("code_language", "TEXT DEFAULT ''"),
+                    ("code_source", "TEXT DEFAULT ''"),
+                    ("code_updated_at", "TEXT DEFAULT ''"),
                 ],
             )
             _ensure_cols("project_variants", [("notes", "TEXT DEFAULT ''")])
@@ -1381,6 +1389,10 @@ def _hydrate_project(conn: sqlite3.Connection, proj_row: sqlite3.Row) -> dict[st
     pid = proj["id"]
     proj["option"] = str(proj.get("option_label") or "").strip()
     proj["archived"] = proj.get("status") == "archived"
+    lang = str(proj.get("code_language") or "").strip().lower()
+    proj["code_language"] = lang if lang in CODE_LANGUAGES else ""
+    proj["code_source"] = str(proj.get("code_source") or "")
+    proj["code_updated_at"] = str(proj.get("code_updated_at") or "")
 
     var_rows = conn.execute(
         "SELECT * FROM project_variants WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC",
@@ -1552,6 +1564,45 @@ def list_projects(db_path: Path) -> list[dict[str, Any]]:
                 "updated_at DESC, LOWER(name) ASC"
             ).fetchall()
             return [_hydrate_project(conn, r) for r in rows]
+
+
+def get_project(db_path: Path, project_id: str) -> dict[str, Any] | None:
+    with db_lock:
+        with get_connection(db_path) as conn:
+            row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if not row:
+                return None
+            return _hydrate_project(conn, row)
+
+
+def set_project_code(
+    db_path: Path,
+    project_id: str,
+    code_source: str,
+    code_language: str | None = None,
+) -> dict[str, Any] | None:
+    src = str(code_source if code_source is not None else "")
+    if len(src) > MAX_PROJECT_CODE_CHARS:
+        raise ValueError(f"Project code exceeds maximum length ({MAX_PROJECT_CODE_CHARS} characters)")
+    lang: str | None = None
+    if code_language is not None:
+        lv = str(code_language).strip().lower()
+        if lv and lv not in CODE_LANGUAGES:
+            raise ValueError(f"Unsupported code_language '{code_language}'. Use one of: {', '.join(CODE_LANGUAGES)}")
+        lang = lv
+    now = utc_now_iso()
+    with db_lock:
+        with get_connection(db_path) as conn:
+            existing = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if not existing:
+                return None
+            final_lang = lang if lang is not None else str(existing["code_language"] or "")
+            conn.execute(
+                "UPDATE projects SET code_language = ?, code_source = ?, code_updated_at = ?, updated_at = ? WHERE id = ?",
+                (final_lang, src, now, now, project_id),
+            )
+            row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            return _hydrate_project(conn, row)
 
 
 def create_project(db_path: Path, data: dict[str, Any]) -> dict[str, Any]:

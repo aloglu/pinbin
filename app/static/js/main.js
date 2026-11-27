@@ -43,6 +43,24 @@ import {
   toggleProjectArchive,
   toggleProjectCheck,
 } from './views/projects.js';
+import {
+  bindProjectCodeEditor,
+  saveProjectCodeAction,
+  generateProjectStarterAction,
+  setProjectCodeLanguage,
+  copyProjectCodeAction,
+  toggleWokwiExportAction,
+  closeWokwiExportAction,
+  copyWokwiDiagramAction,
+  simPlayPauseAction,
+  simStepAction,
+  simResetAction,
+  simClearSerialAction,
+  simUpdateInputAction,
+  stopActiveSimulator,
+  jumpToCodeLine,
+  updateCodeLivePanels,
+} from './views/project-code.js';
 import { exportProjectMap } from './map-export.js';
 import {
   renderProjectEditView,
@@ -275,6 +293,9 @@ function updateProjectSelection(pid, swapAnim = false) {
   if (!proj || !aside) return false;
 
   applyMapFocus(pid);
+  if (document.getElementById('code-editor')) {
+    updateCodeLivePanels(proj);
+  }
   document.querySelectorAll('.lrow[data-sel]').forEach((el) => {
     el.classList.toggle('sel', Boolean(state.sel) && el.dataset.sel === state.sel);
   });
@@ -481,8 +502,14 @@ export function render() {
   if (curPid) {
     initMapViewport(curPid);
     applyMapFocus(curPid);
+    if (document.getElementById('code-editor')) {
+      bindProjectCodeEditor(curPid, render);
+    } else {
+      stopActiveSimulator();
+    }
   } else {
     disconnectMapObserver();
+    stopActiveSimulator();
   }
   state.panelWasOpen = Boolean(document.querySelector('.insp.float'));
   bindInspectorScroll();
@@ -1149,6 +1176,80 @@ document.addEventListener('click', (e) => {
     }
     return;
   }
+  const codeLangBtn = tgt.closest('[data-code-lang]');
+  if (codeLangBtn) {
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
+    if (pid) setProjectCodeLanguage(pid, codeLangBtn.dataset.codeLang, render);
+    return;
+  }
+  const codeActBtn = tgt.closest('[data-code-act]');
+  if (codeActBtn) {
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
+    const act = codeActBtn.dataset.codeAct;
+    if (pid) {
+      if (act === 'save') saveProjectCodeAction(pid, render);
+      else if (act === 'generate') generateProjectStarterAction(pid, render);
+      else if (act === 'copy') copyProjectCodeAction(pid);
+      else if (act === 'wokwi') toggleWokwiExportAction(pid);
+      else if (act === 'wokwi-close') closeWokwiExportAction(pid);
+      else if (act === 'wokwi-copy') copyWokwiDiagramAction(pid);
+    }
+    return;
+  }
+  const codeRefBtn = tgt.closest('[data-code-net], [data-code-node], [data-code-line]');
+  if (codeRefBtn) {
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
+    if (pid) {
+      if (codeRefBtn.dataset.codeNet) {
+        state.sel = `net:${codeRefBtn.dataset.codeNet}`;
+        applyMapFocus(pid);
+        updateCodeLivePanels(projectById(pid));
+      } else if (codeRefBtn.dataset.codeNode) {
+        state.sel = `node:${codeRefBtn.dataset.codeNode}`;
+        applyMapFocus(pid);
+        updateCodeLivePanels(projectById(pid));
+      }
+      const ln = Number(codeRefBtn.dataset.codeLine);
+      if (Number.isFinite(ln) && ln > 0) jumpToCodeLine(ln);
+    }
+    return;
+  }
+  const simActBtn = tgt.closest('[data-sim-act]');
+  if (simActBtn) {
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
+    const act = simActBtn.dataset.simAct;
+    if (pid) {
+      if (act === 'play') simPlayPauseAction(pid);
+      else if (act === 'step') simStepAction(pid);
+      else if (act === 'reset') simResetAction(pid);
+      else if (act === 'clear-serial') simClearSerialAction(pid);
+    }
+    return;
+  }
+  const simBtn = tgt.closest('[data-sim-btn]');
+  if (simBtn) {
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
+    if (pid) {
+      const pressed = !simBtn.classList.contains('ink');
+      simUpdateInputAction(pid, simBtn.dataset.simBtn, { pressed });
+    }
+    return;
+  }
+  const simTog = tgt.closest('[data-sim-toggle]');
+  if (simTog) {
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
+    if (pid) {
+      const on = !simTog.classList.contains('ink');
+      simUpdateInputAction(pid, simTog.dataset.simToggle, { on });
+    }
+    return;
+  }
   const zoomBtn = tgt.closest('[data-zoom]');
   if (zoomBtn) {
     zoomMapViewport(zoomBtn.dataset.zoom);
@@ -1730,6 +1831,15 @@ function setNestedPath(obj, path, val) {
 
 // Live search & edit form inputs
 document.addEventListener('input', (e) => {
+  if (e.target && e.target.dataset && e.target.dataset.simRange) {
+    const r = route();
+    const pid = r.startsWith('p-') ? r.slice(2) : null;
+    if (pid) {
+      const val = Math.max(0, Math.min(1, Number(e.target.value) / 100));
+      simUpdateInputAction(pid, e.target.dataset.simRange, { value: val });
+    }
+    return;
+  }
   if (state.partDraft && e.target.dataset && e.target.dataset.f) {
     const path = e.target.dataset.f;
     state.partDraft[path] = e.target.value;

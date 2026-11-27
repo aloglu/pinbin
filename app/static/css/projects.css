@@ -573,3 +573,388 @@
   .addsplit { grid-template-columns: 1fr; }
   .buyadd { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ===== Project Code Lab (split view: Wiring Map + Code Editor) ===== */
+.code-lab {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.15fr);
+  gap: 14px;
+  align-items: start;
+}
+.code-map-pane .mapwrap {
+  height: clamp(420px, 64vh, 680px);
+}
+.code-pane {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.code-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.code-lang {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  background: var(--hair);
+  border-radius: 6px;
+}
+.code-lang .btn {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+.code-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.code-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: var(--w-mid);
+  background: var(--hair);
+  color: var(--ink-2);
+}
+.code-pill.ok { color: var(--ok); }
+.code-pill.check { color: var(--check); }
+.code-pill.danger { color: var(--danger); }
+
+.code-selbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.code-linechips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.code-lchip {
+  font: 500 11.5px var(--mono);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.code-lchip:hover { border-color: var(--ink); }
+
+.code-editor-wrap {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+  height: clamp(320px, 46vh, 520px);
+}
+.code-gutter {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 6px 10px 0;
+  background: var(--raised);
+  border-right: 1px solid var(--hair);
+  font: 400 12.5px/20px var(--mono);
+  color: var(--ink-3);
+  text-align: right;
+  user-select: none;
+  overflow: hidden;
+}
+.code-gutter span { height: 20px; }
+.code-ta {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  resize: none;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--ink);
+  font: 400 12.5px/20px var(--mono);
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+.code-ta::placeholder {
+  color: var(--ink-3);
+  white-space: pre-wrap;
+}
+
+.code-strip {
+  display: grid;
+  gap: 6px;
+}
+.code-pgrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.code-pchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 100%;
+}
+.code-pchip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.code-pchip .st {
+  font: 500 11px var(--mono);
+  color: var(--ink-3);
+}
+.code-pchip.used .st { color: var(--ok); }
+.code-pchip.sel,
+.code-pchip:hover { border-color: var(--ink); }
+
+.code-checks {
+  display: grid;
+  gap: 6px;
+}
+.code-okmsg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.code-iss {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--ink);
+  cursor: pointer;
+}
+.code-iss:hover { border-color: var(--ink); }
+.code-iss .body { display: grid; gap: 2px; font-size: 12.5px; }
+.code-iss .body > span { color: var(--ink-2); font-size: 12px; }
+
+@media (max-width: 1080px) {
+  .code-lab { grid-template-columns: minmax(0, 1fr); }
+  .code-map-pane .mapwrap { height: clamp(300px, 44vh, 420px); }
+}
+
+/* ===== Wokwi export panel ===== */
+.wokwi-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  font-size: 12.5px;
+}
+.wokwi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.wokwi-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.wokwi-note {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--hair);
+  color: var(--check);
+  font-size: 12px;
+}
+.wokwi-steps {
+  margin: 0;
+  font-size: 12px;
+}
+.wokwi-meta {
+  display: grid;
+  gap: 4px;
+}
+.wokwi-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.wokwi-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+.wokwi-prev summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.wokwi-prev pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 4px;
+  border: 1px solid var(--hair);
+  background: var(--surface);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* ===== Built-In Live Map Simulator ===== */
+.code-map-pane {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.sim-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.sim-bench {
+  display: grid;
+  gap: 6px;
+}
+.sim-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+.sim-card {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  font-size: 12px;
+  transition: border-color .15s;
+}
+.sim-card.active {
+  border-color: var(--ok);
+}
+.sim-card-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+.sim-card-h b {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sim-led-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sim-led-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex: none;
+  transition: opacity .1s, box-shadow .1s;
+}
+.sim-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sim-slider-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+.sim-hi-txt {
+  color: var(--ok);
+  font-weight: var(--w-strong);
+}
+.sim-oled {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #0d1117;
+  color: #7ee787;
+  font: 400 11px/1.4 var(--mono);
+  min-height: 44px;
+  overflow: hidden;
+}
+.sim-serial {
+  display: grid;
+  gap: 5px;
+}
+.sim-serial-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sim-serial-log {
+  padding: 8px 10px;
+  height: 110px;
+  overflow: auto;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font: 400 11.5px/1.45 var(--mono);
+  color: var(--ink);
+}
+
+/* Live map signal overlays */
+.map .net.sim-high path {
+  stroke-width: 3.4;
+  filter: drop-shadow(0 0 4px var(--ok));
+}
+.map .net.sim-pwm path {
+  stroke-width: 3;
+  stroke-dasharray: 6 3;
+}
+.map .net.sim-low path {
+  opacity: .55;
+}
+.map .node.sim-active rect.box {
+  stroke: var(--ok);
+  stroke-width: 2;
+}
+.code-gutter span.sim-cur {
+  background: var(--ok);
+  color: #0b0d0e;
+  font-weight: 700;
+  border-radius: 3px;
+  padding: 0 3px;
+}

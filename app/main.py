@@ -41,6 +41,7 @@ from app.db import (
     get_guest_pass_settings,
     get_mcp_runtime_settings,
     get_part,
+    get_project,
     get_shopping_item,
     get_storage_stats,
     get_ui_settings,
@@ -63,6 +64,7 @@ from app.db import (
     rotate_mcp_token,
     seed_if_empty,
     set_project_checks,
+    set_project_code,
     set_project_nets,
     teardown_project,
     update_glossary_term,
@@ -89,7 +91,9 @@ from app.images import (
     safe_delete_image,
 )
 from app.mcp import handle_mcp_post, verify_mcp_access
+from app.project_code import analyze_project_code, generate_starter_code
 from app.scraper import ScrapeError, scrape_url
+from app.wokwi import build_wokwi_zip_bytes, export_wokwi_project
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -288,6 +292,20 @@ class ProjectCheckPatch(BaseModel):
     node_refs: list[str] | None = None
     net_ids: list[str] | None = None
     is_done: bool | None = None
+
+
+class ProjectCodeUpdate(BaseModel):
+    code_source: str = ""
+    code_language: str | None = None
+
+
+class ProjectCodeAnalyzeRequest(BaseModel):
+    code_source: str | None = None
+    code_language: str | None = None
+
+
+class ProjectCodeGenerateRequest(BaseModel):
+    code_language: str | None = None
 
 
 class ShoppingItemCreate(BaseModel):
@@ -768,6 +786,86 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
         if updated is None:
             raise HTTPException(status_code=404, detail="Check not found")
         return updated
+
+    @application.get("/api/projects/{project_id}/code")
+    @application.get("/guest/api/projects/{project_id}/code")
+    async def api_get_project_code(project_id: str) -> dict[str, Any]:
+        proj = get_project(settings.db_path, project_id)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        analysis = analyze_project_code(proj)
+        return {
+            "project_id": proj["id"],
+            "code_language": proj.get("code_language") or analysis["language"],
+            "code_source": proj.get("code_source") or "",
+            "code_updated_at": proj.get("code_updated_at") or "",
+            "analysis": analysis,
+        }
+
+    @application.put("/api/projects/{project_id}/code")
+    async def api_put_project_code(project_id: str, payload: ProjectCodeUpdate) -> dict[str, Any]:
+        try:
+            updated = set_project_code(
+                settings.db_path,
+                project_id,
+                payload.code_source,
+                code_language=payload.code_language,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        analysis = analyze_project_code(updated)
+        return {**updated, "analysis": analysis}
+
+    @application.post("/api/projects/{project_id}/code/analyze")
+    async def api_analyze_project_code(project_id: str, payload: ProjectCodeAnalyzeRequest) -> dict[str, Any]:
+        proj = get_project(settings.db_path, project_id)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        try:
+            return analyze_project_code(
+                proj,
+                code_source=payload.code_source,
+                code_language=payload.code_language,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/projects/{project_id}/code/generate")
+    async def api_generate_project_code(project_id: str, payload: ProjectCodeGenerateRequest) -> dict[str, Any]:
+        proj = get_project(settings.db_path, project_id)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return generate_starter_code(proj, language=payload.code_language)
+
+    @application.get("/api/projects/{project_id}/wokwi")
+    @application.get("/guest/api/projects/{project_id}/wokwi")
+    async def api_export_project_wokwi(
+        project_id: str, language: str | None = Query(default=None)
+    ) -> dict[str, Any]:
+        proj = get_project(settings.db_path, project_id)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return export_wokwi_project(proj, code_language=language)
+
+    @application.get("/api/projects/{project_id}/wokwi.zip")
+    @application.get("/guest/api/projects/{project_id}/wokwi.zip")
+    async def api_export_project_wokwi_zip(
+        project_id: str, language: str | None = Query(default=None)
+    ) -> Response:
+        proj = get_project(settings.db_path, project_id)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        bundle = export_wokwi_project(proj, code_language=language)
+        zip_bytes = build_wokwi_zip_bytes(bundle)
+        slug = re.sub(r"[^a-z0-9]+", "-", str(proj.get("name") or "pinbin").lower()).strip("-") or "pinbin"
+        filename = f"{slug}-wokwi.zip"
+        return Response(
+            content=zip_bytes,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @application.post("/api/projects/teardown")
     async def api_teardown_project(payload: ProjectTeardownRequest) -> dict[str, Any]:

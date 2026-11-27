@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, Response
 from app.config import CATEGORIES, Settings
 from app.db import (
     CHECK_SEVERITIES,
+    CODE_LANGUAGES,
     NET_KINDS,
     PROJECT_ITEM_ROLES,
     PROJECT_STATUSES,
@@ -39,6 +40,7 @@ from app.db import (
     delete_shopping_offer,
     get_mcp_runtime_settings,
     get_part,
+    get_project,
     get_shopping_item,
     is_image_referenced,
     list_glossary,
@@ -50,6 +52,7 @@ from app.db import (
     optimize_shopping_carts,
     record_mcp_request,
     set_project_checks,
+    set_project_code,
     set_project_nets,
     teardown_project,
     update_glossary_term,
@@ -64,7 +67,13 @@ from app.db import (
 )
 from app.glossary_seed import GLOSSARY_CATEGORIES
 from app.images import ImageError, safe_delete_image
+from app.project_code import (
+    analyze_project_code as run_project_code_analysis,
+    build_wiring_summary,
+    generate_starter_code,
+)
 from app.scraper import ScrapeError, scrape_url
+from app.wokwi import export_wokwi_project
 
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 DEFAULT_PROTOCOL_VERSION = "2025-03-26"
@@ -90,6 +99,14 @@ SERVER_INSTRUCTIONS = (
     "You can attach part photos via image_url, pinout photos via pinout_image_url, and verified top-view board diagrams via pinout_svg. "
     "For projects, write wiring connections using set_project_wiring (and resolve every issue returned in verification_report) "
     "and beginner safety checks using set_project_checks. "
+    "For project firmware code, use get_project_code to inspect saved code alongside the project's wiring_summary and pin audit, "
+    "generate_project_starter_code to scaffold wiring-matched Arduino C++ or MicroPython boilerplate, analyze_project_code to "
+    "check candidate code against the wiring map before saving, and set_project_code to save firmware (and resolve every issue "
+    "returned in verification_report so pin numbers, input-only pins, and strapping pins always match the wiring map). "
+    "Use export_project_wokwi to export a project's wiring map and code as a ready-to-run Wokwi diagram.json + sketch bundle. "
+    "Pinbin's Code tab also includes a built-in live browser simulator supporting Arduino C++ (pinMode, digitalWrite, digitalRead, "
+    "analogRead, analogWrite, tone, Servo.attach/write, Serial.print/println, display/lcd.print, delay, millis) and MicroPython "
+    "(Pin, PWM, ADC, I2C.scan, time.sleep/sleep_ms, print) — keep beginner sketches clean and standard so they run both live in Pinbin and on real hardware. "
     "Each shopping item supports multiple retailer offers (pass offers=[...] on create_shopping_item or call add_shopping_offer). "
     "When planning a project shopping list, try to find parts on the same retailer(s) to minimize separate orders, attach alternative "
     "store offers when found, and call optimize_shopping_carts to check for consolidation opportunities or single-item straggler stores. "
@@ -318,8 +335,102 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
         },
         {
             "name": "list_projects",
-            "description": "List all projects with their status, sub-project variants, owned and to-buy items, project notes, and readiness summary.",
+            "description": "List all projects with their status, sub-project variants, owned and to-buy items, project notes, code metadata (has_code, code_language, code_lines), and readiness summary. Use get_project_code to read a project's full firmware source.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "get_project_code",
+            "description": (
+                "Read a project's saved firmware code (Arduino C++ or MicroPython) along with its MCU wiring_summary "
+                "(every wired pin and connected peripheral) and a live code_analysis auditing pins against the wiring map."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"project_id": {"type": "string"}},
+                "required": ["project_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "analyze_project_code",
+            "description": (
+                "Audit firmware code against a project's wiring map and board pinout (flags invalid board pins, "
+                "writing to input-only pins, strapping/USB serial pins, unwired pins, and unused wired pins). "
+                "Omit code_source to audit the project's currently saved code, or pass a candidate snippet to check it before saving."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "code_source": {"type": "string", "description": "Optional candidate firmware source to audit before saving."},
+                    "code_language": {"type": "string", "enum": list(CODE_LANGUAGES)},
+                },
+                "required": ["project_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "generate_project_starter_code",
+            "description": (
+                "Generate beginner-friendly starter firmware boilerplate (pin definitions, I2C/SPI setup, comments) "
+                "directly from a project's wiring map in Arduino C++ or MicroPython. Read-only by default; pass save=true "
+                "to also save the generated starter into the project."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "code_language": {"type": "string", "enum": list(CODE_LANGUAGES)},
+                    "save": {"type": "boolean", "default": False, "description": "If true, save the generated starter code onto the project (requires project write permission)."},
+                },
+                "required": ["project_id"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "export_project_wokwi",
+            "description": (
+                "Export a project's wiring map and firmware code as a ready-to-run Wokwi simulation bundle "
+                "(diagram.json, sketch.ino or main.py, wokwi.toml, mapped/unmapped parts report, and a direct Wokwi link)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "code_language": {"type": "string", "enum": list(CODE_LANGUAGES)},
+                    "include_starter_if_empty": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "If true and the project has no saved code yet, auto-generate starter code from the wiring map.",
+                    },
+                },
+                "required": ["project_id"],
+                "additionalProperties": False,
+            },
             "annotations": {
                 "readOnlyHint": True,
                 "destructiveHint": False,
@@ -674,6 +785,25 @@ def _build_tool_definitions(read_only: bool) -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["project_id", "nets"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "set_project_code",
+            "description": (
+                "Save firmware source code (Arduino C++ or MicroPython) on a project. Automatically audits every pin "
+                "referenced in the code against the project's wiring map and board pinout, returning a verification_report "
+                "with pin mappings and any mismatches or safety warnings to resolve."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "code_source": {"type": "string", "description": "Complete firmware source code."},
+                    "code_language": {"type": "string", "enum": list(CODE_LANGUAGES), "description": "'arduino' or 'micropython'."},
+                },
+                "required": ["project_id", "code_source"],
                 "additionalProperties": False,
             },
             "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -1245,6 +1375,9 @@ def _strip_project_image_paths(proj: dict[str, Any]) -> dict[str, Any]:
         c["has_photo"] = bool((c.pop("image_path", "") or "").strip())
         clean_items.append(c)
     out["items"] = clean_items
+    raw_code = str(out.pop("code_source", "") or "")
+    out["has_code"] = bool(raw_code.strip())
+    out["code_lines"] = len(raw_code.splitlines()) if raw_code.strip() else 0
     return out
 
 
@@ -1268,6 +1401,7 @@ _PROJECT_WRITE_TOOLS = {
     "add_project_item",
     "update_project_item",
     "set_project_wiring",
+    "set_project_code",
     "set_project_checks",
     "update_project_check",
     "teardown_project",
@@ -1388,6 +1522,88 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
     if name == "list_projects":
         projs = [_strip_project_image_paths(p) for p in list_projects(settings.db_path)]
         return {"project_count": len(projs), "projects": projs}
+
+    if name == "get_project_code":
+        project_id = str(args.get("project_id") or "").strip()
+        if not project_id:
+            raise McpToolError("project_id is required")
+        proj = get_project(settings.db_path, project_id)
+        if proj is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        analysis = run_project_code_analysis(proj)
+        return {
+            "project_id": proj["id"],
+            "project_name": proj["name"],
+            "code_language": proj.get("code_language") or analysis["language"],
+            "code_source": proj.get("code_source") or "",
+            "code_updated_at": proj.get("code_updated_at") or "",
+            "wiring_summary": build_wiring_summary(proj),
+            "code_analysis": analysis,
+        }
+
+    if name == "analyze_project_code":
+        project_id = str(args.get("project_id") or "").strip()
+        if not project_id:
+            raise McpToolError("project_id is required")
+        proj = get_project(settings.db_path, project_id)
+        if proj is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        src = args.get("code_source") if "code_source" in args else None
+        lang = args.get("code_language") if "code_language" in args else None
+        try:
+            analysis = run_project_code_analysis(proj, code_source=src, code_language=lang)
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
+        return {
+            "project_id": proj["id"],
+            "project_name": proj["name"],
+            "code_analysis": analysis,
+        }
+
+    if name == "generate_project_starter_code":
+        project_id = str(args.get("project_id") or "").strip()
+        if not project_id:
+            raise McpToolError("project_id is required")
+        save_flag = bool(args.get("save", False))
+        if save_flag and (is_read_only or not runtime.get("can_projects", True)):
+            raise McpToolError("Cannot save generated code without project write permission.")
+        proj = get_project(settings.db_path, project_id)
+        if proj is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        gen = generate_starter_code(proj, language=args.get("code_language"))
+        saved = False
+        if save_flag:
+            updated = set_project_code(settings.db_path, project_id, gen["code"], code_language=gen["language"])
+            if updated is not None:
+                saved = True
+                lang_label = "MicroPython" if gen["language"] == "micropython" else "Arduino C++"
+                record_mcp_request(
+                    settings.db_path,
+                    name,
+                    updated["name"],
+                    f"Generated and saved {lang_label} starter ({gen['analysis']['line_count']} lines)",
+                )
+        return {
+            "project_id": proj["id"],
+            "project_name": proj["name"],
+            "saved": saved,
+            "code_language": gen["language"],
+            "code_source": gen["code"],
+            "code_analysis": gen["analysis"],
+        }
+
+    if name == "export_project_wokwi":
+        project_id = str(args.get("project_id") or "").strip()
+        if not project_id:
+            raise McpToolError("project_id is required")
+        proj = get_project(settings.db_path, project_id)
+        if proj is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        return export_wokwi_project(
+            proj,
+            code_language=args.get("code_language"),
+            include_starter_if_empty=bool(args.get("include_starter_if_empty", True)),
+        )
 
     if name == "scrape_product_url":
         url = str(args.get("url") or "").strip()
@@ -1674,6 +1890,40 @@ async def _execute_tool(settings: Settings, name: str, args: dict[str, Any]) -> 
         result = _strip_project_image_paths(updated)
         result["verification_report"] = _audit_project_wiring(updated)
         return result
+
+    if name == "set_project_code":
+        project_id = str(args.get("project_id") or "").strip()
+        if not project_id:
+            raise McpToolError("project_id is required")
+        if "code_source" not in args:
+            raise McpToolError("code_source is required")
+        try:
+            updated = set_project_code(
+                settings.db_path,
+                project_id,
+                str(args.get("code_source") or ""),
+                code_language=args.get("code_language"),
+            )
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
+        if updated is None:
+            raise McpToolError(f"Project not found: {project_id}")
+        analysis = run_project_code_analysis(updated)
+        lang_label = "MicroPython" if analysis["language"] == "micropython" else "Arduino C++"
+        record_mcp_request(
+            settings.db_path,
+            name,
+            updated["name"],
+            f"Wrote {lang_label} code ({analysis['line_count']} lines)",
+        )
+        return {
+            "project_id": updated["id"],
+            "project_name": updated["name"],
+            "code_language": updated.get("code_language") or analysis["language"],
+            "code_updated_at": updated.get("code_updated_at") or "",
+            "line_count": analysis["line_count"],
+            "verification_report": analysis,
+        }
 
     if name == "set_project_checks":
         project_id = str(args.get("project_id") or "").strip()

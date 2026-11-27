@@ -26,6 +26,7 @@ import {
   computePowerBudget,
 } from '../rules.js';
 import { builtinBoardUsbSide } from './bench.js';
+import { renderProjectCodeView } from './project-code.js';
 
 const STATUS_META = {
   danger: ['var(--danger)', 'Wiring problem'],
@@ -1373,11 +1374,13 @@ export function renderProjectDetailView(pid) {
   const items = proj.items || [];
   const ownedCount = items.filter((x) => x.part_id).length;
 
+  const hasCode = Boolean((proj.code_source || '').trim());
   const tabs = [
     ['map', 'Map'],
     ['focus', 'One part'],
     ['metro', 'Lines'],
     ['list', 'Parts'],
+    ['code', hasCode ? 'Code ●' : 'Code'],
     ['notes', 'Notes'],
   ];
 
@@ -1428,6 +1431,8 @@ export function renderProjectDetailView(pid) {
     body = renderMetroView(proj);
   } else if (v === 'list') {
     body = renderPartsListView(proj);
+  } else if (v === 'code') {
+    body = renderProjectCodeView(proj, renderMapSvg);
   } else if (v === 'notes') {
     body = `<div class="notes">${mdLite(
       proj.notes

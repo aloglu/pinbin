@@ -67,6 +67,7 @@ _GUEST_ALLOWED_EXACT = {
     "/guest/api/glossary",
 }
 _GUEST_PROJECT_DETAIL_RE = re.compile(r"^/guest/projects/([^/]+)$")
+_GUEST_PROJECT_CODE_API_RE = re.compile(r"^/guest/api/projects/([^/]+)/(?:code|wokwi|wokwi\.zip)$")
 _GUEST_BENCH_SUBTAB_RE = re.compile(r"^/guest/bench/([^/]+)$")
 
 
@@ -373,6 +374,8 @@ def is_allowed_guest_resource(path: str) -> bool:
         return True
     m_proj = _GUEST_PROJECT_DETAIL_RE.match(path)
     if m_proj and m_proj.group(1) != "new":
+        return True
+    if _GUEST_PROJECT_CODE_API_RE.match(path):
         return True
     if _GUEST_BENCH_SUBTAB_RE.match(path):
         return True
