@@ -102,6 +102,33 @@ import {
   wipeEverythingNow,
 } from './views/settings.js';
 
+const PROJ_TAB_FROM_URL = {
+  map: 'map',
+  focus: 'focus',
+  metro: 'metro',
+  parts: 'list',
+  list: 'list',
+  code: 'code',
+  notes: 'notes',
+};
+const PROJ_TAB_TO_URL = {
+  map: 'map',
+  focus: 'focus',
+  metro: 'metro',
+  list: 'parts',
+  code: 'code',
+  notes: 'notes',
+};
+
+function syncProjectTabUrl(pid, viewKey, replace = false) {
+  const slug = PROJ_TAB_TO_URL[viewKey] || 'map';
+  const target = appHref(`/projects/${encodeURIComponent(pid)}/${slug}`);
+  if (location.pathname !== target) {
+    if (replace) history.replaceState(null, '', target);
+    else history.pushState(null, '', target);
+  }
+}
+
 function route() {
   let raw = location.pathname || '/';
   if (BASE && (raw === BASE || raw.startsWith(`${BASE}/`))) {
@@ -118,7 +145,13 @@ function route() {
     if (!segs[1]) r = 'projects';
     else if (segs[1] === 'new') r = 'new-proj';
     else if (segs[2] === 'edit') r = `edit-proj-${decodeURIComponent(segs[1])}`;
-    else r = `p-${decodeURIComponent(segs[1])}`;
+    else {
+      const pid = decodeURIComponent(segs[1]);
+      r = `p-${pid}`;
+      if (segs[2] && PROJ_TAB_FROM_URL[segs[2]]) {
+        state.projView[pid] = PROJ_TAB_FROM_URL[segs[2]];
+      }
+    }
   } else if (segs[0] === 'shopping') {
     if (!segs[1]) r = 'shopping';
     else if (segs[1] === 'new') r = 'new-item';
@@ -1172,6 +1205,7 @@ document.addEventListener('click', (e) => {
     const pid = r.startsWith('p-') ? r.slice(2) : null;
     if (pid) {
       state.projView[pid] = viewBtn.dataset.view;
+      syncProjectTabUrl(pid, viewBtn.dataset.view);
       render();
     }
     return;
@@ -1280,6 +1314,7 @@ document.addEventListener('click', (e) => {
       const curRef = state.focusRef[pid] || (proj ? findMcuRef(proj) : null);
       if (focBtn.dataset.viewTo) {
         state.projView[pid] = focBtn.dataset.viewTo;
+        syncProjectTabUrl(pid, focBtn.dataset.viewTo);
         state.trail[pid] = [];
         state.sel = null;
       } else {

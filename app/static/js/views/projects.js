@@ -1529,6 +1529,12 @@ export function renderProjectDetailView(pid) {
 export async function toggleProjectArchive(pid, renderFn) {
   const proj = projectById(pid);
   if (!proj) return;
+  if (!proj.archived) {
+    const ok = window.confirm(
+      `Archive "${proj.name}"?\n\nIt will be hidden from Inventory and Shopping until you restore it.`
+    );
+    if (!ok) return;
+  }
   const prevStatus = proj.status || 'planning';
   const nextStatus = proj.archived ? 'planning' : 'archived';
   proj.status = nextStatus;

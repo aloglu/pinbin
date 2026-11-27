@@ -786,6 +786,10 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
     i2c_sda: tuple[str, str] | None = None
     i2c_scl: tuple[str, str] | None = None
     i2c_devices: list[str] = []
+    spi_sck: tuple[str, str] | None = None
+    spi_mosi: tuple[str, str] | None = None
+    spi_miso: tuple[str, str] | None = None
+    spi_cs: list[tuple[str, str]] = []
     pin_entries: list[dict[str, Any]] = []
     used_const_names: set[str] = set()
 
@@ -798,17 +802,39 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
 
         base_name = f"PIN_{_slug_const(target_label, 'SIG')}"
         if direction == "i2c":
-            if "sda" in net_low:
+            has_sda = "sda" in net_low
+            has_scl = "scl" in net_low
+            if has_sda and not has_scl and i2c_sda is None:
                 base_name = "PIN_I2C_SDA"
-                i2c_sda = (base_name, pin)
-            elif "scl" in net_low:
+            elif has_scl and not has_sda and i2c_scl is None:
                 base_name = "PIN_I2C_SCL"
-                i2c_scl = (base_name, pin)
+            elif i2c_sda is None:
+                # Combined SDA/SCL net (e.g. GPIO8/9 -> SDA/SCL): assign first to SDA, second to SCL
+                base_name = "PIN_I2C_SDA"
+            elif i2c_scl is None:
+                base_name = "PIN_I2C_SCL"
             for n in nodes:
                 addr = f" ({n['i2c']})" if n.get("i2c") else ""
                 desc = f"{n['name']}{addr}"
                 if desc not in i2c_devices:
                     i2c_devices.append(desc)
+        elif direction == "spi":
+            if any(k in net_low for k in ("sck", "clk", "sclk")) and spi_sck is None and not ("mosi" in net_low and "miso" in net_low):
+                base_name = "PIN_SPI_SCK"
+            elif any(k in net_low for k in ("mosi", "sdi", "din", "tx")) and spi_mosi is None and not ("miso" in net_low):
+                base_name = "PIN_SPI_MOSI"
+            elif any(k in net_low for k in ("miso", "sdo", "dout", "rx")) and spi_miso is None and not ("mosi" in net_low):
+                base_name = "PIN_SPI_MISO"
+            elif any(k in net_low for k in ("cs", "ss", "ce", "dc", "rst", "reset")):
+                base_name = f"PIN_{_slug_const(target_label, 'SPI')}_CS"
+            elif spi_sck is None:
+                base_name = "PIN_SPI_SCK"
+            elif spi_mosi is None:
+                base_name = "PIN_SPI_MOSI"
+            elif spi_miso is None:
+                base_name = "PIN_SPI_MISO"
+            else:
+                base_name = f"PIN_{_slug_const(target_label, 'SPI')}_CS"
 
         const_name = base_name
         suffix = 2
@@ -816,6 +842,21 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
             const_name = f"{base_name}_{suffix}"
             suffix += 1
         used_const_names.add(const_name)
+
+        if direction == "i2c":
+            if base_name == "PIN_I2C_SDA" and i2c_sda is None:
+                i2c_sda = (const_name, pin)
+            elif base_name == "PIN_I2C_SCL" and i2c_scl is None:
+                i2c_scl = (const_name, pin)
+        elif direction == "spi":
+            if base_name == "PIN_SPI_SCK" and spi_sck is None:
+                spi_sck = (const_name, pin)
+            elif base_name == "PIN_SPI_MOSI" and spi_mosi is None:
+                spi_mosi = (const_name, pin)
+            elif base_name == "PIN_SPI_MISO" and spi_miso is None:
+                spi_miso = (const_name, pin)
+            else:
+                spi_cs.append((const_name, pin))
 
         caution = ""
         if spec and pin in spec["strap"]:
@@ -835,14 +876,26 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
             }
         )
 
+    has_spi = bool(spi_sck or spi_mosi or spi_miso or spi_cs)
+    out_entries = [e for e in pin_entries if e["direction"] == "output"]
+    in_entries = [e for e in pin_entries if e["direction"] == "input"]
+    adc_entries = [e for e in pin_entries if e["direction"] == "adc"]
+
     if lang == "micropython":
+        imports = ["Pin"]
+        if i2c_sda or i2c_scl:
+            imports.append("I2C")
+        if has_spi and (spi_sck or spi_mosi or spi_miso):
+            imports.append("SPI")
+        if adc_entries:
+            imports.append("ADC")
         lines = [
             f"# {proj_name} — MicroPython starter",
             f"# Board: {board_title}",
             "# Generated from your Pinbin wiring map.",
             "",
             "import time",
-            "from machine import Pin" + (", I2C" if (i2c_sda or i2c_scl) else "") + (", ADC" if any(e["direction"] == "adc" for e in pin_entries) else ""),
+            f"from machine import {', '.join(imports)}",
             "",
             "# --- Pin definitions (from wiring map) ---",
         ]
@@ -860,7 +913,19 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
                 if i2c_devices:
                     lines.append(f"# I2C devices: {', '.join(i2c_devices)}")
                 lines.append(f"i2c = I2C(0, sda=Pin({i2c_sda[0]}), scl=Pin({i2c_scl[0]}), freq=400_000)")
-                lines.append("print('I2C scan:', [hex(a) for a in i2c.scan()])")
+                lines.append("print('I2C scan:', i2c.scan())")
+            if spi_sck or spi_mosi or spi_miso:
+                spi_parts = []
+                if spi_sck:
+                    spi_parts.append(f"sck=Pin({spi_sck[0]})")
+                if spi_mosi:
+                    spi_parts.append(f"mosi=Pin({spi_mosi[0]})")
+                if spi_miso:
+                    spi_parts.append(f"miso=Pin({spi_miso[0]})")
+                lines.append(f"spi = SPI(0, {', '.join(spi_parts)})")
+            for cs_const, _ in spi_cs:
+                var = cs_const.lower().replace("pin_", "")
+                lines.append(f"{var} = Pin({cs_const}, Pin.OUT)")
             for e in pin_entries:
                 var = e["const"].lower().replace("pin_", "")
                 if e["direction"] == "output":
@@ -873,10 +938,25 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
         lines += [
             "",
             f'print("{proj_name} started")',
+            "state = 0",
             "",
             "while True:",
-            "    # TODO: Add your main loop logic here",
-            "    time.sleep(1)",
+            "    state = 1 - state",
+        ]
+        if not pin_entries:
+            lines.append("    led.value(state)")
+        else:
+            for e in in_entries:
+                var = e["const"].lower().replace("pin_", "")
+                lines.append(f'    print("{var}:", {var}.value())')
+            for e in adc_entries:
+                var = e["const"].lower().replace("pin_", "")
+                lines.append(f'    print("{var}:", {var}.read())')
+            for e in out_entries:
+                var = e["const"].lower().replace("pin_", "")
+                lines.append(f"    {var}.value(state)")
+        lines += [
+            "    time.sleep(0.5)",
             "",
         ]
     else:
@@ -888,6 +968,9 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
         ]
         if i2c_sda or i2c_scl:
             lines.append("#include <Wire.h>")
+        if has_spi:
+            lines.append("#include <SPI.h>")
+        if i2c_sda or i2c_scl or has_spi:
             lines.append("")
         lines.append("// --- Pin definitions (from wiring map) ---")
         if not pin_entries:
@@ -900,6 +983,8 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
 
         lines += [
             "",
+            "int tickState = LOW;",
+            "",
             "void setup() {",
             "  Serial.begin(115200);",
             f'  Serial.println("{proj_name} started");',
@@ -911,6 +996,15 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
                 lines.append(f"  Wire.begin({i2c_sda[0]}, {i2c_scl[0]});")
             else:
                 lines.append("  Wire.begin();")
+        if has_spi:
+            if board_family in ("esp32", "c3") and spi_sck and spi_mosi:
+                miso_arg = spi_miso[0] if spi_miso else "-1"
+                cs_arg = spi_cs[0][0] if spi_cs else "-1"
+                lines.append(f"  SPI.begin({spi_sck[0]}, {miso_arg}, {spi_mosi[0]}, {cs_arg});")
+            else:
+                lines.append("  SPI.begin();")
+            for cs_const, _ in spi_cs:
+                lines.append(f"  pinMode({cs_const}, OUTPUT);")
         if not pin_entries:
             lines.append("  pinMode(PIN_LED, OUTPUT);")
         else:
@@ -919,12 +1013,29 @@ def generate_starter_code(project: dict[str, Any], language: str | None = None) 
                     lines.append(f"  pinMode({e['const']}, OUTPUT);")
                 elif e["direction"] == "input":
                     lines.append(f"  pinMode({e['const']}, INPUT_PULLUP);")
+                elif e["direction"] == "adc":
+                    lines.append(f"  pinMode({e['const']}, INPUT);")
         lines += [
             "}",
             "",
             "void loop() {",
-            "  // TODO: Add your main loop logic here",
-            "  delay(1000);",
+            "  tickState = tickState == LOW ? HIGH : LOW;",
+        ]
+        if not pin_entries:
+            lines.append("  digitalWrite(PIN_LED, tickState);")
+        else:
+            for e in in_entries:
+                var = e["const"].lower().replace("pin_", "")
+                lines.append(f"  int {var}Val = digitalRead({e['const']});")
+                lines.append(f'  Serial.println("{var}: " + String({var}Val));')
+            for e in adc_entries:
+                var = e["const"].lower().replace("pin_", "")
+                lines.append(f"  int {var}Val = analogRead({e['const']});")
+                lines.append(f'  Serial.println("{var}: " + String({var}Val));')
+            for e in out_entries:
+                lines.append(f"  digitalWrite({e['const']}, tickState);")
+        lines += [
+            "  delay(500);",
             "}",
             "",
         ]

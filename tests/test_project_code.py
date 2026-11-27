@@ -182,6 +182,43 @@ class ProjectCodeAnalyzerTests(unittest.TestCase):
         self.assertEqual(res["pin_map"][0]["pin"], "GP15")
         self.assertTrue(res["pin_map"][0]["used_in_code"])
 
+    def test_starter_handles_combined_i2c_spi_and_adc_nets(self) -> None:
+        proj = {
+            "id": "p-full",
+            "name": "Full Rig",
+            "code_language": "",
+            "code_source": "",
+            "items": [
+                {"ref": "mcu", "role": "mcu", "name": "ESP32-C3 SuperMini", "category": "Microcontrollers"},
+                {"ref": "oled", "role": "periph", "name": "SSD1306 OLED", "category": "Displays", "electrical_facts": {"i2c": "0x3C"}},
+                {"ref": "tft", "role": "periph", "name": "ST7789 Display", "category": "Displays"},
+                {"ref": "pot", "role": "periph", "name": "10k Potentiometer", "category": "Passives"},
+                {"ref": "led", "role": "periph", "name": "Status LED", "category": "Passives"},
+            ],
+            "nets": [
+                {"id": "n-i2c", "name": "I2C", "kind": "i2c", "conns": [["mcu", "GPIO8/9"], ["oled", "SDA/SCL"]]},
+                {"id": "n-sck", "name": "SPI SCK", "kind": "spi", "conns": [["mcu", "GPIO4"], ["tft", "SCK"]]},
+                {"id": "n-mosi", "name": "SPI MOSI", "kind": "spi", "conns": [["mcu", "GPIO6"], ["tft", "MOSI"]]},
+                {"id": "n-cs", "name": "TFT CS", "kind": "spi", "conns": [["mcu", "GPIO7"], ["tft", "CS"]]},
+                {"id": "n-pot", "name": "POT", "kind": "sig", "conns": [["mcu", "GPIO3"], ["pot", "SIG"]]},
+                {"id": "n-led", "name": "LED", "kind": "sig", "conns": [["mcu", "GPIO10"], ["led", "A"]]},
+            ],
+        }
+        gen_c = generate_starter_code(proj, language="arduino")
+        self.assertIn("Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);", gen_c["code"])
+        self.assertIn("SPI.begin(PIN_SPI_SCK,", gen_c["code"])
+        self.assertIn("analogRead(", gen_c["code"])
+        self.assertIn("digitalWrite(", gen_c["code"])
+        self.assertEqual(gen_c["analysis"]["wired_pin_count"], 7)
+        self.assertEqual(gen_c["analysis"]["matched_pin_count"], 7)
+
+        gen_py = generate_starter_code(proj, language="micropython")
+        self.assertIn("I2C(0, sda=Pin(PIN_I2C_SDA), scl=Pin(PIN_I2C_SCL)", gen_py["code"])
+        self.assertIn("SPI(0,", gen_py["code"])
+        self.assertIn(".read()", gen_py["code"])
+        self.assertEqual(gen_py["analysis"]["wired_pin_count"], 7)
+        self.assertEqual(gen_py["analysis"]["matched_pin_count"], 7)
+
 
 class WokwiExportTests(unittest.TestCase):
     def test_esp32_wokwi_diagram_and_auto_ground(self) -> None:

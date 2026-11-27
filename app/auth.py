@@ -66,7 +66,7 @@ _GUEST_ALLOWED_EXACT = {
     "/guest/api/retailers",
     "/guest/api/glossary",
 }
-_GUEST_PROJECT_DETAIL_RE = re.compile(r"^/guest/projects/([^/]+)$")
+_GUEST_PROJECT_DETAIL_RE = re.compile(r"^/guest/projects/([^/]+)(?:/(?:map|focus|metro|parts|list|code|notes))?$")
 _GUEST_PROJECT_CODE_API_RE = re.compile(r"^/guest/api/projects/([^/]+)/(?:code|wokwi|wokwi\.zip)$")
 _GUEST_BENCH_SUBTAB_RE = re.compile(r"^/guest/bench/([^/]+)$")
 

@@ -559,26 +559,40 @@ export function updateCodeLivePanels(proj) {
   if (issSlot) issSlot.innerHTML = issuesPanelHtml(d);
 }
 
+function simBadgeContent(snap) {
+  const isRunning = Boolean(snap && snap.running && !snap.paused);
+  const isPaused = Boolean(snap && snap.running && snap.paused);
+  if (snap?.error) {
+    return { cls: 'code-pill danger', text: `! ${snap.error}` };
+  }
+  if (isRunning) {
+    return {
+      cls: 'code-pill ok',
+      text: `● Running${snap.currentLine ? ` · L${snap.currentLine}` : ''} · ${(snap.simMs / 1000).toFixed(1)}s`,
+    };
+  }
+  if (isPaused) {
+    return {
+      cls: 'code-pill check',
+      text: `❚❚ Paused${snap.currentLine ? ` · L${snap.currentLine}` : ''} · ${(snap.simMs / 1000).toFixed(1)}s`,
+    };
+  }
+  if (snap && snap.phase === 'done') {
+    return { cls: 'code-pill dim', text: `Finished · ${(snap.simMs / 1000).toFixed(1)}s` };
+  }
+  return { cls: 'code-pill dim', text: 'Simulator idle' };
+}
+
 function simBarHtml(proj) {
   const snap = activeSim && activeSimPid === proj.id ? activeSim.getSnapshot() : null;
   const isRunning = Boolean(snap && snap.running && !snap.paused);
-  const isPaused = Boolean(snap && snap.running && snap.paused);
-  let badge = '<span class="code-pill dim">Simulator idle</span>';
-  if (snap?.error) {
-    badge = `<span class="code-pill danger">! ${esc(snap.error)}</span>`;
-  } else if (isRunning) {
-    badge = `<span class="code-pill ok">● Running${snap.currentLine ? ` · L${snap.currentLine}` : ''} · ${(snap.simMs / 1000).toFixed(1)}s</span>`;
-  } else if (isPaused) {
-    badge = `<span class="code-pill check">❚❚ Paused${snap.currentLine ? ` · L${snap.currentLine}` : ''} · ${(snap.simMs / 1000).toFixed(1)}s</span>`;
-  } else if (snap && snap.phase === 'done') {
-    badge = `<span class="code-pill dim">Finished · ${(snap.simMs / 1000).toFixed(1)}s</span>`;
-  }
-  return `<div class="sim-bar">
-    <button type="button" class="btn ${isRunning ? '' : 'ink'}" data-sim-act="play">${isRunning ? '❚❚ Pause' : '▶ Run'}</button>
-    <button type="button" class="btn" data-sim-act="step" title="Execute one line at a time">⏭ Step</button>
-    <button type="button" class="btn quiet" data-sim-act="reset" ${snap ? '' : 'disabled'}>↺ Reset</button>
+  const b = simBadgeContent(snap);
+  return `<div class="sim-bar" data-sim-bar="${esc(proj.id)}">
+    <button type="button" id="sim-play-btn" class="btn ${isRunning ? '' : 'ink'}" data-sim-act="play">${isRunning ? '❚❚ Pause' : '▶ Run'}</button>
+    <button type="button" id="sim-step-btn" class="btn" data-sim-act="step" title="Execute one line at a time">⏭ Step</button>
+    <button type="button" id="sim-reset-btn" class="btn quiet" data-sim-act="reset" ${snap ? '' : 'disabled'}>↺ Reset</button>
     <span style="flex:1"></span>
-    ${badge}
+    <span id="sim-badge" class="${b.cls}">${esc(b.text)}</span>
   </div>`;
 }
 
@@ -604,7 +618,7 @@ function simBenchHtml(proj) {
     if (w.kind === 'led') {
       const pct = Math.round((w.pwm / 255) * 100);
       const glow = w.pwm > 0 ? `opacity:${Math.max(0.25, w.pwm / 255).toFixed(2)};box-shadow:0 0 10px ${esc(w.color)}` : 'opacity:0.15';
-      ctl = `<div class="sim-led-row"><span class="sim-led-dot" style="background:${esc(w.color)};${glow}"></span><span class="mono">${w.pwm > 0 ? (pct < 100 ? `PWM ${pct}%` : 'ON') : 'OFF'}</span></div>`;
+      ctl = `<div class="sim-led-row"><span class="sim-led-dot" style="background:${esc(w.color)};${glow}"></span><span class="mono sim-led-txt">${w.pwm > 0 ? (pct < 100 ? `PWM ${pct}%` : 'ON') : 'OFF'}</span></div>`;
     } else if (w.kind === 'button') {
       ctl = `<button type="button" class="btn ${w.input.pressed ? 'ink' : ''}" data-sim-btn="${esc(w.ref)}">${w.input.pressed ? 'Pressed (click to release)' : 'Press button'}</button>`;
     } else if (w.kind === 'switch' || w.kind === 'digital_sensor') {
@@ -614,13 +628,13 @@ function simBenchHtml(proj) {
     } else if (w.kind === 'analog') {
       const pct = Math.round((w.input.value ?? 0.5) * 100);
       const raw = Math.round((w.input.value ?? 0.5) * adcMax);
-      ctl = `<div class="sim-slider-row"><input type="range" min="0" max="100" value="${pct}" data-sim-range="${esc(w.ref)}"><span class="mono">${raw}</span></div>`;
+      ctl = `<div class="sim-slider-row"><input type="range" min="0" max="100" value="${pct}" data-sim-range="${esc(w.ref)}"><span class="mono sim-adc-val">${raw}</span></div>`;
     } else if (w.kind === 'servo') {
-      ctl = `<div class="sim-led-row"><span class="mono">${w.angle}°</span><span class="meter"><i style="width:${Math.round((w.angle / 180) * 100)}%"></i></span></div>`;
+      ctl = `<div class="sim-led-row"><span class="mono sim-servo-val">${w.angle}°</span><span class="meter"><i class="sim-servo-bar" style="width:${Math.round((w.angle / 180) * 100)}%"></i></span></div>`;
     } else if (w.kind === 'buzzer') {
-      ctl = `<span class="mono ${w.freq > 0 ? 'sim-hi-txt' : 'dim'}">${w.freq > 0 ? `♪ ${w.freq} Hz` : 'Silent'}</span>`;
+      ctl = `<span class="mono sim-buzzer-txt ${w.freq > 0 ? 'sim-hi-txt' : 'dim'}">${w.freq > 0 ? `♪ ${w.freq} Hz` : 'Silent'}</span>`;
     } else if (w.kind === 'relay') {
-      ctl = `<span class="mono ${w.digital ? 'sim-hi-txt' : 'dim'}">${w.digital ? 'CLOSED (ON)' : 'OPEN (OFF)'}</span>`;
+      ctl = `<span class="mono sim-relay-txt ${w.digital ? 'sim-hi-txt' : 'dim'}">${w.digital ? 'CLOSED (ON)' : 'OPEN (OFF)'}</span>`;
     } else if (w.kind === 'display') {
       ctl = `<div class="sim-oled">${
         displayLines.length
@@ -628,16 +642,16 @@ function simBenchHtml(proj) {
           : `<div class="faint">${w.i2c ? `I2C ${esc(w.i2c)} · ` : ''}ready</div>`
       }</div>`;
     } else {
-      ctl = `<span class="mono ${w.digital ? 'sim-hi-txt' : 'dim'}">${w.digital ? 'HIGH' : 'LOW'}</span>`;
+      ctl = `<span class="mono sim-gen-txt ${w.digital ? 'sim-hi-txt' : 'dim'}">${w.digital ? 'HIGH' : 'LOW'}</span>`;
     }
 
-    return `<div class="sim-card ${w.active ? 'active' : ''}">
+    return `<div class="sim-card ${w.active ? 'active' : ''}" data-sim-card="${esc(w.ref)}" data-sim-kind="${esc(w.kind)}">
       <div class="sim-card-h"><b>${esc(w.name)}</b>${pinTag}</div>
       ${ctl}
     </div>`;
   }).join('');
 
-  return `<div class="sim-bench">
+  return `<div class="sim-bench" data-sim-bench="${esc(proj.id)}">
     <span class="k">live bench controls</span>
     <div class="sim-grid">${cards}</div>
   </div>`;
@@ -649,9 +663,9 @@ function simSerialHtml(proj) {
   return `<div class="sim-serial">
     <div class="sim-serial-h">
       <span class="k">serial monitor</span>
-      <button type="button" class="btn quiet" data-sim-act="clear-serial" ${rows.length ? '' : 'disabled'}>Clear</button>
+      <button type="button" id="sim-clear-btn" class="btn quiet" data-sim-act="clear-serial" ${rows.length ? '' : 'disabled'}>Clear</button>
     </div>
-    <div class="sim-serial-log" id="sim-serial-log">${
+    <div class="sim-serial-log" id="sim-serial-log" data-count="${rows.length}">${
       rows.length
         ? rows.map((r) => `<div><span class="faint">[${(r.ms / 1000).toFixed(2)}s]</span> ${esc(r.text)}</div>`).join('')
         : '<div class="faint">Press ▶ Run to see Serial.println / print() output here.</div>'
@@ -662,32 +676,137 @@ function simSerialHtml(proj) {
 export function refreshSimUi(pid) {
   const proj = projectById(pid);
   if (!proj) return;
-  const bar = document.getElementById('sim-bar-slot');
-  if (bar) bar.innerHTML = simBarHtml(proj);
-  const bench = document.getElementById('sim-bench-slot');
-  if (bench) {
-    const activeEl = document.activeElement;
-    const draggingRange = Boolean(activeEl && bench.contains(activeEl) && activeEl.matches('[data-sim-range]'));
-    if (draggingRange) {
-      const snap0 = activeSim && activeSimPid === pid ? activeSim.getSnapshot() : null;
-      const adcMax = snap0 ? snap0.adcMax : buildSimTopology(proj).adcMax;
-      bench.querySelectorAll('[data-sim-range]').forEach((inp) => {
-        const raw = Math.round((Number(inp.value) / 100) * adcMax);
-        if (inp.nextElementSibling) inp.nextElementSibling.textContent = String(raw);
-      });
+  const snap = activeSim && activeSimPid === pid ? activeSim.getSnapshot() : null;
+  const isRunning = Boolean(snap && snap.running && !snap.paused);
+
+  // Update simulator bar IN PLACE so Pause/Step/Reset buttons are never destroyed mid-click
+  const barSlot = document.getElementById('sim-bar-slot');
+  if (barSlot) {
+    const playBtn = document.getElementById('sim-play-btn');
+    const resetBtn = document.getElementById('sim-reset-btn');
+    const badgeEl = document.getElementById('sim-badge');
+    if (!playBtn || !resetBtn || !badgeEl) {
+      barSlot.innerHTML = simBarHtml(proj);
     } else {
-      bench.innerHTML = simBenchHtml(proj);
+      playBtn.textContent = isRunning ? '❚❚ Pause' : '▶ Run';
+      playBtn.classList.toggle('ink', !isRunning);
+      resetBtn.disabled = !snap;
+      const b = simBadgeContent(snap);
+      badgeEl.className = b.cls;
+      badgeEl.textContent = b.text;
     }
   }
-  const serial = document.getElementById('sim-serial-slot');
-  if (serial) {
-    serial.innerHTML = simSerialHtml(proj);
-    const log = document.getElementById('sim-serial-log');
-    if (log) log.scrollTop = log.scrollHeight;
+
+  // Update bench controls IN PLACE so buttons/switches/sliders stay mounted and clickable
+  const benchSlot = document.getElementById('sim-bench-slot');
+  if (benchSlot) {
+    const existingBench = benchSlot.querySelector(`[data-sim-bench="${CSS.escape(pid)}"]`);
+    const widgets = snap
+      ? snap.widgetStates
+      : buildSimTopology(proj).widgets.map((w) => ({
+          ...w,
+          digital: 0,
+          pwm: 0,
+          freq: 0,
+          angle: 90,
+          input: { pressed: false, on: false, value: 0.5 },
+          active: false,
+        }));
+    const adcMax = snap ? snap.adcMax : buildSimTopology(proj).adcMax;
+    const displayLines = snap ? snap.displayLines : [];
+
+    if (!existingBench || existingBench.querySelectorAll('[data-sim-card]').length !== widgets.length) {
+      benchSlot.innerHTML = simBenchHtml(proj);
+    } else {
+      for (const w of widgets) {
+        const card = existingBench.querySelector(`[data-sim-card="${CSS.escape(w.ref)}"]`);
+        if (!card) continue;
+        card.classList.toggle('active', Boolean(w.active));
+        if (w.kind === 'led') {
+          const dot = card.querySelector('.sim-led-dot');
+          const txt = card.querySelector('.sim-led-txt');
+          const pct = Math.round((w.pwm / 255) * 100);
+          if (dot) {
+            dot.style.opacity = w.pwm > 0 ? Math.max(0.25, w.pwm / 255).toFixed(2) : '0.15';
+            dot.style.boxShadow = w.pwm > 0 ? `0 0 10px ${w.color}` : 'none';
+          }
+          if (txt) txt.textContent = w.pwm > 0 ? (pct < 100 ? `PWM ${pct}%` : 'ON') : 'OFF';
+        } else if (w.kind === 'button') {
+          const btn = card.querySelector('[data-sim-btn]');
+          if (btn) {
+            btn.classList.toggle('ink', Boolean(w.input.pressed));
+            btn.textContent = w.input.pressed ? 'Pressed (click to release)' : 'Press button';
+          }
+        } else if (w.kind === 'switch' || w.kind === 'digital_sensor') {
+          const btn = card.querySelector('[data-sim-toggle]');
+          if (btn) {
+            const onLabel = w.kind === 'switch' ? 'ON' : 'Triggered';
+            const offLabel = w.kind === 'switch' ? 'OFF' : 'Idle';
+            btn.classList.toggle('ink', Boolean(w.input.on));
+            btn.textContent = w.input.on ? onLabel : offLabel;
+          }
+        } else if (w.kind === 'analog') {
+          const inp = card.querySelector('[data-sim-range]');
+          const valEl = card.querySelector('.sim-adc-val');
+          const pct = Math.round((w.input.value ?? 0.5) * 100);
+          const raw = Math.round((w.input.value ?? 0.5) * adcMax);
+          if (inp && document.activeElement !== inp) inp.value = String(pct);
+          if (valEl) valEl.textContent = String(raw);
+        } else if (w.kind === 'servo') {
+          const valEl = card.querySelector('.sim-servo-val');
+          const barEl = card.querySelector('.sim-servo-bar');
+          if (valEl) valEl.textContent = `${w.angle}°`;
+          if (barEl) barEl.style.width = `${Math.round((w.angle / 180) * 100)}%`;
+        } else if (w.kind === 'buzzer') {
+          const el = card.querySelector('.sim-buzzer-txt');
+          if (el) {
+            el.textContent = w.freq > 0 ? `♪ ${w.freq} Hz` : 'Silent';
+            el.classList.toggle('sim-hi-txt', w.freq > 0);
+            el.classList.toggle('dim', !(w.freq > 0));
+          }
+        } else if (w.kind === 'relay') {
+          const el = card.querySelector('.sim-relay-txt');
+          if (el) {
+            el.textContent = w.digital ? 'CLOSED (ON)' : 'OPEN (OFF)';
+            el.classList.toggle('sim-hi-txt', Boolean(w.digital));
+            el.classList.toggle('dim', !w.digital);
+          }
+        } else if (w.kind === 'display') {
+          const el = card.querySelector('.sim-oled');
+          if (el) {
+            el.innerHTML = displayLines.length
+              ? displayLines.map((l) => `<div>${esc(l)}</div>`).join('')
+              : `<div class="faint">${w.i2c ? `I2C ${esc(w.i2c)} · ` : ''}ready</div>`;
+          }
+        } else {
+          const el = card.querySelector('.sim-gen-txt');
+          if (el) {
+            el.textContent = w.digital ? 'HIGH' : 'LOW';
+            el.classList.toggle('sim-hi-txt', Boolean(w.digital));
+            el.classList.toggle('dim', !w.digital);
+          }
+        }
+      }
+    }
+  }
+
+  // Update Serial Monitor IN PLACE so Clear button stays clickable
+  const serialLog = document.getElementById('sim-serial-log');
+  const clearBtn = document.getElementById('sim-clear-btn');
+  const rows = snap ? snap.serial : [];
+  if (clearBtn) clearBtn.disabled = rows.length === 0;
+  if (serialLog) {
+    const key = `${rows.length}:${rows.length ? rows[rows.length - 1].ms : 0}:${rows.length ? rows[rows.length - 1].text : ''}`;
+    if (serialLog.dataset.key !== key) {
+      serialLog.dataset.key = key;
+      serialLog.innerHTML = rows.length
+        ? rows.map((r) => `<div><span class="faint">[${(r.ms / 1000).toFixed(2)}s]</span> ${esc(r.text)}</div>`).join('')
+        : '<div class="faint">Press ▶ Run to see Serial.println / print() output here.</div>';
+      serialLog.scrollTop = serialLog.scrollHeight;
+    }
   }
 
   // Apply live pin/net glow directly onto the SVG wiring map
-  const snap = activeSim && activeSimPid === pid ? activeSim.getSnapshot() : null;
   const svg = document.getElementById('map');
   if (svg) {
     svg.querySelectorAll('[data-sel^="net:"]').forEach((g) => {

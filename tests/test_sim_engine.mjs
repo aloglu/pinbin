@@ -105,3 +105,88 @@ time.sleep_ms(50)
   assert.ok(snap.serial.some((s) => s.text.includes('0x3c')));
   console.log('✓ MicroPython live simulation test passed');
 }
+
+// 3. DOM stability & Run -> Pause -> Reset clickability test (ensures refreshSimUi never replaces buttons mid-tick)
+{
+  // Minimal DOM mock for testing refreshSimUi in-place updates
+  const byId = new Map();
+  const makeEl = (tag, id = '') => {
+    const classes = new Set();
+    const el = {
+      tagName: tag.toUpperCase(),
+      id,
+      textContent: '',
+      value: '50',
+      disabled: false,
+      style: {},
+      dataset: {},
+      children: [],
+      className: '',
+      classList: {
+        toggle: (c, f) => (f ? classes.add(c) : classes.delete(c)),
+        contains: (c) => classes.has(c),
+        add: (c) => classes.add(c),
+        delete: (c) => classes.delete(c),
+      },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      set innerHTML(_v) {
+        this._innerHtmlWrites = (this._innerHtmlWrites || 0) + 1;
+      },
+      _innerHtmlWrites: 0,
+    };
+    if (id) byId.set(id, el);
+    return el;
+  };
+
+  globalThis.CSS = { escape: (s) => String(s) };
+  globalThis.document = {
+    activeElement: null,
+    getElementById: (id) => byId.get(id) || null,
+  };
+  globalThis.window = { confirm: () => true };
+
+  const { state } = await import('../app/static/js/state.js');
+  const {
+    getCodeDraft,
+    simPlayPauseAction,
+    simResetAction,
+    refreshSimUi,
+    stopActiveSimulator,
+  } = await import('../app/static/js/views/project-code.js');
+
+  state.projects = [esp32Project];
+  const draft = getCodeDraft(esp32Project);
+  draft.language = 'arduino';
+  draft.source = 'void setup() { pinMode(13, OUTPUT); }\nvoid loop() { digitalWrite(13, HIGH); delay(50); }';
+
+  // Pre-mount stable toolbar buttons
+  const barSlot = makeEl('div', 'sim-bar-slot');
+  const playBtn = makeEl('button', 'sim-play-btn');
+  const resetBtn = makeEl('button', 'sim-reset-btn');
+  const badgeEl = makeEl('span', 'sim-badge');
+  makeEl('textarea', 'code-editor');
+
+  // Click Run
+  simPlayPauseAction('p1');
+  assert.equal(playBtn.textContent, '❚❚ Pause');
+  assert.equal(resetBtn.disabled, false);
+  assert.equal(barSlot._innerHtmlWrites, 0, 'sim-bar-slot innerHTML must NOT be overwritten when buttons exist');
+
+  // Simulate multiple 50ms UI refreshes
+  refreshSimUi('p1');
+  refreshSimUi('p1');
+  assert.equal(barSlot._innerHtmlWrites, 0, 'Pause/Reset buttons must stay mounted across ticks');
+
+  // Click Pause
+  simPlayPauseAction('p1');
+  assert.equal(playBtn.textContent, '▶ Run');
+  assert.ok(badgeEl.textContent.includes('Paused'));
+
+  // Click Reset
+  simResetAction('p1');
+  assert.equal(resetBtn.disabled, true);
+  assert.equal(badgeEl.textContent, 'Simulator idle');
+  stopActiveSimulator();
+  console.log('✓ Live simulator DOM stability & Run/Pause/Reset test passed');
+}

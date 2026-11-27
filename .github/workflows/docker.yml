@@ -32,11 +32,12 @@ jobs:
           python -m py_compile app/*.py
           python -m unittest discover -s tests -p "test_*.py" -v
 
-      - name: Check frontend JavaScript syntax
+      - name: Check frontend JavaScript syntax and simulator tests
         run: |
           for f in app/static/js/*.js app/static/js/views/*.js; do
             node --check "$f"
           done
+          node tests/test_sim_engine.mjs
 
   build-and-push:
     needs: verify
